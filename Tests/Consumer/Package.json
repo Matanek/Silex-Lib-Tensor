@@ -1,0 +1,6 @@
+{
+  "sources": "Tests",
+  "dependencies": {
+    "Tensor": "^0.1.0"
+  }
+}

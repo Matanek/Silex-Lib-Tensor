@@ -1,0 +1,12 @@
+{
+  "name": "Tensor",
+  "version": "0.1.0",
+  "description": {
+    "en": "Immutable multidimensional tensors and foundational numerical operations for Silex.",
+    "fr": "Tenseurs multidimensionnels immuables et opérations numériques fondamentales pour Silex."
+  },
+  "authors": ["Matanek"],
+  "requires": {
+    "silex": ">=0.43.0"
+  }
+}

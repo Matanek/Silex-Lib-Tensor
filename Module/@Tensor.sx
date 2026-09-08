@@ -1,0 +1,269 @@
+public struct Tensor {
+    private let current_values:float[]
+    private let current_shape:int[]
+
+    init(values:float[], shape:int[]) {
+        require_element_count(shape, values.count())
+        self.current_values = values
+        self.current_shape = shape
+    }
+
+    static func scalar(value:float) Tensor {
+        let values:float[] = [value]
+        let shape:int[] = []
+        return Tensor(values, shape)
+    }
+
+    static func vector(values:float[]) Tensor {
+        let shape:int[] = [values.count()]
+        return Tensor(values, shape)
+    }
+
+    static func matrix(values:float[], rows:int, columns:int) Tensor {
+        let shape:int[] = [rows, columns]
+        return Tensor(values, shape)
+    }
+
+    static func full(shape:int[], value:float) Tensor {
+        let count = shape_product(shape)
+        var values:float[] = []
+        var index = 0
+        while index < count {
+            values.append(value)
+            index++
+        }
+        return Tensor(values, shape)
+    }
+
+    static func zeros(shape:int[]) Tensor {
+        return Tensor.full(shape, 0.0)
+    }
+
+    static func ones(shape:int[]) Tensor {
+        return Tensor.full(shape, 1.0)
+    }
+
+    func shape() int[] {
+        return self.current_shape
+    }
+
+    func rank() int {
+        return self.current_shape.count()
+    }
+
+    func count() int {
+        return self.current_values.count()
+    }
+
+    func is_empty() bool {
+        return self.current_values.is_empty()
+    }
+
+    func values() float[] {
+        return self.current_values
+    }
+
+    func at(indices:int[]) float {
+        return self.current_values[flat_index(indices, self.current_shape)]
+    }
+
+    func reshape(shape:int[]) Tensor {
+        return Tensor(self.current_values, shape)
+    }
+
+    func flatten() Tensor {
+        let shape:int[] = [self.count()]
+        return Tensor(self.current_values, shape)
+    }
+
+    func transpose() Tensor {
+        if self.rank() != 2 {
+            panic("Tensor.transpose requires a rank-2 tensor")
+        }
+        let rows = self.current_shape[0]
+        let columns = self.current_shape[1]
+        var values:float[] = []
+        var column = 0
+        while column < columns {
+            var row = 0
+            while row < rows {
+                values.append(self.current_values[row * columns + column])
+                row++
+            }
+            column++
+        }
+        let shape:int[] = [columns, rows]
+        return Tensor(values, shape)
+    }
+
+    func add(other:Tensor) Tensor {
+        self.require_same_shape(other, "add")
+        var values:float[] = []
+        var index = 0
+        while index < self.count() {
+            values.append(self.current_values[index] + other.current_values[index])
+            index++
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func add(other:float) Tensor {
+        var values:float[] = []
+        for item in self.current_values {
+            values.append(item + other)
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func subtract(other:Tensor) Tensor {
+        self.require_same_shape(other, "subtract")
+        var values:float[] = []
+        var index = 0
+        while index < self.count() {
+            values.append(self.current_values[index] - other.current_values[index])
+            index++
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func subtract(other:float) Tensor {
+        var values:float[] = []
+        for item in self.current_values {
+            values.append(item - other)
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func multiply(other:Tensor) Tensor {
+        self.require_same_shape(other, "multiply")
+        var values:float[] = []
+        var index = 0
+        while index < self.count() {
+            values.append(self.current_values[index] * other.current_values[index])
+            index++
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func multiply(other:float) Tensor {
+        var values:float[] = []
+        for item in self.current_values {
+            values.append(item * other)
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func divide(other:Tensor) Tensor {
+        self.require_same_shape(other, "divide")
+        var values:float[] = []
+        var index = 0
+        while index < self.count() {
+            values.append(self.current_values[index] / other.current_values[index])
+            index++
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func divide(other:float) Tensor {
+        var values:float[] = []
+        for item in self.current_values {
+            values.append(item / other)
+        }
+        return Tensor(values, self.current_shape)
+    }
+
+    func sum() float {
+        var result = 0.0
+        for value in self.current_values {
+            result += value
+        }
+        return result
+    }
+
+    func mean() float {
+        if self.is_empty() {
+            panic("Tensor.mean requires at least one value")
+        }
+        return self.sum() / self.count() as float
+    }
+
+    func matmul(other:Tensor) Tensor {
+        if self.rank() != 2 || other.rank() != 2 {
+            panic("Tensor.matmul requires two rank-2 tensors")
+        }
+        let rows = self.current_shape[0]
+        let shared = self.current_shape[1]
+        let other_rows = other.current_shape[0]
+        let columns = other.current_shape[1]
+        if shared != other_rows {
+            panic("Tensor.matmul requires matching inner dimensions")
+        }
+
+        var values:float[] = []
+        var row = 0
+        while row < rows {
+            var column = 0
+            while column < columns {
+                var value = 0.0
+                var index = 0
+                while index < shared {
+                    value += self.current_values[row * shared + index] *
+                        other.current_values[index * columns + column]
+                    index++
+                }
+                values.append(value)
+                column++
+            }
+            row++
+        }
+        let shape:int[] = [rows, columns]
+        return Tensor(values, shape)
+    }
+
+    private func require_same_shape(other:Tensor, operation:str) {
+        if self.rank() != other.rank() {
+            panic("Tensor.$(operation) requires equal shapes")
+        }
+        var index = 0
+        while index < self.rank() {
+            if self.current_shape[index] != other.current_shape[index] {
+                panic("Tensor.$(operation) requires equal shapes")
+            }
+            index++
+        }
+    }
+}
+
+func require_element_count(shape:int[], count:int) {
+    if shape_product(shape) != count {
+        panic("Tensor values must match the declared shape")
+    }
+}
+
+func shape_product(shape:int[]) int {
+    var result = 1
+    for dimension in shape {
+        if dimension < 0 {
+            panic("Tensor shape dimensions must be non-negative")
+        }
+        result *= dimension
+    }
+    return result
+}
+
+func flat_index(indices:int[], shape:int[]) int {
+    if indices.count() != shape.count() {
+        panic("Tensor.at requires one index per dimension")
+    }
+    var result = 0
+    var dimension = 0
+    while dimension < shape.count() {
+        let index = indices[dimension]
+        if index < 0 || index >= shape[dimension] {
+            panic("Tensor.at index is outside the tensor shape")
+        }
+        result = result * shape[dimension] + index
+        dimension++
+    }
+    return result
+}

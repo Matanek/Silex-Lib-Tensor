@@ -1,0 +1,85 @@
+use Tensor
+
+test "create and inspect immutable multidimensional values" {
+    let tensor = Tensor([
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    ], [2, 3])
+
+    assert(tensor.rank() == 2)
+    assert(tensor.count() == 6)
+    assert(!tensor.is_empty())
+    assert(tensor.at([0, 0]) == 1.0)
+    assert(tensor.at([1, 2]) == 6.0)
+
+    var detached = tensor.values()
+    detached[0] = 99.0
+    assert(tensor.at([0, 0]) == 1.0, "returned values do not mutate the tensor")
+
+    var detached_shape = tensor.shape()
+    detached_shape[0] = 6
+    assert(tensor.shape()[0] == 2, "returned shape does not mutate the tensor")
+}
+
+test "reshape and transpose tensors" {
+    let matrix = Tensor.matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3)
+    let reshaped = matrix.reshape([3, 2])
+    let flattened = matrix.flatten()
+    let transposed = matrix.transpose()
+
+    assert(reshaped.at([2, 1]) == 6.0)
+    assert(flattened.rank() == 1)
+    assert(flattened.at([4]) == 5.0)
+    assert(transposed.at([0, 1]) == 4.0)
+    assert(transposed.at([2, 1]) == 6.0)
+}
+
+test "apply element-wise and scalar arithmetic" {
+    let left = Tensor.vector([1.0, 2.0, 3.0])
+    let right = Tensor.vector([4.0, 5.0, 6.0])
+
+    let sum = left.add(right)
+    let difference = right.subtract(left)
+    let product = left.multiply(right)
+    let quotient = right.divide(left)
+    let scalar = left.add(1.0).multiply(2.0).subtract(1.0).divide(3.0)
+
+    assert(sum.at([2]) == 9.0)
+    assert(difference.at([1]) == 3.0)
+    assert(product.at([2]) == 18.0)
+    assert(quotient.at([0]) == 4.0)
+    assert(scalar.at([1]) == 5.0 / 3.0)
+    assert(sum.sum() == 21.0)
+    assert(sum.mean() == 7.0)
+}
+
+test "multiply rank-2 tensors" {
+    let left = Tensor.matrix([
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    ], 2, 3)
+    let right = Tensor.matrix([
+        7.0, 8.0,
+        9.0, 10.0,
+        11.0, 12.0
+    ], 3, 2)
+    let result = left.matmul(right)
+
+    assert(result.at([0, 0]) == 58.0)
+    assert(result.at([0, 1]) == 64.0)
+    assert(result.at([1, 0]) == 139.0)
+    assert(result.at([1, 1]) == 154.0)
+}
+
+test "construct scalar and filled tensors" {
+    let scalar = Tensor.scalar(3.5)
+    let zeros = Tensor.zeros([2, 2])
+    let ones = Tensor.ones([2, 2])
+    let full = Tensor.full([2, 3], 7.0)
+
+    assert(scalar.rank() == 0)
+    assert(scalar.at([]) == 3.5)
+    assert(zeros.sum() == 0.0)
+    assert(ones.sum() == 4.0)
+    assert(full.sum() == 42.0)
+}
