@@ -1,0 +1,25 @@
+use GFX.GPU
+use Tensor
+use Tensor.DType
+
+test "chain float32 GPU kernels without an intermediate readback" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    device.reset_command_stats()
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    let gpu = Tensor.vector(values).to(device)
+    let same = gpu.to(device)
+    let computed = same.add(2.0).multiply(3.0)
+    let before = device.command_stats()
+    assert(gpu.is_gpu() && computed.is_gpu())
+    assert(computed.dtype() == DType.float32())
+    assert(before.uploads == 1)
+    assert(before.downloads == 0)
+    assert(before.compute_passes == 2)
+    let cpu = computed.cpu()
+    let after = device.command_stats()
+    assert(cpu.is_cpu())
+    assert(cpu.values()[0] == 9.0 && cpu.values()[3] == 18.0)
+    assert(after.uploads == 1)
+    assert(after.downloads == 1)
+}

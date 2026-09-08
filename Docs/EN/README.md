@@ -1,84 +1,80 @@
 # Tensor
 
-`Tensor` represents multidimensional numerical values without exposing their
-storage. This first version executes operations eagerly on the CPU and uses the
-Silex `float` type.
+`Tensor` represents a dense numerical value without exposing its storage. The
+same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
+64-bit integers on both CPU and GPU.
 
-## Create a tensor
+## Create and inspect
 
-Values use row-major order and their count must match the declared shape:
+`scalar`, `vector`, `matrix`, and the shape-values constructor infer the dtype
+from the supplied Silex type. `float` becomes `float32`, `int` becomes `int64`,
+and `uint` becomes `uint64`.
 
 ```sx
 use Tensor
+use Tensor.DType
 
-let image = Tensor([
-    0.1, 0.2, 0.3,
-    0.4, 0.5, 0.6
-], [2, 3])
+var samples:float[] = [1.0, 2.0, 3.0]
+var labels:int32[] = [2 as int32, 1 as int32, 0 as int32]
 
-assert(image.rank() == 2)
-assert(image.at([1, 2]) == 0.6)
+let x = Tensor.vector(samples)
+let y = Tensor(labels, [3])
+
+assert(x.dtype() == DType.float32())
+assert(y.dtype() == DType.int32())
+assert(y.int32_values()[0] == 2 as int32)
 ```
 
-Factories cover common intentions:
+The nine `DType` values are `float32`, `int8`, `uint8`, `int16`, `uint16`,
+`int32`, `uint32`, `int64`, and `uint64`. They expose only their width and
+numeric family. `zeros`, `ones`, and the `full` overloads cover common filled
+constructions.
+
+`values()` and `item()` extract only `float32`. Each integer dtype has matching
+extractors, such as `int32_values()` and `int32_item()`. A mismatched extraction
+fails instead of converting silently. `cast(dtype)` performs a checked numeric
+conversion on the CPU and preserves the shape.
+
+## Move to the GPU
+
+Create the device with `GFX.GPU`, then place the tensor explicitly:
 
 ```sx
-let bias = Tensor.ones([3])
-let weights = Tensor.zeros([3, 4])
-let temperature = Tensor.scalar(0.7)
+use GFX.GPU
+use Tensor
+use Tensor.DType
+
+var device = GPU.Device()
+var values:float[] = [1.0, 2.0, 3.0]
+
+let gpu = Tensor.vector(values).to(device)
+let result = gpu.add(2.0).multiply(3.0)
+
+assert(result.is_gpu())
+let cpu = result.cpu()
+assert(cpu.values()[0] == 9.0)
 ```
 
-`shape()` and `values()` return detached copies. A `Tensor` has no public
-mutation and preserves Silex value semantics. A future storage optimization
-will not change this guarantee.
+`shape()`, `rank()`, `count()`, `dtype()`, `is_cpu()`, and `is_gpu()` cause no
+transfer. `cpu()` is the first synchronization point in a GPU chain. Value and
+item extraction is CPU-only.
 
-## Compute
+This release runs only `add(float)` and `multiply(float)` for `float32` on the
+GPU. All nine dtypes transfer without loss, but integer GPU computation is
+rejected before submission. Migration between two devices remains explicit:
+`tensor.cpu().to(other_device)`.
 
-Element-wise operations currently require identical shapes. A scalar value can
-be added, subtracted, multiplied, or divided without creating an intermediate
-tensor:
+## Value semantics
 
-```sx
-let left = Tensor.vector([1.0, 2.0, 3.0])
-let right = Tensor.vector([4.0, 5.0, 6.0])
-let centered = left.add(right).divide(2.0)
-
-assert(centered.sum() == 10.5)
-assert(centered.mean() == 3.5)
-```
-
-`matmul()` and `transpose()` currently carry the explicit contract of rank-2
-matrices:
-
-```sx
-let inputs = Tensor.matrix([1.0, 2.0, 3.0, 4.0], 2, 2)
-let weights = Tensor.matrix([2.0, 0.0, 0.0, 3.0], 2, 2)
-let outputs = inputs.matmul(weights)
-
-assert(outputs.at([1, 1]) == 12.0)
-```
-
-A negative shape, inconsistent value count, invalid index, or incompatible
-shapes terminates the program with a diagnostic. `mean()` rejects an empty
-tensor.
-
-## Direction
-
-The contract favors the readable eager use popularized by PyTorch, with
-immutable values close to JAX's functional approach. Graph, autodiff, dtype,
-and device concerns remain outside this first surface so a backend can be
-chosen later without leaking it into basic usage.
-
-Broadcasting, slices, and higher-rank linear algebra will be added with their
-own consumer proofs. `AI` may depend on `Tensor`; the inverse would be an
-incorrect domain dependency.
+A `Tensor` can remain in a `let`. Ordinary assignment shares its immutable
+storage and safe lifetime. A deep `copy` is rejected when the tensor reaches a
+non-clonable GPU resource; no native handle is duplicated.
 
 ## Development
 
 From the `SilexProject` root:
 
 ```text
-silex link Packages/Tensor
-silex link Packages/Tensor --workspace Packages/Tensor/Tests/Consumer
 silex test Packages/Tensor/Tests/Consumer
+silex check Packages/Tensor
 ```

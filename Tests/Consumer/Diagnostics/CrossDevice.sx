@@ -1,0 +1,9 @@
+use GFX.GPU
+use Tensor
+func main() {
+    var first = GPU.Device()
+    var second = GPU.Device()
+    var values:float[] = [1.0]
+    let migrated = Tensor.vector(values).to(first).to(second)
+    print(migrated.count())
+}

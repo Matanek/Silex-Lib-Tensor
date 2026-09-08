@@ -8,5 +8,9 @@
   "authors": ["Matanek"],
   "requires": {
     "silex": ">=0.43.0"
+  },
+  "dependencies": {
+    "GFX.GPU": "^0.3.0",
+    "STD": "^0.21.0"
   }
 }

@@ -1,0 +1,8 @@
+use Tensor
+
+func main() {
+    var values:float[] = [1.0]
+    let tensor = Tensor.vector(values)
+    let detached = copy tensor
+    print(detached.count())
+}

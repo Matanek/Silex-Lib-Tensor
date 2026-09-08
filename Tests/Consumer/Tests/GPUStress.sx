@@ -1,0 +1,15 @@
+use GFX.GPU
+use Tensor
+
+test "release bounded GPU chains after completion" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device()
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var current = Tensor.vector(values).to(device)
+    var index = 0
+    while index < 16 {
+        current = current.add(1.0).multiply(0.5)
+        index++
+    }
+    assert(current.cpu().count() == 4)
+}

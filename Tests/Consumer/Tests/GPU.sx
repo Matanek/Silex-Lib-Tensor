@@ -1,0 +1,125 @@
+use Interop.C
+use GFX.GPU
+use Tensor
+use Tensor.DType
+
+func same_values<T>(left:T[], right:T[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}
+
+func float_from_bits(bits:uint32) float {
+    var storage = bits
+    let address = C.address_bits(C.mutable_pointer(storage))
+    return C.load<float>(address, 0 as uint)
+}
+
+func float_bits(value:float) uint32 {
+    var storage:uint32 = 0
+    let address = C.address_bits(C.mutable_pointer(storage))
+    let stored = C.store<float>(address, 0 as uint, value)
+    return C.load<uint32>(address, 0 as uint)
+}
+
+func int8_from_bits(bits:uint8) int8 {
+    var storage:uint32 = bits as uint32
+    return C.load<int8>(C.address_bits(C.mutable_pointer(storage)), 0 as uint)
+}
+
+func int16_from_bits(bits:uint16) int16 {
+    var storage:uint32 = bits as uint32
+    return C.load<int16>(C.address_bits(C.mutable_pointer(storage)), 0 as uint)
+}
+
+func int32_from_bits(bits:uint32) int32 {
+    var storage = bits
+    return C.load<int32>(C.address_bits(C.mutable_pointer(storage)), 0 as uint)
+}
+
+func int64_from_bits(bits:uint64) int64 {
+    var storage:uint = bits as uint
+    return C.load<int64>(C.address_bits(C.mutable_pointer(storage)), 0 as uint)
+}
+
+func roundtrip_float32(device:GPU.Device) {
+    var values:float[] = [
+        float_from_bits(0x8000_0000),
+        float_from_bits(0x7f80_0000),
+        float_from_bits(0xff80_0000),
+        float_from_bits(0x7fc1_2345),
+    ]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    let restored = cpu.values()
+    var index = 0
+    while index < values.count() {
+        assert(float_bits(restored[index]) == float_bits(values[index]))
+        index++
+    }
+}
+
+func roundtrip_int8(device:GPU.Device) {
+    var values:int8[] = [int8_from_bits(0x80), -1 as int8, 0 as int8, 127 as int8]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<int8>(cpu.int8_values(), values))
+}
+
+func roundtrip_uint8(device:GPU.Device) {
+    var values:uint8[] = [0 as uint8, 1 as uint8, 255 as uint8]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<uint8>(cpu.uint8_values(), values))
+}
+
+func roundtrip_int16(device:GPU.Device) {
+    var values:int16[] = [int16_from_bits(0x8000), -1 as int16, 0 as int16, 32767 as int16]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<int16>(cpu.int16_values(), values))
+}
+
+func roundtrip_uint16(device:GPU.Device) {
+    var values:uint16[] = [0 as uint16, 1 as uint16, 65535 as uint16]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<uint16>(cpu.uint16_values(), values))
+}
+
+func roundtrip_int32(device:GPU.Device) {
+    var values:int32[] = [int32_from_bits(0x8000_0000), -1 as int32, 0 as int32, 2147483647 as int32]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<int32>(cpu.int32_values(), values))
+}
+
+func roundtrip_uint32(device:GPU.Device) {
+    var values:uint32[] = [0 as uint32, 1 as uint32, 0xffff_ffff]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<uint32>(cpu.uint32_values(), values))
+}
+
+func roundtrip_int64(device:GPU.Device) {
+    var values:int64[] = [int64_from_bits(0x8000_0000_0000_0000), -1 as int64, 0 as int64, 9223372036854775807 as int64]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<int64>(cpu.int64_values(), values))
+}
+
+func roundtrip_uint64(device:GPU.Device) {
+    var values:uint64[] = [0 as uint64, 1 as uint64, 0xffff_ffff_ffff_ffff]
+    let cpu = Tensor.vector(values).to(device).cpu()
+    assert(same_values<uint64>(cpu.uint64_values(), values))
+}
+
+test "roundtrip all dtypes through one GPU device" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    roundtrip_float32(device)
+    roundtrip_int8(device)
+    roundtrip_uint8(device)
+    roundtrip_int16(device)
+    roundtrip_uint16(device)
+    roundtrip_int32(device)
+    roundtrip_uint32(device)
+    roundtrip_int64(device)
+    roundtrip_uint64(device)
+}

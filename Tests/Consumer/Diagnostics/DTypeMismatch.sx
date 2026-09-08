@@ -1,0 +1,7 @@
+use Tensor
+func main() {
+    var floats:float[] = [1.0]
+    var integers:int32[] = [1 as int32]
+    let result = Tensor.vector(floats).add(Tensor.vector(integers))
+    print(result.count())
+}

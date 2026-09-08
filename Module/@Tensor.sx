@@ -1,267 +1,506 @@
+use GFX.GPU
+public use Tensor.DType.DType
+
+local enum Storage {
+    floats(float[])
+    signed8(int8[])
+    unsigned8(uint8[])
+    signed16(int16[])
+    unsigned16(uint16[])
+    signed32(int32[])
+    unsigned32(uint32[])
+    signed64(int64[])
+    unsigned64(uint64[])
+    gpu(GPUStorage)
+}
+
+local enum ScalarOperation {
+    add
+    multiply
+}
+
+local noncopyable class GPUStorage {
+    private var current_device:GPU.Device
+    private var current_buffer:GPU.Buffer? = null
+    private var upload_buffer:GPU.TransferBuffer? = null
+    private var pipeline:GPU.ComputePipeline? = null
+    private var completion:GPU.Fence? = null
+    private var parent:GPUStorage? = null
+    private let current_dtype:DType
+    private let element_count:int
+
+    init(
+        device:GPU.Device,
+        buffer:GPU.Buffer?,
+        upload:GPU.TransferBuffer?,
+        pipeline:GPU.ComputePipeline?,
+        completion:GPU.Fence?,
+        parent:GPUStorage?,
+        dtype:DType,
+        count:int
+    ) {
+        self.current_device = device
+        self.current_buffer = buffer
+        self.upload_buffer = upload
+        self.pipeline = pipeline
+        self.completion = completion
+        self.parent = parent
+        self.current_dtype = dtype
+        self.element_count = count
+    }
+
+    drop {
+        if var fence = self.completion { fence.wait() }
+        self.completion = null
+        self.pipeline = null
+        self.upload_buffer = null
+        self.current_buffer = null
+        self.parent = null
+    }
+
+    func dtype() DType { return self.current_dtype }
+    func same_device(other:@GPU.Device) bool { return self.current_device == other }
+    func same_device(other:@GPUStorage) bool { return self.current_device == other.current_device }
+
+    static func upload(device:GPU.Device, values:float[]) GPUStorage {
+        let dtype = DType.float32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 4), "Tensor float32 upload")
+        upload.write_floats(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int8[]) GPUStorage {
+        let dtype = DType.int8()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count()), "Tensor int8 upload")
+        upload.write_int8s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint8[]) GPUStorage {
+        let dtype = DType.uint8()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count()), "Tensor uint8 upload")
+        upload.write_uint8s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int16[]) GPUStorage {
+        let dtype = DType.int16()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 2), "Tensor int16 upload")
+        upload.write_int16s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint16[]) GPUStorage {
+        let dtype = DType.uint16()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 2), "Tensor uint16 upload")
+        upload.write_uint16s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int32[]) GPUStorage {
+        let dtype = DType.int32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 4), "Tensor int32 upload")
+        upload.write_int32s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint32[]) GPUStorage {
+        let dtype = DType.uint32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 4), "Tensor uint32 upload")
+        upload.write_uint32s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int64[]) GPUStorage {
+        let dtype = DType.int64()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 8), "Tensor int64 upload")
+        upload.write_int64s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint64[]) GPUStorage {
+        let dtype = DType.uint64()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count() * 8), "Tensor uint64 upload")
+        upload.write_uint64s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+
+    func cpu_storage() Storage {
+        if self.element_count == 0 { return empty_storage(self.current_dtype) }
+        let byte_count = gpu_byte_count(self.element_count * self.current_dtype.byte_width())
+        var download = self.current_device.download_buffer(byte_count, "Tensor download")
+        var commands = self.current_device.commands()
+        var transfer = commands.copy()
+        transfer.download(self.required_buffer(), download, byte_count)
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        completed.wait()
+        if self.current_dtype == DType.float32() { return Storage.floats(download.read_floats(count:self.element_count)) }
+        if self.current_dtype == DType.int8() { return Storage.signed8(download.read_int8s(count:self.element_count)) }
+        if self.current_dtype == DType.uint8() { return Storage.unsigned8(download.read_uint8s(count:self.element_count)) }
+        if self.current_dtype == DType.int16() { return Storage.signed16(download.read_int16s(count:self.element_count)) }
+        if self.current_dtype == DType.uint16() { return Storage.unsigned16(download.read_uint16s(count:self.element_count)) }
+        if self.current_dtype == DType.int32() { return Storage.signed32(download.read_int32s(count:self.element_count)) }
+        if self.current_dtype == DType.uint32() { return Storage.unsigned32(download.read_uint32s(count:self.element_count)) }
+        if self.current_dtype == DType.int64() { return Storage.signed64(download.read_int64s(count:self.element_count)) }
+        return Storage.unsigned64(download.read_uint64s(count:self.element_count))
+    }
+
+    func scalar(operation:ScalarOperation, value:float) GPUStorage {
+        if self.current_dtype != DType.float32() {
+            panic("Tensor GPU scalar arithmetic supports only dtype float32; call cpu().cast(DType.float32()).to(device)")
+        }
+        if self.element_count == 0 { return self }
+        var output = self.current_device.buffer(GPU.BufferSettings(
+            size:self.element_count * 4,
+            usage:GPU.BufferUsage.storage(),
+            name:"Tensor float32 result"
+        ))
+        var pipeline = match operation {
+            add => self.current_device.compute_pipeline(
+                GPU.ComputeProgram.hlsl(file:"Shaders/ScalarAdd.hlsl"),
+                "Tensor float32 scalar add"
+            )
+            multiply => self.current_device.compute_pipeline(
+                GPU.ComputeProgram.hlsl(file:"Shaders/ScalarMultiply.hlsl"),
+                "Tensor float32 scalar multiply"
+            )
+        }
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, value)
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(self.element_count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(self.current_device, output, null, pipeline, completed, self, self.current_dtype, self.element_count)
+    }
+
+    private static func empty(device:GPU.Device, dtype:DType) GPUStorage {
+        return GPUStorage(device, null, null, null, null, null, dtype, 0)
+    }
+
+    private static func finish_upload(device:GPU.Device, upload:GPU.TransferBuffer, dtype:DType, count:int) GPUStorage {
+        let byte_count = gpu_byte_count(count * dtype.byte_width())
+        var buffer = device.buffer(GPU.BufferSettings(size:byte_count, usage:GPU.BufferUsage.storage(), name:"Tensor storage"))
+        var commands = device.commands()
+        var transfer = commands.copy()
+        transfer.upload(upload, buffer, byte_count)
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(device, buffer, upload, null, completed, null, dtype, count)
+    }
+
+    private func required_buffer() GPU.Buffer {
+        if var buffer = self.current_buffer { return buffer }
+        panic("Tensor empty GPU storage has no buffer")
+    }
+}
+
+local func gpu_byte_count(logical_count:int) int {
+    if logical_count < 4 { return 4 }
+    return logical_count
+}
+
 public struct Tensor {
-    private let current_values:float[]
+    private var current_storage:Storage
     private let current_shape:int[]
 
-    init(values:float[], shape:int[]) {
-        require_element_count(shape, values.count())
-        self.current_values = values
-        self.current_shape = shape
+    init(values:float[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.floats(values); self.current_shape = shape }
+    init(values:int8[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.signed8(values); self.current_shape = shape }
+    init(values:uint8[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.unsigned8(values); self.current_shape = shape }
+    init(values:int16[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.signed16(values); self.current_shape = shape }
+    init(values:uint16[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.unsigned16(values); self.current_shape = shape }
+    init(values:int32[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.signed32(values); self.current_shape = shape }
+    init(values:uint32[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.unsigned32(values); self.current_shape = shape }
+    init(values:int64[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.signed64(values); self.current_shape = shape }
+    init(values:uint64[], shape:int[]) { require_element_count(shape, values.count()); self.current_storage = Storage.unsigned64(values); self.current_shape = shape }
+    static func scalar(value:float) Tensor { var values:float[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:int8) Tensor { var values:int8[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:uint8) Tensor { var values:uint8[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:int16) Tensor { var values:int16[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:uint16) Tensor { var values:uint16[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:int32) Tensor { var values:int32[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:uint32) Tensor { var values:uint32[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:int64) Tensor { var values:int64[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:uint64) Tensor { var values:uint64[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+
+    static func vector(values:float[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:int8[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:uint8[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:int16[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:uint16[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:int32[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:uint32[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:int64[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:uint64[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+
+    static func matrix(values:float[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:int8[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:uint8[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:int16[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:uint16[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:int32[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:uint32[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:int64[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:uint64[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+
+    static func zeros(shape:int[], dtype:DType = DType.float32()) Tensor { return Tensor.filled(shape, dtype, 0.0) }
+    static func ones(shape:int[], dtype:DType = DType.float32()) Tensor { return Tensor.filled(shape, dtype, 1.0) }
+
+    static func full(shape:int[], value:float) Tensor { return Tensor.full_values<float>(shape, value) }
+    static func full(shape:int[], value:int8) Tensor { return Tensor.full_values<int8>(shape, value) }
+    static func full(shape:int[], value:uint8) Tensor { return Tensor.full_values<uint8>(shape, value) }
+    static func full(shape:int[], value:int16) Tensor { return Tensor.full_values<int16>(shape, value) }
+    static func full(shape:int[], value:uint16) Tensor { return Tensor.full_values<uint16>(shape, value) }
+    static func full(shape:int[], value:int32) Tensor { return Tensor.full_values<int32>(shape, value) }
+    static func full(shape:int[], value:uint32) Tensor { return Tensor.full_values<uint32>(shape, value) }
+    static func full(shape:int[], value:int64) Tensor { return Tensor.full_values<int64>(shape, value) }
+    static func full(shape:int[], value:uint64) Tensor { return Tensor.full_values<uint64>(shape, value) }
+
+    func shape() int[] { return self.current_shape }
+    func rank() int { return self.current_shape.count() }
+    func count() int { return shape_product(self.current_shape) }
+    func is_empty() bool { return self.count() == 0 }
+    func is_cpu() bool { return match self.current_storage { gpu(value) => false; else => true } }
+    func is_gpu() bool { return !self.is_cpu() }
+    func dtype() DType {
+        return match self.current_storage {
+            floats(values) => DType.float32()
+            signed8(values) => DType.int8()
+            unsigned8(values) => DType.uint8()
+            signed16(values) => DType.int16()
+            unsigned16(values) => DType.uint16()
+            signed32(values) => DType.int32()
+            unsigned32(values) => DType.uint32()
+            signed64(values) => DType.int64()
+            unsigned64(values) => DType.uint64()
+            gpu(value) => value.dtype()
+        }
     }
 
-    static func scalar(value:float) Tensor {
-        let values:float[] = [value]
-        let shape:int[] = []
-        return Tensor(values, shape)
+    func values() float[] { self.require_cpu_extraction("values"); return match self.current_storage { floats(values) => values; else => extraction_mismatch<float>("values") } }
+    func int8_values() int8[] { self.require_cpu_extraction("int8_values"); return match self.current_storage { signed8(values) => values; else => extraction_mismatch<int8>("int8_values") } }
+    func uint8_values() uint8[] { self.require_cpu_extraction("uint8_values"); return match self.current_storage { unsigned8(values) => values; else => extraction_mismatch<uint8>("uint8_values") } }
+    func int16_values() int16[] { self.require_cpu_extraction("int16_values"); return match self.current_storage { signed16(values) => values; else => extraction_mismatch<int16>("int16_values") } }
+    func uint16_values() uint16[] { self.require_cpu_extraction("uint16_values"); return match self.current_storage { unsigned16(values) => values; else => extraction_mismatch<uint16>("uint16_values") } }
+    func int32_values() int32[] { self.require_cpu_extraction("int32_values"); return match self.current_storage { signed32(values) => values; else => extraction_mismatch<int32>("int32_values") } }
+    func uint32_values() uint32[] { self.require_cpu_extraction("uint32_values"); return match self.current_storage { unsigned32(values) => values; else => extraction_mismatch<uint32>("uint32_values") } }
+    func int64_values() int64[] { self.require_cpu_extraction("int64_values"); return match self.current_storage { signed64(values) => values; else => extraction_mismatch<int64>("int64_values") } }
+    func uint64_values() uint64[] { self.require_cpu_extraction("uint64_values"); return match self.current_storage { unsigned64(values) => values; else => extraction_mismatch<uint64>("uint64_values") } }
+
+    func item() float { return only_item<float>(self.values(), "item") }
+    func int8_item() int8 { return only_item<int8>(self.int8_values(), "int8_item") }
+    func uint8_item() uint8 { return only_item<uint8>(self.uint8_values(), "uint8_item") }
+    func int16_item() int16 { return only_item<int16>(self.int16_values(), "int16_item") }
+    func uint16_item() uint16 { return only_item<uint16>(self.uint16_values(), "uint16_item") }
+    func int32_item() int32 { return only_item<int32>(self.int32_values(), "int32_item") }
+    func uint32_item() uint32 { return only_item<uint32>(self.uint32_values(), "uint32_item") }
+    func int64_item() int64 { return only_item<int64>(self.int64_values(), "int64_item") }
+    func uint64_item() uint64 { return only_item<uint64>(self.uint64_values(), "uint64_item") }
+    func at(indices:int[]) float { return self.values()[flat_index(indices, self.current_shape)] }
+
+    func cast(dtype:DType) Tensor {
+        if self.is_gpu() { panic("Tensor.cast is CPU-only; call cpu().cast(dtype)") }
+        if dtype == self.dtype() { return self }
+        let storage = match self.current_storage {
+            floats(values) => cast_storage<float>(values, dtype)
+            signed8(values) => cast_storage<int8>(values, dtype)
+            unsigned8(values) => cast_storage<uint8>(values, dtype)
+            signed16(values) => cast_storage<int16>(values, dtype)
+            unsigned16(values) => cast_storage<uint16>(values, dtype)
+            signed32(values) => cast_storage<int32>(values, dtype)
+            unsigned32(values) => cast_storage<uint32>(values, dtype)
+            signed64(values) => cast_storage<int64>(values, dtype)
+            unsigned64(values) => cast_storage<uint64>(values, dtype)
+            gpu(value) => invalid_gpu_cast()
+        }
+        return Tensor.from_storage(storage, self.current_shape)
     }
 
-    static func vector(values:float[]) Tensor {
-        let shape:int[] = [values.count()]
-        return Tensor(values, shape)
+    func to(device:GPU.Device) Tensor {
+        return match self.current_storage {
+            floats(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            signed8(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            unsigned8(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            signed16(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            unsigned16(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            signed32(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            unsigned32(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            signed64(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            unsigned64(values) => Tensor.from_gpu(GPUStorage.upload(device, values), self.current_shape)
+            gpu(value) => self.same_gpu_or_fail(value, device)
+        }
     }
 
-    static func matrix(values:float[], rows:int, columns:int) Tensor {
-        let shape:int[] = [rows, columns]
-        return Tensor(values, shape)
+    func cpu() Tensor {
+        return match self.current_storage { gpu(value) => Tensor.from_storage(value.cpu_storage(), self.current_shape); else => self }
     }
 
-    static func full(shape:int[], value:float) Tensor {
+    func add(other:float) Tensor { return self.float_scalar(ScalarOperation.add(), other) }
+    func multiply(other:float) Tensor { return self.float_scalar(ScalarOperation.multiply(), other) }
+    func add(other:Tensor) Tensor { return self.float_pair(other, ScalarOperation.add()) }
+    func multiply(other:Tensor) Tensor { return self.float_pair(other, ScalarOperation.multiply()) }
+
+    private static func from_storage(storage:Storage, shape:int[]) Tensor { return Tensor(values:storage, shape:shape) }
+    private static func from_gpu(storage:GPUStorage, shape:int[]) Tensor { return Tensor(values:Storage.gpu(storage), shape:shape) }
+    private init(values:Storage, shape:int[]) { self.current_storage = values; self.current_shape = shape }
+    private static func filled(shape:int[], dtype:DType, value:float) Tensor {
+        if dtype == DType.float32() { return Tensor.full_values<float>(shape, value) }
+        if dtype == DType.int8() { return Tensor.full_values<int8>(shape, value as int8) }
+        if dtype == DType.uint8() { return Tensor.full_values<uint8>(shape, value as uint8) }
+        if dtype == DType.int16() { return Tensor.full_values<int16>(shape, value as int16) }
+        if dtype == DType.uint16() { return Tensor.full_values<uint16>(shape, value as uint16) }
+        if dtype == DType.int32() { return Tensor.full_values<int32>(shape, value as int32) }
+        if dtype == DType.uint32() { return Tensor.full_values<uint32>(shape, value as uint32) }
+        if dtype == DType.int64() { return Tensor.full_values<int64>(shape, value as int64) }
+        return Tensor.full_values<uint64>(shape, value as uint64)
+    }
+
+    private static func full_values<T>(shape:int[], value:T) Tensor {
         let count = shape_product(shape)
-        var values:float[] = []
+        var values:T[] = []
         var index = 0
-        while index < count {
-            values.append(value)
-            index++
-        }
+        while index < count { values.append(value); index++ }
         return Tensor(values, shape)
     }
 
-    static func zeros(shape:int[]) Tensor {
-        return Tensor.full(shape, 0.0)
-    }
-
-    static func ones(shape:int[]) Tensor {
-        return Tensor.full(shape, 1.0)
-    }
-
-    func shape() int[] {
-        return self.current_shape
-    }
-
-    func rank() int {
-        return self.current_shape.count()
-    }
-
-    func count() int {
-        return self.current_values.count()
-    }
-
-    func is_empty() bool {
-        return self.current_values.is_empty()
-    }
-
-    func values() float[] {
-        return self.current_values
-    }
-
-    func at(indices:int[]) float {
-        return self.current_values[flat_index(indices, self.current_shape)]
-    }
-
-    func reshape(shape:int[]) Tensor {
-        return Tensor(self.current_values, shape)
-    }
-
-    func flatten() Tensor {
-        let shape:int[] = [self.count()]
-        return Tensor(self.current_values, shape)
-    }
-
-    func transpose() Tensor {
-        if self.rank() != 2 {
-            panic("Tensor.transpose requires a rank-2 tensor")
+    private func float_scalar(operation:ScalarOperation, value:float) Tensor {
+        if self.dtype() != DType.float32() { panic("Tensor scalar arithmetic supports only dtype float32; call cast(DType.float32())") }
+        if self.is_gpu() {
+            var storage = self.gpu_storage()
+            return Tensor.from_gpu(storage.scalar(operation, value), self.current_shape)
         }
-        let rows = self.current_shape[0]
-        let columns = self.current_shape[1]
-        var values:float[] = []
-        var column = 0
-        while column < columns {
-            var row = 0
-            while row < rows {
-                values.append(self.current_values[row * columns + column])
-                row++
+        let values = self.values()
+        var result:float[] = []
+        for item in values {
+            match operation { add => { result.append(item + value) }; multiply => { result.append(item * value) } }
+        }
+        return Tensor(result, self.current_shape)
+    }
+
+    private func float_pair(other:Tensor, operation:ScalarOperation) Tensor {
+        self.require_compatible(other)
+        if self.dtype() != DType.float32() { panic("Tensor arithmetic supports only dtype float32 in this release") }
+        if self.is_gpu() { panic("Tensor GPU tensor-to-tensor arithmetic is not available in this release") }
+        let left = self.values()
+        let right = other.values()
+        var result:float[] = []
+        var index = 0
+        while index < left.count() {
+            match operation { add => { result.append(left[index] + right[index]) }; multiply => { result.append(left[index] * right[index]) } }
+            index++
+        }
+        return Tensor(result, self.current_shape)
+    }
+
+    private func require_compatible(other:Tensor) {
+        if self.dtype() != other.dtype() { panic("Tensor operation requires matching dtypes") }
+        if self.is_cpu() != other.is_cpu() { panic("Tensor operation requires matching placements") }
+        if self.is_gpu() {
+            var left = self.gpu_storage()
+            var right = other.gpu_storage()
+            if !left.same_device(right) { panic("Tensor operation requires tensors on the same GPU device") }
+        }
+        if self.rank() != other.rank() { panic("Tensor operation requires equal shapes") }
+        var dimension = 0
+        while dimension < self.rank() {
+            if self.current_shape[dimension] != other.current_shape[dimension] {
+                panic("Tensor operation requires equal shapes")
             }
-            column++
+            dimension++
         }
-        let shape:int[] = [columns, rows]
-        return Tensor(values, shape)
     }
 
-    func add(other:Tensor) Tensor {
-        self.require_same_shape(other, "add")
-        var values:float[] = []
-        var index = 0
-        while index < self.count() {
-            values.append(self.current_values[index] + other.current_values[index])
-            index++
-        }
-        return Tensor(values, self.current_shape)
+    private func gpu_storage() GPUStorage {
+        return match self.current_storage { gpu(value) => value; else => missing_gpu_storage() }
     }
 
-    func add(other:float) Tensor {
-        var values:float[] = []
-        for item in self.current_values {
-            values.append(item + other)
-        }
-        return Tensor(values, self.current_shape)
+    private func require_cpu_extraction(extractor:str) {
+        if self.is_gpu() { panic("Tensor.$(extractor) is CPU-only; call cpu().$(extractor)") }
     }
 
-    func subtract(other:Tensor) Tensor {
-        self.require_same_shape(other, "subtract")
-        var values:float[] = []
-        var index = 0
-        while index < self.count() {
-            values.append(self.current_values[index] - other.current_values[index])
-            index++
+    private func same_gpu_or_fail(storage:@GPUStorage, device:@GPU.Device) Tensor {
+        if !storage.same_device(device) {
+            panic("Tensor.to cannot migrate between GPU devices; call cpu().to(other_device)")
         }
-        return Tensor(values, self.current_shape)
-    }
-
-    func subtract(other:float) Tensor {
-        var values:float[] = []
-        for item in self.current_values {
-            values.append(item - other)
-        }
-        return Tensor(values, self.current_shape)
-    }
-
-    func multiply(other:Tensor) Tensor {
-        self.require_same_shape(other, "multiply")
-        var values:float[] = []
-        var index = 0
-        while index < self.count() {
-            values.append(self.current_values[index] * other.current_values[index])
-            index++
-        }
-        return Tensor(values, self.current_shape)
-    }
-
-    func multiply(other:float) Tensor {
-        var values:float[] = []
-        for item in self.current_values {
-            values.append(item * other)
-        }
-        return Tensor(values, self.current_shape)
-    }
-
-    func divide(other:Tensor) Tensor {
-        self.require_same_shape(other, "divide")
-        var values:float[] = []
-        var index = 0
-        while index < self.count() {
-            values.append(self.current_values[index] / other.current_values[index])
-            index++
-        }
-        return Tensor(values, self.current_shape)
-    }
-
-    func divide(other:float) Tensor {
-        var values:float[] = []
-        for item in self.current_values {
-            values.append(item / other)
-        }
-        return Tensor(values, self.current_shape)
-    }
-
-    func sum() float {
-        var result = 0.0
-        for value in self.current_values {
-            result += value
-        }
-        return result
-    }
-
-    func mean() float {
-        if self.is_empty() {
-            panic("Tensor.mean requires at least one value")
-        }
-        return self.sum() / self.count() as float
-    }
-
-    func matmul(other:Tensor) Tensor {
-        if self.rank() != 2 || other.rank() != 2 {
-            panic("Tensor.matmul requires two rank-2 tensors")
-        }
-        let rows = self.current_shape[0]
-        let shared = self.current_shape[1]
-        let other_rows = other.current_shape[0]
-        let columns = other.current_shape[1]
-        if shared != other_rows {
-            panic("Tensor.matmul requires matching inner dimensions")
-        }
-
-        var values:float[] = []
-        var row = 0
-        while row < rows {
-            var column = 0
-            while column < columns {
-                var value = 0.0
-                var index = 0
-                while index < shared {
-                    value += self.current_values[row * shared + index] *
-                        other.current_values[index * columns + column]
-                    index++
-                }
-                values.append(value)
-                column++
-            }
-            row++
-        }
-        let shape:int[] = [rows, columns]
-        return Tensor(values, shape)
-    }
-
-    private func require_same_shape(other:Tensor, operation:str) {
-        if self.rank() != other.rank() {
-            panic("Tensor.$(operation) requires equal shapes")
-        }
-        var index = 0
-        while index < self.rank() {
-            if self.current_shape[index] != other.current_shape[index] {
-                panic("Tensor.$(operation) requires equal shapes")
-            }
-            index++
-        }
+        return self
     }
 }
 
-func require_element_count(shape:int[], count:int) {
-    if shape_product(shape) != count {
-        panic("Tensor values must match the declared shape")
-    }
+local func empty_storage(dtype:DType) Storage {
+    if dtype == DType.float32() { return Storage.floats([]) }
+    if dtype == DType.int8() { return Storage.signed8([]) }
+    if dtype == DType.uint8() { return Storage.unsigned8([]) }
+    if dtype == DType.int16() { return Storage.signed16([]) }
+    if dtype == DType.uint16() { return Storage.unsigned16([]) }
+    if dtype == DType.int32() { return Storage.signed32([]) }
+    if dtype == DType.uint32() { return Storage.unsigned32([]) }
+    if dtype == DType.int64() { return Storage.signed64([]) }
+    return Storage.unsigned64([])
 }
 
-func shape_product(shape:int[]) int {
+local func cast_storage<T>(values:T[], dtype:DType) Storage {
+    if dtype == DType.float32() { return Storage.floats(cast_values<T, float>(values)) }
+    if dtype == DType.int8() { return Storage.signed8(cast_values<T, int8>(values)) }
+    if dtype == DType.uint8() { return Storage.unsigned8(cast_values<T, uint8>(values)) }
+    if dtype == DType.int16() { return Storage.signed16(cast_values<T, int16>(values)) }
+    if dtype == DType.uint16() { return Storage.unsigned16(cast_values<T, uint16>(values)) }
+    if dtype == DType.int32() { return Storage.signed32(cast_values<T, int32>(values)) }
+    if dtype == DType.uint32() { return Storage.unsigned32(cast_values<T, uint32>(values)) }
+    if dtype == DType.int64() { return Storage.signed64(cast_values<T, int64>(values)) }
+    return Storage.unsigned64(cast_values<T, uint64>(values))
+}
+
+local func cast_values<T, U>(values:T[]) U[] {
+    var result:U[] = []
+    for value in values { result.append(value as U) }
+    return result
+}
+
+local func invalid_gpu_cast() Storage {
+    panic("Tensor.cast is CPU-only; call cpu().cast(dtype)")
+}
+
+local func missing_gpu_storage() GPUStorage {
+    panic("Tensor is not GPU-resident")
+}
+
+local func extraction_mismatch<T>(extractor:str) T[] {
+    panic("Tensor.$(extractor) does not match the tensor dtype; use the matching extractor or cast(dtype)")
+}
+
+local func only_item<T>(values:T[], extractor:str) T {
+    if values.count() != 1 { panic("Tensor.$(extractor) requires exactly one element") }
+    return values[0]
+}
+
+local func require_element_count(shape:int[], count:int) {
+    if shape_product(shape) != count { panic("Tensor values must match the declared shape") }
+}
+
+local func vector_shape(count:int) int[] { return [count] }
+local func matrix_shape(rows:int, columns:int) int[] { return [rows, columns] }
+
+local func shape_product(shape:int[]) int {
     var result = 1
     for dimension in shape {
-        if dimension < 0 {
-            panic("Tensor shape dimensions must be non-negative")
-        }
+        if dimension < 0 { panic("Tensor shape dimensions must be non-negative") }
         result *= dimension
     }
     return result
 }
 
-func flat_index(indices:int[], shape:int[]) int {
-    if indices.count() != shape.count() {
-        panic("Tensor.at requires one index per dimension")
-    }
+local func flat_index(indices:int[], shape:int[]) int {
+    if indices.count() != shape.count() { panic("Tensor.at requires one index per dimension") }
     var result = 0
     var dimension = 0
     while dimension < shape.count() {
         let index = indices[dimension]
-        if index < 0 || index >= shape[dimension] {
-            panic("Tensor.at index is outside the tensor shape")
-        }
+        if index < 0 || index >= shape[dimension] { panic("Tensor.at index is outside the tensor shape") }
         result = result * shape[dimension] + index
         dimension++
     }

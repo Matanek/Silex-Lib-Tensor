@@ -1,0 +1,10 @@
+use GFX.GPU
+use Tensor
+func main() {
+    var device = GPU.Device()
+    var values:float[] = [1.0]
+    let cpu = Tensor.vector(values)
+    let gpu = cpu.to(device)
+    let result = cpu.add(gpu)
+    print(result.count())
+}

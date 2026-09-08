@@ -1,85 +1,122 @@
 use Tensor
+use Tensor.DType
 
-test "create and inspect immutable multidimensional values" {
-    let tensor = Tensor([
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0
-    ], [2, 3])
-
-    assert(tensor.rank() == 2)
-    assert(tensor.count() == 6)
-    assert(!tensor.is_empty())
-    assert(tensor.at([0, 0]) == 1.0)
-    assert(tensor.at([1, 2]) == 6.0)
-
-    var detached = tensor.values()
-    detached[0] = 99.0
-    assert(tensor.at([0, 0]) == 1.0, "returned values do not mutate the tensor")
-
-    var detached_shape = tensor.shape()
-    detached_shape[0] = 6
-    assert(tensor.shape()[0] == 2, "returned shape does not mutate the tensor")
+test "inspect the closed dtype family" {
+    assert(DType.float32().byte_width() == 4)
+    assert(DType.int8().byte_width() == 1)
+    assert(DType.uint8().byte_width() == 1)
+    assert(DType.int16().byte_width() == 2)
+    assert(DType.uint16().byte_width() == 2)
+    assert(DType.int32().byte_width() == 4)
+    assert(DType.uint32().byte_width() == 4)
+    assert(DType.int64().byte_width() == 8)
+    assert(DType.uint64().byte_width() == 8)
+    assert(DType.float32().is_floating())
+    assert(!DType.float32().is_integer())
+    assert(DType.int32().is_signed_integer())
+    assert(DType.uint64().is_unsigned_integer())
 }
 
-test "reshape and transpose tensors" {
-    let matrix = Tensor.matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3)
-    let reshaped = matrix.reshape([3, 2])
-    let flattened = matrix.flatten()
-    let transposed = matrix.transpose()
-
-    assert(reshaped.at([2, 1]) == 6.0)
-    assert(flattened.rank() == 1)
-    assert(flattened.at([4]) == 5.0)
-    assert(transposed.at([0, 1]) == 4.0)
-    assert(transposed.at([2, 1]) == 6.0)
+test "construct and extract all runtime dtypes" {
+    var floats:float[] = [1.5, -2.25]
+    var signed8:int8[] = [-127 as int8, 127 as int8]
+    var unsigned8:uint8[] = [0 as uint8, 255 as uint8]
+    var signed16:int16[] = [-32767 as int16, 32767 as int16]
+    var unsigned16:uint16[] = [0 as uint16, 65535 as uint16]
+    var signed32:int32[] = [-2147483647 as int32, 2147483647 as int32]
+    var unsigned32:uint32[] = [0 as uint32, 0xffff_ffff]
+    var signed64:int64[] = [-9223372036854775807 as int64, 9223372036854775807 as int64]
+    var unsigned64:uint64[] = [0 as uint64, 0xffff_ffff_ffff_ffff]
+    let f = Tensor(floats, [2])
+    let i8 = Tensor(signed8, [2])
+    let u8 = Tensor(unsigned8, [2])
+    let i16 = Tensor(signed16, [2])
+    let u16 = Tensor(unsigned16, [2])
+    let i32 = Tensor(signed32, [2])
+    let u32 = Tensor(unsigned32, [2])
+    let i64 = Tensor(signed64, [2])
+    let u64 = Tensor(unsigned64, [2])
+    assert(f.dtype() == DType.float32() && f.values()[1] == -2.25)
+    assert(i8.dtype() == DType.int8() && i8.int8_values()[0] == -127 as int8)
+    assert(u8.dtype() == DType.uint8() && u8.uint8_values()[1] == 255 as uint8)
+    assert(i16.dtype() == DType.int16() && i16.int16_values()[0] == -32767 as int16)
+    assert(u16.dtype() == DType.uint16() && u16.uint16_values()[1] == 65535 as uint16)
+    assert(i32.dtype() == DType.int32() && i32.int32_values()[1] == 2147483647 as int32)
+    assert(u32.dtype() == DType.uint32() && u32.uint32_values()[1] == 0xffff_ffff)
+    assert(i64.dtype() == DType.int64() && i64.int64_values()[1] == 9223372036854775807 as int64)
+    assert(u64.dtype() == DType.uint64() && u64.uint64_values()[1] == 0xffff_ffff_ffff_ffff)
 }
 
-test "apply element-wise and scalar arithmetic" {
-    let left = Tensor.vector([1.0, 2.0, 3.0])
-    let right = Tensor.vector([4.0, 5.0, 6.0])
-
-    let sum = left.add(right)
-    let difference = right.subtract(left)
-    let product = left.multiply(right)
-    let quotient = right.divide(left)
-    let scalar = left.add(1.0).multiply(2.0).subtract(1.0).divide(3.0)
-
-    assert(sum.at([2]) == 9.0)
-    assert(difference.at([1]) == 3.0)
-    assert(product.at([2]) == 18.0)
-    assert(quotient.at([0]) == 4.0)
-    assert(scalar.at([1]) == 5.0 / 3.0)
-    assert(sum.sum() == 21.0)
-    assert(sum.mean() == 7.0)
+test "keep let tensors readable while ordinary assignment shares storage" {
+    var source:int32[] = [3 as int32, 5 as int32]
+    let original = Tensor.vector(source)
+    let shared = original
+    assert(original.is_cpu() && !original.is_gpu())
+    assert(shared.int32_values()[1] == 5 as int32)
 }
 
-test "multiply rank-2 tensors" {
-    let left = Tensor.matrix([
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0
-    ], 2, 3)
-    let right = Tensor.matrix([
-        7.0, 8.0,
-        9.0, 10.0,
-        11.0, 12.0
-    ], 3, 2)
-    let result = left.matmul(right)
-
-    assert(result.at([0, 0]) == 58.0)
-    assert(result.at([0, 1]) == 64.0)
-    assert(result.at([1, 0]) == 139.0)
-    assert(result.at([1, 1]) == 154.0)
+test "normalize default Silex numeric aliases" {
+    var signed:int[] = [-2, 3]
+    var unsigned:uint[] = [1 as uint, 4 as uint]
+    let signed_tensor = Tensor.vector(signed)
+    let unsigned_tensor = Tensor.vector(unsigned)
+    assert(signed_tensor.dtype() == DType.int64())
+    assert(unsigned_tensor.dtype() == DType.uint64())
+    assert(signed_tensor.int64_values()[0] == -2)
+    assert(unsigned_tensor.uint64_values()[1] == 4 as uint64)
 }
 
-test "construct scalar and filled tensors" {
+test "create typed filled tensors and scalar items" {
+    let zeros = Tensor.zeros([2, 2], DType.uint16())
+    let ones = Tensor.ones([3], DType.int8())
+    let full = Tensor.full([2], 7 as int32)
     let scalar = Tensor.scalar(3.5)
-    let zeros = Tensor.zeros([2, 2])
-    let ones = Tensor.ones([2, 2])
-    let full = Tensor.full([2, 3], 7.0)
+    assert(zeros.uint16_values()[3] == 0 as uint16)
+    assert(ones.int8_values()[2] == 1 as int8)
+    assert(full.int32_values()[0] == 7 as int32)
+    assert(scalar.item() == 3.5)
+    assert(Tensor.scalar(-1 as int8).int8_item() == -1 as int8)
+    assert(Tensor.scalar(2 as uint8).uint8_item() == 2 as uint8)
+    assert(Tensor.scalar(-3 as int16).int16_item() == -3 as int16)
+    assert(Tensor.scalar(4 as uint16).uint16_item() == 4 as uint16)
+    assert(Tensor.scalar(-5 as int32).int32_item() == -5 as int32)
+    assert(Tensor.scalar(6 as uint32).uint32_item() == 6 as uint32)
+    assert(Tensor.scalar(-7 as int64).int64_item() == -7 as int64)
+    assert(Tensor.scalar(8 as uint64).uint64_item() == 8 as uint64)
+}
 
-    assert(scalar.rank() == 0)
-    assert(scalar.at([]) == 3.5)
-    assert(zeros.sum() == 0.0)
-    assert(ones.sum() == 4.0)
-    assert(full.sum() == 42.0)
+test "cast explicitly on CPU and preserve shape" {
+    var values:int16[] = [3 as int16, 0 as int16, 12 as int16]
+    let source = Tensor(values, [3])
+    let floating = source.cast(DType.float32())
+    let unsigned = floating.cast(DType.uint8())
+    assert(floating.dtype() == DType.float32())
+    assert(floating.values()[0] == 3.0)
+    assert(unsigned.dtype() == DType.uint8())
+    assert(unsigned.uint8_values()[2] == 12 as uint8)
+    assert(unsigned.rank() == 1 && unsigned.shape()[0] == 3)
+}
+
+test "cast one exact CPU value to every dtype" {
+    let source = Tensor.scalar(1 as int8)
+    assert(source.cast(DType.float32()).item() == 1.0)
+    assert(source.cast(DType.int8()).int8_item() == 1 as int8)
+    assert(source.cast(DType.uint8()).uint8_item() == 1 as uint8)
+    assert(source.cast(DType.int16()).int16_item() == 1 as int16)
+    assert(source.cast(DType.uint16()).uint16_item() == 1 as uint16)
+    assert(source.cast(DType.int32()).int32_item() == 1 as int32)
+    assert(source.cast(DType.uint32()).uint32_item() == 1 as uint32)
+    assert(source.cast(DType.int64()).int64_item() == 1 as int64)
+    assert(source.cast(DType.uint64()).uint64_item() == 1 as uint64)
+}
+
+test "run float32 scalar and pair arithmetic on CPU" {
+    var left_values:float[] = [1.0, 2.0, 3.0]
+    var right_values:float[] = [4.0, 5.0, 6.0]
+    let left = Tensor.vector(left_values)
+    let right = Tensor.vector(right_values)
+    let scalar = left.add(1.0).multiply(2.0)
+    let pair = left.add(right).multiply(right)
+    assert(scalar.values()[0] == 4.0 && scalar.values()[2] == 8.0)
+    assert(pair.values()[0] == 20.0 && pair.values()[2] == 54.0)
 }

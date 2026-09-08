@@ -1,0 +1,31 @@
+public struct DType {
+    private let code:int
+
+    private init(code:int) { self.code = code }
+
+    static func float32() DType { return DType(code:0) }
+    static func int8() DType { return DType(code:1) }
+    static func uint8() DType { return DType(code:2) }
+    static func int16() DType { return DType(code:3) }
+    static func uint16() DType { return DType(code:4) }
+    static func int32() DType { return DType(code:5) }
+    static func uint32() DType { return DType(code:6) }
+    static func int64() DType { return DType(code:7) }
+    static func uint64() DType { return DType(code:8) }
+
+    func byte_width() int {
+        if self.code == 1 || self.code == 2 { return 1 }
+        if self.code == 3 || self.code == 4 { return 2 }
+        if self.code == 7 || self.code == 8 { return 8 }
+        return 4
+    }
+
+    func is_floating() bool { return self.code == 0 }
+    func is_integer() bool { return !self.is_floating() }
+    func is_signed_integer() bool {
+        return self.code == 1 || self.code == 3 || self.code == 5 || self.code == 7
+    }
+    func is_unsigned_integer() bool {
+        return self.code == 2 || self.code == 4 || self.code == 6 || self.code == 8
+    }
+}

@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+func main() {
+    var values:int16[] = [256 as int16]
+    let converted = Tensor.vector(values).cast(DType.uint8())
+    print(converted.uint8_item())
+}

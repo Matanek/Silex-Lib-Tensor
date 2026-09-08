@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+func main() {
+    var values:int32[] = [1 as int32]
+    let extracted = Tensor.vector(values).values()
+    print(extracted.count())
+}
