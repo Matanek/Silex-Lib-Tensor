@@ -215,3 +215,19 @@ Depuis la racine de `SilexProject` :
 silex test Packages/Tensor/Tests/Consumer
 silex check Packages/Tensor
 ```
+
+La suite ordinaire est hermétique. Elle lit le fixture Silex committé, sans
+Python, téléchargement ni accès réseau. Ce corpus couvre les neuf dtypes et
+sépare les résultats exacts, les calculs `float32` tolérés, les transferts GPU
+bit-exacts et les erreurs attendues. Les comparaisons traitent explicitement
+NaN, les infinis et le signe de zéro ; les tolérances absolue et relative sont
+fixées par famille d'opérations dans le
+[rapport différentiel](../../Tools/Oracle/REPORT.md).
+
+La régénération est une opération de maintenance volontaire. Elle emploie les
+versions épinglées de NumPy, PyTorch, TensorFlow et JAX dans un environnement
+Python jetable, exige l'accord d'au moins deux oracles par résultat numérique
+commun, puis vérifie le diff avant acceptation. Le
+[guide du générateur](../../Tools/Oracle/README.md) donne les commandes exactes,
+la seed et les règles de licence. Une mise à jour de framework ne modifie jamais
+automatiquement le contrat Tensor 0.1.0.

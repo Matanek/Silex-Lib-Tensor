@@ -209,3 +209,18 @@ From the `SilexProject` root:
 silex test Packages/Tensor/Tests/Consumer
 silex check Packages/Tensor
 ```
+
+The normal suite is hermetic. It reads the committed Silex fixture without
+Python, downloads, or network access. The corpus covers all nine dtypes and
+separates exact results, tolerated `float32` computations, bit-exact GPU
+transfers, and expected errors. Comparisons handle NaN, infinities, and the sign
+of zero explicitly; absolute and relative tolerances are fixed per operation
+family in the [differential report](../../Tools/Oracle/REPORT.md).
+
+Regeneration is a deliberate maintenance operation. It runs pinned NumPy,
+PyTorch, TensorFlow, and JAX versions in a disposable Python environment,
+requires at least two oracles to agree on every common numeric result, and then
+requires review of the resulting diff. The
+[generator guide](../../Tools/Oracle/README.md) records the exact commands,
+seed, and license rules. Updating a framework never changes the Tensor 0.1.0
+contract automatically.

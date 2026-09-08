@@ -14,5 +14,6 @@ silex install Tensor
 
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
+- [Differential oracle maintenance](Tools/Oracle/README.md)
 
 The package requires Silex 0.43.0 or newer.
