@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Autograd.Variable
+use Tensor.DType
+
+func main() {
+    var values:float[] = [1.0, 2.0]
+    var input = Variable(Tensor.vector(values))
+    let invalid = input.value().cast(DType.int32())
+}

@@ -4,9 +4,9 @@
 public value covers `float32` and eight integer dtypes, explicit CPU/GPU
 placement, lossless transfers, shared shape views, typed indexing, broadcasting,
 checked numerical computation, seeded initialization, and eager neural
-primitives for dense, convolutional, and recurrent models. Automatic
-differentiation can build on this immutable contract without exposing its
-graph in the core API.
+primitives for dense, convolutional, and recurrent models. Its eager
+reverse-mode autodifferentiation keeps immutable Tensor values and GPU-resident
+gradients behind explicit `Tensor.Autograd.Variable` leaves.
 
 ```text
 silex install Tensor

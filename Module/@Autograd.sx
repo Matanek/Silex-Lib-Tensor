@@ -1,0 +1,897 @@
+use STD.Math
+
+enum AutogradRule {
+    leaf(GradientSlot)
+    binary(AutogradInput, AutogradInput, BinaryOperation)
+    scalar(AutogradInput, float, BinaryOperation)
+    unary(AutogradInput, Tensor, UnaryOperation)
+    reshape(AutogradInput)
+    permute(AutogradInput, int[])
+    select(AutogradInput, int, int)
+    narrow(AutogradInput, int, int, int)
+    contiguous(AutogradInput)
+    reduction(AutogradInput, Tensor, int[], bool, ReductionOperation)
+    linear(AutogradInput, AutogradInput, LinearOperation)
+    concatenate(AutogradInput, AutogradInput, int, int)
+    gather(AutogradInput, Tensor, int)
+    convolution(AutogradInput, AutogradInput, int, int)
+    pooling(AutogradInput, Tensor, int, int, int, PoolOperation)
+    dropout(AutogradInput, float, int, int)
+    released
+}
+
+struct AutogradInput {
+    var node:AutogradNode?
+    var value:Tensor
+}
+
+package nocopy class GradientSlot {
+    private var current_gradient:Tensor? = null
+
+    func gradient() Tensor? { return self.current_gradient }
+
+    func accumulate(gradient:Tensor) {
+        if let current = self.current_gradient {
+            self.current_gradient = current.add(gradient).autograd_detached()
+        } else {
+            self.current_gradient = gradient.autograd_detached()
+        }
+    }
+
+    func zero(reference:Tensor) {
+        if self.current_gradient != null {
+            self.current_gradient = reference.autograd_constant(0.0)
+        }
+    }
+}
+
+package nocopy class AutogradNode {
+    private static var retained_edges:int = 0
+    module var rule:AutogradRule
+    module var consumed:bool = false
+
+    module init(rule:AutogradRule) {
+        self.rule = rule
+        AutogradNode.retained_edges += autograd_parents(rule).count()
+    }
+
+    drop { AutogradNode.retained_edges -= autograd_parents(self.rule).count() }
+
+    module func consume() {
+        AutogradNode.retained_edges -= autograd_parents(self.rule).count()
+        self.rule = AutogradRule.released
+        self.consumed = true
+    }
+
+    module static func retained_edge_count() int { return AutogradNode.retained_edges }
+}
+
+package func autograd_retained_edge_count() int { return AutogradNode.retained_edge_count() }
+
+struct AutogradContribution {
+    var node:AutogradNode
+    var gradient:Tensor
+}
+
+extend Tensor {
+    func detach() Tensor { return self.autograd_detached() }
+
+    func backward(seed:Tensor? = null) {
+        var root = require_autograd_node(self)
+        if root.consumed { panic("Tensor.backward cannot reuse a consumed graph") }
+        let initial = backward_seed(self, seed)
+        var visited:AutogradNode[] = []
+        var order:AutogradNode[] = []
+        append_autograd_order(root, visited, order)
+        var gradient_nodes:AutogradNode[] = [root]
+        var gradients:Tensor[] = [initial]
+        var index = order.count() - 1
+        while index >= 0 {
+            var node = order[index]
+            let gradient = autograd_gradient(node, gradient_nodes, gradients)
+            match node.rule {
+                leaf(slot) => { slot.accumulate(gradient) }
+                released => { panic("Tensor.backward cannot reuse a consumed graph") }
+                else => {
+                    var contributions = backward_rule(node.rule, gradient)
+                    for contribution in contributions {
+                        accumulate_autograd_gradient(
+                            contribution.node, contribution.gradient,
+                            gradient_nodes, gradients
+                        )
+                    }
+                    node.consume()
+                }
+            }
+            index--
+        }
+    }
+
+    package func autograd_leaf(slot:GradientSlot) Tensor {
+        return self.autograd_recorded(AutogradNode(AutogradRule.leaf(slot)))
+    }
+
+    module func autograd_constant(value:float) Tensor {
+        return self.autograd_constant_shape(self.shape(), value)
+    }
+
+    module func autograd_constant_shape(shape:int[], value:float) Tensor {
+        require_neural_float(self, "autograd constant")
+        if self.is_gpu() {
+            var storage = self.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(storage.autograd_fill(shape, value)),
+                Layout(shape)
+            )
+        }
+        return Tensor.full(shape, value)
+    }
+
+    module func autograd_equal(other:Tensor) Tensor {
+        let shape = broadcast_shape(self.shape(), other.shape(), "autograd equality")
+        if self.is_gpu() {
+            var left = self.autograd_gpu_storage()
+            var right = other.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(left.autograd_equal(right, self.autograd_layout(), other.autograd_layout(), shape)),
+                Layout(shape)
+            )
+        }
+        return Tensor(
+            autograd_equal_cpu(
+                self.autograd_cpu_storage().float_values(), self.autograd_layout(),
+                other.autograd_cpu_storage().float_values(), other.autograd_layout(), shape
+            ),
+            shape
+        )
+    }
+
+    module func autograd_sign() Tensor {
+        if self.is_gpu() {
+            var storage = self.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(storage.autograd_mask(self.autograd_layout(), 12)),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(autograd_mask_cpu(self, false), self.shape())
+    }
+
+    module func autograd_positive_mask() Tensor {
+        if self.is_gpu() {
+            var storage = self.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(storage.autograd_mask(self.autograd_layout(), 13)),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(autograd_mask_cpu(self, true), self.shape())
+    }
+
+    module func autograd_gather_backward(gradient:Tensor, indices:Tensor, axis:int) Tensor {
+        if self.is_gpu() {
+            let compact_gradient = gradient.contiguous()
+            var incoming = compact_gradient.autograd_gpu_storage()
+            var index_storage = indices.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(incoming.gather_backward(
+                    index_storage, compact_gradient.autograd_layout(), indices.autograd_layout(),
+                    self.autograd_layout(), axis
+                )),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(
+            gather_backward_cpu_values(
+                gradient.autograd_cpu_storage().float_values(), gradient.autograd_layout(),
+                indices.autograd_cpu_storage().int32_values(), indices.autograd_layout(),
+                self.autograd_layout(), axis
+            ),
+            self.shape()
+        )
+    }
+
+    module func autograd_convolution_input(gradient:Tensor, kernel:Tensor, stride:int, padding:int) Tensor {
+        if self.is_gpu() {
+            var incoming = gradient.autograd_gpu_storage()
+            var weights = kernel.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(incoming.convolution_backward_input(
+                    weights, gradient.autograd_layout(), kernel.autograd_layout(),
+                    self.autograd_layout(), stride, padding
+                )),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(
+            convolution_backward_input_cpu_values(
+                gradient.autograd_cpu_storage().float_values(), gradient.autograd_layout(),
+                kernel.autograd_cpu_storage().float_values(), kernel.autograd_layout(),
+                self.autograd_layout(), stride, padding
+            ),
+            self.shape()
+        )
+    }
+
+    module func autograd_convolution_kernel(gradient:Tensor, input:Tensor, stride:int, padding:int) Tensor {
+        if self.is_gpu() {
+            var incoming = gradient.autograd_gpu_storage()
+            var values = input.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(incoming.convolution_backward_kernel(
+                    values, gradient.autograd_layout(), input.autograd_layout(),
+                    self.autograd_layout(), stride, padding
+                )),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(
+            convolution_backward_kernel_cpu_values(
+                gradient.autograd_cpu_storage().float_values(), gradient.autograd_layout(),
+                input.autograd_cpu_storage().float_values(), input.autograd_layout(),
+                self.autograd_layout(), stride, padding
+            ),
+            self.shape()
+        )
+    }
+
+    module func autograd_pool_backward(
+        gradient:Tensor, output:Tensor, kernel_size:int,
+        stride:int, padding:int, operation:PoolOperation
+    ) Tensor {
+        if self.is_gpu() {
+            var incoming = gradient.autograd_gpu_storage()
+            var input = self.autograd_gpu_storage()
+            return Tensor.autograd_from_storage(
+                Storage.gpu(incoming.pooling_backward(
+                    input, gradient.autograd_layout(), self.autograd_layout(),
+                    output.autograd_layout(), kernel_size, stride, padding, operation
+                )),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(
+            pooling_backward_cpu_values(
+                gradient.autograd_cpu_storage().float_values(), gradient.autograd_layout(),
+                self.autograd_cpu_storage().float_values(), self.autograd_layout(),
+                output.autograd_layout(), kernel_size, stride, padding, operation
+            ),
+            self.shape()
+        )
+    }
+}
+
+func autograd_input(tensor:Tensor) AutogradInput {
+    return AutogradInput(node:tensor.autograd_node(), value:tensor.autograd_detached())
+}
+
+func autograd_record(result:Tensor, rule:AutogradRule) Tensor {
+    if autograd_parents(rule).is_empty() { return result }
+    if result.dtype() != DType.float32() {
+        panic("Tensor autodifferentiation supports only dtype float32")
+    }
+    return result.autograd_recorded(AutogradNode(rule))
+}
+
+func autograd_record_binary(result:Tensor, left:Tensor, right:Tensor, operation:BinaryOperation) Tensor {
+    return autograd_record(result, AutogradRule.binary(autograd_input(left), autograd_input(right), operation))
+}
+
+func autograd_record_scalar(result:Tensor, input:Tensor, value:float, operation:BinaryOperation) Tensor {
+    return autograd_record(result, AutogradRule.scalar(autograd_input(input), value, operation))
+}
+
+func autograd_record_unary(result:Tensor, input:Tensor, operation:UnaryOperation) Tensor {
+    return autograd_record(result, AutogradRule.unary(autograd_input(input), result.autograd_detached(), operation))
+}
+
+func autograd_record_reshape(result:Tensor, input:Tensor) Tensor {
+    return autograd_record(result, AutogradRule.reshape(autograd_input(input)))
+}
+
+func autograd_record_permute(result:Tensor, input:Tensor, axes:int[]) Tensor {
+    return autograd_record(result, AutogradRule.permute(autograd_input(input), copy axes))
+}
+
+func autograd_record_select(result:Tensor, input:Tensor, axis:int, index:int) Tensor {
+    return autograd_record(result, AutogradRule.select(autograd_input(input), axis, index))
+}
+
+func autograd_record_narrow(result:Tensor, input:Tensor, axis:int, start:int, count:int) Tensor {
+    return autograd_record(result, AutogradRule.narrow(autograd_input(input), axis, start, count))
+}
+
+func autograd_record_contiguous(result:Tensor, input:Tensor) Tensor {
+    return autograd_record(result, AutogradRule.contiguous(autograd_input(input)))
+}
+
+func autograd_record_reduction(
+    result:Tensor, input:Tensor, axes:int[], keep_dimensions:bool, operation:ReductionOperation
+) Tensor {
+    return autograd_record(result, AutogradRule.reduction(
+        autograd_input(input), result.autograd_detached(), axes, keep_dimensions, operation
+    ))
+}
+
+func autograd_record_linear(result:Tensor, left:Tensor, right:Tensor, operation:LinearOperation) Tensor {
+    return autograd_record(result, AutogradRule.linear(autograd_input(left), autograd_input(right), operation))
+}
+
+func autograd_record_concatenate(result:Tensor, left:Tensor, right:Tensor, axis:int) Tensor {
+    return autograd_record(result, AutogradRule.concatenate(
+        autograd_input(left), autograd_input(right), axis, left.shape()[axis]
+    ))
+}
+
+func autograd_record_gather(result:Tensor, source:Tensor, indices:Tensor, axis:int) Tensor {
+    return autograd_record(result, AutogradRule.gather(
+        autograd_input(source), indices.autograd_detached(), axis
+    ))
+}
+
+func autograd_record_convolution(
+    result:Tensor, input:Tensor, kernel:Tensor, stride:int, padding:int
+) Tensor {
+    return autograd_record(result, AutogradRule.convolution(
+        autograd_input(input), autograd_input(kernel), stride, padding
+    ))
+}
+
+func autograd_record_pooling(
+    result:Tensor, input:Tensor, kernel_size:int, stride:int,
+    padding:int, operation:PoolOperation
+) Tensor {
+    return autograd_record(result, AutogradRule.pooling(
+        autograd_input(input), result.autograd_detached(),
+        kernel_size, stride, padding, operation
+    ))
+}
+
+func autograd_record_dropout(
+    result:Tensor, input:Tensor, probability:float, seed:int, iteration:int
+) Tensor {
+    return autograd_record(result, AutogradRule.dropout(
+        autograd_input(input), probability, seed, iteration
+    ))
+}
+
+func autograd_parents(rule:AutogradRule) AutogradNode[] {
+    var result:AutogradNode[] = []
+    match rule {
+        leaf(slot) => {}
+        binary(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
+        scalar(input, value, operation) => { append_autograd_parent(input, result) }
+        unary(input, output, operation) => { append_autograd_parent(input, result) }
+        reshape(input) => { append_autograd_parent(input, result) }
+        permute(input, axes) => { append_autograd_parent(input, result) }
+        select(input, axis, index) => { append_autograd_parent(input, result) }
+        narrow(input, axis, start, count) => { append_autograd_parent(input, result) }
+        contiguous(input) => { append_autograd_parent(input, result) }
+        reduction(input, output, axes, keep_dimensions, operation) => { append_autograd_parent(input, result) }
+        linear(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
+        concatenate(left, right, axis, left_size) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
+        gather(source, indices, axis) => { append_autograd_parent(source, result) }
+        convolution(input, kernel, stride, padding) => { append_autograd_parent(input, result); append_autograd_parent(kernel, result) }
+        pooling(input, output, kernel_size, stride, padding, operation) => { append_autograd_parent(input, result) }
+        dropout(input, probability, seed, iteration) => { append_autograd_parent(input, result) }
+        released => {}
+    }
+    return result
+}
+
+func append_autograd_parent(input:AutogradInput, parents:&AutogradNode[]) {
+    if var node = input.node { parents.append(node) }
+}
+
+func require_autograd_node(tensor:Tensor) AutogradNode {
+    if var node = tensor.autograd_node() { return node }
+    panic("Tensor.backward requires a result connected to a tracked Variable")
+}
+
+func backward_seed(output:Tensor, requested:Tensor?) Tensor {
+    if let seed = requested {
+        if seed.dtype() != DType.float32() || !shapes_equal(seed.shape(), output.shape()) {
+            panic("Tensor.backward seed must be float32 with the output shape")
+        }
+        if seed.is_cpu() != output.is_cpu() {
+            panic("Tensor.backward seed must use the output placement")
+        }
+        if seed.is_gpu() {
+            var output_storage = output.autograd_gpu_storage()
+            var seed_storage = seed.autograd_gpu_storage()
+            if !output_storage.same_device(seed_storage) {
+                panic("Tensor.backward seed must use the output GPU device")
+            }
+        }
+        return seed.autograd_detached()
+    }
+    if output.rank() != 0 { panic("Tensor.backward without a seed requires a scalar output") }
+    return output.autograd_detached().autograd_constant(1.0)
+}
+
+func append_autograd_order(node:AutogradNode, visited:&AutogradNode[], order:&AutogradNode[]) {
+    for existing in visited { if existing == node { return } }
+    visited.append(node)
+    for parent in autograd_parents(node.rule) { append_autograd_order(parent, visited, order) }
+    order.append(node)
+}
+
+func autograd_gradient(node:AutogradNode, nodes:AutogradNode[], gradients:Tensor[]) Tensor {
+    var index = 0
+    while index < nodes.count() {
+        if nodes[index] == node { return gradients[index] }
+        index++
+    }
+    panic("Tensor autograd graph is missing an accumulated gradient")
+}
+
+func accumulate_autograd_gradient(
+    node:AutogradNode, gradient:Tensor,
+    nodes:&AutogradNode[], gradients:&Tensor[]
+) {
+    var index = 0
+    while index < nodes.count() {
+        if nodes[index] == node {
+            gradients[index] = gradients[index].add(gradient).autograd_detached()
+            return
+        }
+        index++
+    }
+    nodes.append(node)
+    gradients.append(gradient.autograd_detached())
+}
+
+func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
+    return match rule {
+        binary(left, right, operation) => backward_binary(left, right, operation, gradient)
+        scalar(input, value, operation) => backward_scalar(input, value, operation, gradient)
+        unary(input, output, operation) => backward_unary(input, output, operation, gradient)
+        reshape(input) => one_contribution(input, gradient.reshape(input.value.shape()))
+        permute(input, axes) => one_contribution(input, gradient.permute(inverse_axes(axes)))
+        select(input, axis, index) => one_contribution(input, backward_select(input.value, gradient, axis, index))
+        narrow(input, axis, start, count) => one_contribution(input, backward_narrow(input.value, gradient, axis, start, count))
+        contiguous(input) => one_contribution(input, gradient)
+        reduction(input, output, axes, keep_dimensions, operation) => backward_reduction(input, output, axes, keep_dimensions, operation, gradient)
+        linear(left, right, operation) => backward_linear(left, right, operation, gradient)
+        concatenate(left, right, axis, left_size) => backward_concatenate(left, right, axis, left_size, gradient)
+        gather(source, indices, axis) => one_contribution(source, source.value.autograd_gather_backward(gradient, indices, axis))
+        convolution(input, kernel, stride, padding) => backward_convolution(input, kernel, stride, padding, gradient)
+        pooling(input, output, kernel_size, stride, padding, operation) => one_contribution(
+            input, input.value.autograd_pool_backward(gradient, output, kernel_size, stride, padding, operation)
+        )
+        dropout(input, probability, seed, iteration) => one_contribution(
+            input,
+            gradient.multiply(input.value.autograd_constant(1.0).dropout_training(probability, seed, iteration))
+        )
+        leaf(slot) => invalid_backward_rule("Tensor autograd leaf rule cannot be differentiated as an operation")
+        released => invalid_backward_rule("Tensor.backward cannot reuse a consumed graph")
+    }
+}
+
+func invalid_backward_rule(message:str) AutogradContribution[] { panic(message) }
+
+func one_contribution(input:AutogradInput, gradient:Tensor) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    if var node = input.node { result.append(AutogradContribution(node:node, gradient:gradient.autograd_detached())) }
+    return result
+}
+
+func append_contribution(input:AutogradInput, gradient:Tensor, result:&AutogradContribution[]) {
+    if var node = input.node { result.append(AutogradContribution(node:node, gradient:gradient.autograd_detached())) }
+}
+
+func backward_binary(
+    left:AutogradInput, right:AutogradInput,
+    operation:BinaryOperation, gradient:Tensor
+) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    if left.node != null {
+        var value = gradient
+        if operation == BinaryOperation.multiply { value = gradient.multiply(right.value) }
+        elif operation == BinaryOperation.divide { value = gradient.divide(right.value) }
+        append_contribution(left, reduce_autograd_shape(value, left.value.shape()), result)
+    }
+    if right.node != null {
+        var value = gradient
+        if operation == BinaryOperation.subtract { value = gradient.negate() }
+        elif operation == BinaryOperation.multiply { value = gradient.multiply(left.value) }
+        elif operation == BinaryOperation.divide {
+            value = gradient.multiply(left.value).divide(right.value.multiply(right.value)).negate()
+        }
+        append_contribution(right, reduce_autograd_shape(value, right.value.shape()), result)
+    }
+    return result
+}
+
+func backward_scalar(
+    input:AutogradInput, value:float,
+    operation:BinaryOperation, gradient:Tensor
+) AutogradContribution[] {
+    var result = gradient
+    if operation == BinaryOperation.multiply { result = gradient.multiply(value) }
+    elif operation == BinaryOperation.divide { result = gradient.divide(value) }
+    return one_contribution(input, result)
+}
+
+func backward_unary(
+    input:AutogradInput, output:Tensor,
+    operation:UnaryOperation, gradient:Tensor
+) AutogradContribution[] {
+    var result = gradient
+    if operation == UnaryOperation.negate { result = gradient.negate() }
+    elif operation == UnaryOperation.absolute { result = gradient.multiply(input.value.autograd_sign()) }
+    elif operation == UnaryOperation.exponential { result = gradient.multiply(output) }
+    elif operation == UnaryOperation.logarithm { result = gradient.divide(input.value) }
+    elif operation == UnaryOperation.square_root { result = gradient.divide(output.multiply(2.0)) }
+    elif operation == UnaryOperation.rectified_linear { result = gradient.multiply(input.value.autograd_positive_mask()) }
+    elif operation == UnaryOperation.sigmoid { result = gradient.multiply(output).multiply(output.negate().add(1.0)) }
+    elif operation == UnaryOperation.hyperbolic_tangent { result = gradient.multiply(output.multiply(output).negate().add(1.0)) }
+    return one_contribution(input, result)
+}
+
+func backward_reduction(
+    input:AutogradInput, output:Tensor, axes:int[], keep_dimensions:bool,
+    operation:ReductionOperation, gradient:Tensor
+) AutogradContribution[] {
+    let expanded_gradient = expand_reduction(gradient, input.value.shape(), axes, keep_dimensions)
+    if operation == ReductionOperation.sum { return one_contribution(input, expanded_gradient) }
+    if operation == ReductionOperation.mean {
+        return one_contribution(input, expanded_gradient.divide(reduction_domain_size(input.value.shape(), axes) as float))
+    }
+    let expanded_output = expand_reduction(output, input.value.shape(), axes, keep_dimensions)
+    let mask = input.value.autograd_equal(expanded_output)
+    let ties = mask.sum(axes, true)
+    return one_contribution(input, mask.multiply(expanded_gradient).divide(ties))
+}
+
+func backward_linear(
+    left:AutogradInput, right:AutogradInput,
+    operation:LinearOperation, gradient:Tensor
+) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    if operation == LinearOperation.dot {
+        if left.node != null { append_contribution(left, gradient.multiply(right.value), result) }
+        if right.node != null { append_contribution(right, gradient.multiply(left.value), result) }
+        return result
+    }
+    if left.node != null {
+        let value = gradient.matmul(transpose_last_two(right.value))
+        append_contribution(left, reduce_autograd_shape(value, left.value.shape()), result)
+    }
+    if right.node != null {
+        let value = transpose_last_two(left.value).matmul(gradient)
+        append_contribution(right, reduce_autograd_shape(value, right.value.shape()), result)
+    }
+    return result
+}
+
+func backward_concatenate(
+    left:AutogradInput, right:AutogradInput,
+    axis:int, left_size:int, gradient:Tensor
+) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    if left.node != null { append_contribution(left, gradient.narrow(axis, 0, left_size), result) }
+    if right.node != null {
+        append_contribution(right, gradient.narrow(axis, left_size, right.value.shape()[axis]), result)
+    }
+    return result
+}
+
+func backward_convolution(
+    input:AutogradInput, kernel:AutogradInput,
+    stride:int, padding:int, gradient:Tensor
+) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    if input.node != null {
+        append_contribution(input, input.value.autograd_convolution_input(gradient, kernel.value, stride, padding), result)
+    }
+    if kernel.node != null {
+        append_contribution(kernel, kernel.value.autograd_convolution_kernel(gradient, input.value, stride, padding), result)
+    }
+    return result
+}
+
+func reduce_autograd_shape(gradient:Tensor, shape:int[]) Tensor {
+    if shapes_equal(gradient.shape(), shape) { return gradient }
+    let missing = gradient.rank() - shape.count()
+    var axes:int[] = []
+    var axis = 0
+    while axis < gradient.rank() {
+        if axis < missing || (shape[axis - missing] == 1 && gradient.shape()[axis] != 1) {
+            axes.append(axis)
+        }
+        axis++
+    }
+    return gradient.sum(axes, true).reshape(shape)
+}
+
+func expand_reduction(tensor:Tensor, input_shape:int[], axes:int[], keep_dimensions:bool) Tensor {
+    var expanded = tensor
+    if !keep_dimensions {
+        expanded = tensor.reshape(reduction_expanded_shape(input_shape, axes))
+    }
+    return expanded.add(expanded.autograd_constant_shape(input_shape, 0.0))
+}
+
+func reduction_expanded_shape(input_shape:int[], axes:int[]) int[] {
+    let reduced = reduction_mask(input_shape.count(), axes)
+    var shape:int[] = []
+    var axis = 0
+    while axis < input_shape.count() {
+        if reduced[axis] { shape.append(1) }
+        else { shape.append(input_shape[axis]) }
+        axis++
+    }
+    return shape
+}
+
+func inverse_axes(axes:int[]) int[] {
+    var result = copy axes
+    var axis = 0
+    while axis < axes.count() { result[axes[axis]] = axis; axis++ }
+    return result
+}
+
+func transpose_last_two(tensor:Tensor) Tensor {
+    var axes:int[] = []
+    var axis = 0
+    while axis < tensor.rank() { axes.append(axis); axis++ }
+    let last = axes.count() - 1
+    let temporary = axes[last]
+    axes[last] = axes[last - 1]
+    axes[last - 1] = temporary
+    return tensor.permute(axes)
+}
+
+func backward_select(input:Tensor, gradient:Tensor, axis:int, index:int) Tensor {
+    var middle_shape = gradient.shape()
+    middle_shape.insert(axis, 1)
+    let middle = gradient.reshape(middle_shape)
+    return Tensor.concatenate([
+        input.narrow(axis, 0, index).autograd_constant(0.0),
+        middle,
+        input.narrow(axis, index + 1, input.shape()[axis] - index - 1).autograd_constant(0.0)
+    ], axis)
+}
+
+func backward_narrow(input:Tensor, gradient:Tensor, axis:int, start:int, count:int) Tensor {
+    return Tensor.concatenate([
+        input.narrow(axis, 0, start).autograd_constant(0.0),
+        gradient,
+        input.narrow(axis, start + count, input.shape()[axis] - start - count).autograd_constant(0.0)
+    ], axis)
+}
+
+func autograd_equal_cpu(
+    left:float[], left_layout:Layout, right:float[], right_layout:Layout, shape:int[]
+) float[] {
+    var result:float[] = []
+    var logical = 0
+    while logical < shape_product(shape) {
+        let left_value = left[left_layout.broadcast_storage_index(logical, shape)]
+        let right_value = right[right_layout.broadcast_storage_index(logical, shape)]
+        if left_value == right_value { result.append(1.0) }
+        else { result.append(0.0) }
+        logical++
+    }
+    return result
+}
+
+func autograd_mask_cpu(input:Tensor, positive_only:bool) float[] {
+    let values = input.autograd_cpu_storage().float_values()
+    let layout = input.autograd_layout()
+    var result:float[] = []
+    var logical = 0
+    while logical < layout.count() {
+        let value = values[layout.flat_storage_index(logical)]
+        if value > 0.0 { result.append(1.0) }
+        elif !positive_only && value < 0.0 { result.append(-1.0) }
+        else { result.append(0.0) }
+        logical++
+    }
+    return result
+}
+
+func gather_backward_cpu_values(
+    gradient:float[], gradient_layout:Layout,
+    indices:int32[], index_layout:Layout,
+    source:Layout, axis:int
+) float[] {
+    var result = initialized_values<float>(source.count(), 0.0)
+    let canonical_source = Layout(source.shape())
+    var logical = 0
+    while logical < index_layout.count() {
+        let selected = indices[index_layout.flat_storage_index(logical)] as int
+        if selected >= 0 && selected < source.shape()[axis] {
+            let source_logical = gather_source_index(canonical_source, index_layout, axis, logical, selected)
+            result[source_logical] += gradient[gradient_layout.flat_storage_index(logical)]
+        }
+        logical++
+    }
+    return result
+}
+
+func convolution_backward_input_cpu_values(
+    gradient:float[], gradient_layout:Layout,
+    kernel:float[], kernel_layout:Layout,
+    input_layout:Layout, stride:int, padding:int
+) float[] {
+    var result:float[] = []
+    var batch = 0
+    while batch < input_layout.shape()[0] {
+        var input_channel = 0
+        while input_channel < input_layout.shape()[1] {
+            var input_y = 0
+            while input_y < input_layout.shape()[2] {
+                var input_x = 0
+                while input_x < input_layout.shape()[3] {
+                    var value = 0.0
+                    var output_channel = 0
+                    while output_channel < kernel_layout.shape()[0] {
+                        var kernel_y = 0
+                        while kernel_y < kernel_layout.shape()[2] {
+                            let output_y_numerator = input_y + padding - kernel_y
+                            var kernel_x = 0
+                            while kernel_x < kernel_layout.shape()[3] {
+                                let output_x_numerator = input_x + padding - kernel_x
+                                if output_y_numerator >= 0 && output_x_numerator >= 0 &&
+                                    output_y_numerator % stride == 0 && output_x_numerator % stride == 0 {
+                                    let output_y = output_y_numerator / stride
+                                    let output_x = output_x_numerator / stride
+                                    if output_y < gradient_layout.shape()[2] && output_x < gradient_layout.shape()[3] {
+                                        let gradient_index = gradient_layout.offset() +
+                                            batch * gradient_layout.strides()[0] + output_channel * gradient_layout.strides()[1] +
+                                            output_y * gradient_layout.strides()[2] + output_x * gradient_layout.strides()[3]
+                                        let kernel_index = kernel_layout.offset() +
+                                            output_channel * kernel_layout.strides()[0] + input_channel * kernel_layout.strides()[1] +
+                                            kernel_y * kernel_layout.strides()[2] + kernel_x * kernel_layout.strides()[3]
+                                        value += gradient[gradient_index] * kernel[kernel_index]
+                                    }
+                                }
+                                kernel_x++
+                            }
+                            kernel_y++
+                        }
+                        output_channel++
+                    }
+                    result.append(value)
+                    input_x++
+                }
+                input_y++
+            }
+            input_channel++
+        }
+        batch++
+    }
+    return result
+}
+
+func convolution_backward_kernel_cpu_values(
+    gradient:float[], gradient_layout:Layout,
+    input:float[], input_layout:Layout,
+    kernel_layout:Layout, stride:int, padding:int
+) float[] {
+    var result:float[] = []
+    var output_channel = 0
+    while output_channel < kernel_layout.shape()[0] {
+        var input_channel = 0
+        while input_channel < kernel_layout.shape()[1] {
+            var kernel_y = 0
+            while kernel_y < kernel_layout.shape()[2] {
+                var kernel_x = 0
+                while kernel_x < kernel_layout.shape()[3] {
+                    var value = 0.0
+                    var batch = 0
+                    while batch < input_layout.shape()[0] {
+                        var output_y = 0
+                        while output_y < gradient_layout.shape()[2] {
+                            let input_y = output_y * stride + kernel_y - padding
+                            var output_x = 0
+                            while output_x < gradient_layout.shape()[3] {
+                                let input_x = output_x * stride + kernel_x - padding
+                                if input_y >= 0 && input_y < input_layout.shape()[2] &&
+                                    input_x >= 0 && input_x < input_layout.shape()[3] {
+                                    let gradient_index = gradient_layout.offset() +
+                                        batch * gradient_layout.strides()[0] + output_channel * gradient_layout.strides()[1] +
+                                        output_y * gradient_layout.strides()[2] + output_x * gradient_layout.strides()[3]
+                                    let input_index = input_layout.offset() +
+                                        batch * input_layout.strides()[0] + input_channel * input_layout.strides()[1] +
+                                        input_y * input_layout.strides()[2] + input_x * input_layout.strides()[3]
+                                    value += gradient[gradient_index] * input[input_index]
+                                }
+                                output_x++
+                            }
+                            output_y++
+                        }
+                        batch++
+                    }
+                    result.append(value)
+                    kernel_x++
+                }
+                kernel_y++
+            }
+            input_channel++
+        }
+        output_channel++
+    }
+    return result
+}
+
+func pooling_backward_cpu_values(
+    gradient:float[], gradient_layout:Layout,
+    input:float[], input_layout:Layout, output_layout:Layout,
+    kernel_size:int, stride:int, padding:int, operation:PoolOperation
+) float[] {
+    var result:float[] = []
+    var batch = 0
+    while batch < input_layout.shape()[0] {
+        var channel = 0
+        while channel < input_layout.shape()[1] {
+            var input_y = 0
+            while input_y < input_layout.shape()[2] {
+                var input_x = 0
+                while input_x < input_layout.shape()[3] {
+                    var value = 0.0
+                    var output_y = 0
+                    while output_y < output_layout.shape()[2] {
+                        var output_x = 0
+                        while output_x < output_layout.shape()[3] {
+                            let start_y = output_y * stride - padding
+                            let start_x = output_x * stride - padding
+                            if input_y >= start_y && input_y < start_y + kernel_size &&
+                                input_x >= start_x && input_x < start_x + kernel_size {
+                                let gradient_index = gradient_layout.offset() +
+                                    batch * gradient_layout.strides()[0] + channel * gradient_layout.strides()[1] +
+                                    output_y * gradient_layout.strides()[2] + output_x * gradient_layout.strides()[3]
+                                if operation == PoolOperation.average {
+                                    value += gradient[gradient_index] / ((kernel_size * kernel_size) as float)
+                                } elif pool_winner(input, input_layout, batch, channel, output_y, output_x, kernel_size, stride, padding, input_y, input_x) {
+                                    value += gradient[gradient_index]
+                                }
+                            }
+                            output_x++
+                        }
+                        output_y++
+                    }
+                    result.append(value)
+                    input_x++
+                }
+                input_y++
+            }
+            channel++
+        }
+        batch++
+    }
+    return result
+}
+
+func pool_winner(
+    input:float[], layout:Layout, batch:int, channel:int,
+    output_y:int, output_x:int, kernel_size:int, stride:int, padding:int,
+    expected_y:int, expected_x:int
+) bool {
+    var winner_y = -1
+    var winner_x = -1
+    var winner = -1.0 / 0.0
+    var kernel_y = 0
+    while kernel_y < kernel_size {
+        let input_y = output_y * stride + kernel_y - padding
+        var kernel_x = 0
+        while kernel_x < kernel_size {
+            let input_x = output_x * stride + kernel_x - padding
+            if input_y >= 0 && input_y < layout.shape()[2] && input_x >= 0 && input_x < layout.shape()[3] {
+                let index = layout.offset() + batch * layout.strides()[0] + channel * layout.strides()[1] +
+                    input_y * layout.strides()[2] + input_x * layout.strides()[3]
+                let next = input[index]
+                if winner_y < 0 || Math.is_nan(next) || next > winner {
+                    winner = next
+                    winner_y = input_y
+                    winner_x = input_x
+                }
+            }
+            kernel_x++
+        }
+        kernel_y++
+    }
+    return winner_y == expected_y && winner_x == expected_x
+}

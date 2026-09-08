@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.Autograd.Variable
+use Tensor.autograd_retained_edge_count
+
+func temporary_diamond(input:Tensor) Tensor {
+    let branch = input.multiply(3.0)
+    return branch.add(branch).sum()
+}
+
+test "release graph edges after backward while the result remains alive" {
+    let baseline = autograd_retained_edge_count()
+    var values:float[] = [1.0, 2.0, 3.0]
+    var input = Variable(Tensor.vector(values))
+    let loss = temporary_diamond(input.value())
+    assert(autograd_retained_edge_count() > baseline)
+    loss.backward()
+    assert(autograd_retained_edge_count() == baseline)
+    if let gradient = input.gradient() {
+        let gradient_values = gradient.values()
+        assert(gradient_values[0] == 6.0 && gradient_values[2] == 6.0)
+    } else { panic("expected the temporary branch gradient") }
+}

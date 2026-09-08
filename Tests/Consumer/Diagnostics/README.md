@@ -56,5 +56,13 @@ Every fixture must fail and mention its intended contract:
 - `InitializerBounds.sx` and `DropoutProbability.sx`: random initialization
   bounds and dropout probabilities are valid;
 - `ConvolutionShape.sx`: convolution channels agree before calculation;
+- `AutogradInteger.sx`: tracked leaves require `float32`;
+- `AutogradNonScalar.sx`, `AutogradSeed.sx`, `AutogradSeedDType.sx`, and
+  `AutogradSeedPlacement.sx`: backward requires either a scalar result or an
+  explicit seed with the exact output shape, dtype, placement, and device;
+- `AutogradConsumed.sx`: a completed graph cannot be traversed twice;
+- `AutogradTransfer.sx` and `AutogradCast.sx`: placement and dtype changes are
+  outside a tracked graph and require `detach()` first;
+- `AutogradUntracked.sx`: backward requires provenance from a tracked leaf;
 - transposed GPU views are covered as successful stride-aware computation in
   `Tests/GPUCompute.sx`.

@@ -93,9 +93,10 @@ func concatenate_values<T>(
 
 func gather_shape(source:Layout, indices:Layout, axis:int) int[] {
     require_axis(axis, source.rank(), "gather")
-    if indices.rank() != source.rank() - 1 {
-        panic("Tensor.gather indices must have the source rank minus the selected axis")
+    if indices.rank() != source.rank() - 1 && indices.rank() != source.rank() {
+        panic("Tensor.gather indices must have the source rank or omit only the selected axis")
     }
+    let keeps_axis = indices.rank() == source.rank()
     var source_axis = 0
     var index_axis = 0
     while source_axis < source.rank() {
@@ -104,10 +105,36 @@ func gather_shape(source:Layout, indices:Layout, axis:int) int[] {
                 panic("Tensor.gather indices must match every source dimension outside the selected axis")
             }
             index_axis++
-        }
+        } elif keeps_axis { index_axis++ }
         source_axis++
     }
     return indices.shape()
+}
+
+func gather_source_index(source:Layout, indices:Layout, axis:int, logical:int, selected:int) int {
+    var result = source.offset()
+    var remaining = logical
+    var index_axis = indices.rank() - 1
+    var source_axis = source.rank() - 1
+    let keeps_axis = indices.rank() == source.rank()
+    while source_axis >= 0 {
+        if source_axis == axis {
+            result += selected * source.strides()[source_axis]
+            if keeps_axis {
+                let dimension = indices.shape()[index_axis]
+                if dimension > 0 { remaining /= dimension }
+                index_axis--
+            }
+        } else {
+            let dimension = indices.shape()[index_axis]
+            var coordinate = 0
+            if dimension > 0 { coordinate = remaining % dimension; remaining /= dimension }
+            result += coordinate * source.strides()[source_axis]
+            index_axis--
+        }
+        source_axis--
+    }
+    return result
 }
 
 func gather_cpu_storage(source:CPUStorage, layout:Layout, indices:CPUStorage, index_layout:Layout, axis:int) CPUStorage {
@@ -139,24 +166,6 @@ func gather_index_values(values:int32[], indices:Layout, source:Layout, axis:int
 func gather_selected_values<T>(values:T[], selected:int[]) T[] {
     var result:T[] = []
     for index in selected { result.append(values[index]) }
-    return result
-}
-
-func gather_source_index(source:Layout, indices:Layout, axis:int, logical:int, selected:int) int {
-    var result = source.offset() + selected * source.strides()[axis]
-    var remaining = logical
-    var index_axis = indices.rank() - 1
-    var source_axis = source.rank() - 1
-    while source_axis >= 0 {
-        if source_axis != axis {
-            let dimension = indices.shape()[index_axis]
-            var coordinate = 0
-            if dimension > 0 { coordinate = remaining % dimension; remaining /= dimension }
-            result += coordinate * source.strides()[source_axis]
-            index_axis--
-        }
-        source_axis--
-    }
     return result
 }
 

@@ -1,0 +1,10 @@
+use Tensor
+use Tensor.Autograd.Variable
+
+func main() {
+    var values:float[] = [1.0, 2.0]
+    var input = Variable(Tensor.vector(values))
+    let loss = input.value().sum()
+    loss.backward()
+    loss.backward()
+}

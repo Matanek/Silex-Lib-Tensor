@@ -51,5 +51,6 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     if (header0.x == 0) outputValues[index] = left + right;
     else if (header0.x == 1) outputValues[index] = left - right;
     else if (header0.x == 2) outputValues[index] = left * right;
-    else outputValues[index] = left / right;
+    else if (header0.x == 3) outputValues[index] = left / right;
+    else outputValues[index] = left == right ? 1.0 : 0.0;
 }

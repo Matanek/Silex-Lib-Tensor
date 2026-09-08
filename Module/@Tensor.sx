@@ -3,6 +3,7 @@ use GFX.GPU
 public struct Tensor {
     private var current_storage:Storage
     private let current_layout:Layout
+    private var current_provenance:AutogradNode? = null
 
     init(values:float[], shape:int[]) { require_element_count(shape, values.count(), 4); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:int8[], shape:int[]) { require_element_count(shape, values.count(), 1); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
@@ -97,39 +98,60 @@ public struct Tensor {
     func int64_at(indices:int[]) int64 { self.require_extraction(DType.int64(), "int64_at"); return self.cpu_storage().int64_values()[self.current_layout.storage_index(indices)] }
     func uint64_at(indices:int[]) uint64 { self.require_extraction(DType.uint64(), "uint64_at"); return self.cpu_storage().uint64_values()[self.current_layout.storage_index(indices)] }
 
-    func reshape(shape:int[]) Tensor { return Tensor.from_storage(self.current_storage, self.current_layout.reshaped(shape)) }
+    func reshape(shape:int[]) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.reshaped(shape))
+        return autograd_record_reshape(result, self)
+    }
     func flatten() Tensor { return self.reshape(vector_shape(self.count())) }
-    func permute(axes:int[]) Tensor { return Tensor.from_storage(self.current_storage, self.current_layout.permuted(axes)) }
+    func permute(axes:int[]) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.permuted(axes))
+        return autograd_record_permute(result, self, axes)
+    }
     func transpose() Tensor {
         if self.rank() != 2 { panic("Tensor.transpose requires rank 2; use permute(axes) for other ranks") }
         return self.permute([1, 0])
     }
-    func select(axis:int, index:int) Tensor { return Tensor.from_storage(self.current_storage, self.current_layout.selected(axis, index)) }
-    func narrow(axis:int, start:int, count:int) Tensor { return Tensor.from_storage(self.current_storage, self.current_layout.narrowed(axis, start, count)) }
+    func select(axis:int, index:int) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.selected(axis, index))
+        return autograd_record_select(result, self, axis, index)
+    }
+    func narrow(axis:int, start:int, count:int) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.narrowed(axis, start, count))
+        return autograd_record_narrow(result, self, axis, start, count)
+    }
     func contiguous() Tensor {
         if self.current_layout.is_canonical(self.storage_count()) { return self }
         let layout = Layout(self.current_layout.shape())
-        return match self.current_storage {
+        let result = match self.current_storage {
             cpu(value) => Tensor.from_storage(Storage.cpu(value.materialized(self.current_layout)), layout)
             gpu(value) => Tensor.from_storage(Storage.gpu(value.contiguous(self.current_layout)), layout)
         }
+        return autograd_record_contiguous(result, self)
     }
 
     func cast(dtype:DType) Tensor {
         if self.is_gpu() { panic("Tensor.cast is CPU-only; call cpu().cast(dtype)") }
         if dtype == self.dtype() { return self }
+        self.require_no_autograd_transfer("cast")
         let physical_size = checked_byte_count(self.count(), dtype.byte_width())
         var storage = cast_storage(self.cpu_storage(), self.current_layout, dtype)
         return Tensor.from_storage(Storage.cpu(storage), Layout(self.current_layout.shape()))
     }
 
     func to(device:GPU.Device) Tensor {
+        match self.current_storage {
+            gpu(value) => { if value.same_device(device) { return self } }
+            else => {}
+        }
+        self.require_no_autograd_transfer("to")
         return match self.current_storage {
             cpu(value) => Tensor.from_storage(Storage.gpu(value.gpu(device)), self.current_layout)
             gpu(value) => self.same_gpu_or_fail(value, device)
         }
     }
     func cpu() Tensor {
+        if self.is_cpu() { return self }
+        self.require_no_autograd_transfer("cpu")
         return match self.current_storage { gpu(value) => Tensor.from_storage(Storage.cpu(value.cpu_storage()), self.current_layout); else => self }
     }
 
@@ -165,12 +187,13 @@ public struct Tensor {
             self.require_gpu_float_compute(binary_name(operation))
             var left = self.gpu_storage()
             var right = other.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(left.binary(right, self.current_layout, other.current_layout, shape, operation)),
                 Layout(shape)
             )
+            return autograd_record_binary(result, self, other, operation)
         }
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(binary_cpu_storage(
                 self.cpu_storage(), self.current_layout,
                 other.cpu_storage(), other.current_layout,
@@ -178,18 +201,21 @@ public struct Tensor {
             )),
             Layout(shape)
         )
+        return autograd_record_binary(result, self, other, operation)
     }
 
     module func float_scalar(value:float, operation:BinaryOperation) Tensor {
         if self.is_gpu() {
             self.require_gpu_float_compute(binary_name(operation))
             var storage = self.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(storage.scalar(self.current_layout, operation, value)),
                 Layout(self.current_layout.shape())
             )
+            return autograd_record_scalar(result, self, value, operation)
         }
-        return self.binary(Tensor.scalar(value), operation)
+        let result = self.binary(Tensor.scalar(value), operation)
+        return result
     }
 
     module func integer_scalar(other:Tensor, operation:BinaryOperation) Tensor {
@@ -201,16 +227,18 @@ public struct Tensor {
         if self.is_gpu() {
             self.require_gpu_float_compute(unary_name(operation))
             var storage = self.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(storage.unary(self.current_layout, operation)),
                 Layout(self.current_layout.shape())
             )
+            return autograd_record_unary(result, self, operation)
         }
         require_unary_dtype(self.dtype(), operation)
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(unary_cpu_storage(self.cpu_storage(), self.current_layout, operation)),
             Layout(self.current_layout.shape())
         )
+        return autograd_record_unary(result, self, operation)
     }
 
     module func reduction(axes:int[]?, keep_dimensions:bool, operation:ReductionOperation) Tensor {
@@ -225,15 +253,17 @@ public struct Tensor {
         if self.is_gpu() {
             self.require_gpu_float_compute(name)
             var storage = self.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(storage.reduction(self.current_layout, reduced_axes, keep_dimensions, operation, shape)),
                 Layout(shape)
             )
+            return autograd_record_reduction(result, self, reduced_axes, keep_dimensions, operation)
         }
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(reduction_cpu_storage(self.cpu_storage(), self.current_layout, reduced_axes, keep_dimensions, operation, shape)),
             Layout(shape)
         )
+        return autograd_record_reduction(result, self, reduced_axes, keep_dimensions, operation)
     }
 
     module func linear(other:Tensor, operation:LinearOperation) Tensor {
@@ -244,15 +274,17 @@ public struct Tensor {
             self.require_gpu_float_compute(name)
             var left = self.gpu_storage()
             var right = other.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(left.linear(right, self.current_layout, other.current_layout, operation, shape)),
                 Layout(shape)
             )
+            return autograd_record_linear(result, self, other, operation)
         }
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(linear_cpu_storage(self.cpu_storage(), self.current_layout, other.cpu_storage(), other.current_layout, operation, shape)),
             Layout(shape)
         )
+        return autograd_record_linear(result, self, other, operation)
     }
 
     module func concatenate_pair(other:Tensor, axis:int) Tensor {
@@ -261,12 +293,13 @@ public struct Tensor {
         if self.is_gpu() {
             var left = self.gpu_storage()
             var right = other.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(left.concatenate(right, self.current_layout, other.current_layout, axis)),
                 Layout(shape)
             )
+            return autograd_record_concatenate(result, self, other, axis)
         }
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(concatenate_cpu_storage(
                 self.cpu_storage(), self.current_layout,
                 other.cpu_storage(), other.current_layout,
@@ -274,6 +307,7 @@ public struct Tensor {
             )),
             Layout(shape)
         )
+        return autograd_record_concatenate(result, self, other, axis)
     }
 
     module func gather_indices(axis:int, indices:Tensor) Tensor {
@@ -285,12 +319,13 @@ public struct Tensor {
             var source = self.gpu_storage()
             var index_storage = indices.gpu_storage()
             if !source.same_device(index_storage) { panic("Tensor.gather requires tensors on the same GPU device") }
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(source.gather(index_storage, self.current_layout, indices.current_layout, axis)),
                 Layout(shape)
             )
+            return autograd_record_gather(result, self, indices, axis)
         }
-        return Tensor.from_storage(
+        let result = Tensor.from_storage(
             Storage.cpu(gather_cpu_storage(
                 self.cpu_storage(), self.current_layout,
                 indices.cpu_storage(), indices.current_layout,
@@ -298,6 +333,7 @@ public struct Tensor {
             )),
             Layout(shape)
         )
+        return autograd_record_gather(result, self, indices, axis)
     }
 
     module func convolution(kernel:Tensor, stride:int, padding:int) Tensor {
@@ -307,15 +343,16 @@ public struct Tensor {
         if self.is_gpu() {
             var input_storage = self.gpu_storage()
             var kernel_storage = kernel.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(input_storage.convolution(
                     kernel_storage, self.current_layout, kernel.current_layout,
                     shape, stride, padding
                 )),
                 Layout(shape)
             )
+            return autograd_record_convolution(result, self, kernel, stride, padding)
         }
-        return Tensor(
+        let result = Tensor(
             convolution_cpu_values(
                 self.cpu_storage().float_values(), self.current_layout,
                 kernel.cpu_storage().float_values(), kernel.current_layout,
@@ -323,6 +360,7 @@ public struct Tensor {
             ),
             shape
         )
+        return autograd_record_convolution(result, self, kernel, stride, padding)
     }
 
     module func pool2d(kernel_size:int, stride:int, padding:int, operation:PoolOperation) Tensor {
@@ -330,37 +368,41 @@ public struct Tensor {
         let shape = pooling_shape(self.current_layout, kernel_size, stride, padding, operation)
         if self.is_gpu() {
             var storage = self.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(storage.pooling(
                     self.current_layout, shape, kernel_size, stride, padding, operation
                 )),
                 Layout(shape)
             )
+            return autograd_record_pooling(result, self, kernel_size, stride, padding, operation)
         }
-        return Tensor(
+        let result = Tensor(
             pooling_cpu_values(
                 self.cpu_storage().float_values(), self.current_layout, shape,
                 kernel_size, stride, padding, operation
             ),
             shape
         )
+        return autograd_record_pooling(result, self, kernel_size, stride, padding, operation)
     }
 
     module func dropout_training(probability:float, seed:int, iteration:int) Tensor {
         if self.is_gpu() {
             var storage = self.gpu_storage()
-            return Tensor.from_storage(
+            let result = Tensor.from_storage(
                 Storage.gpu(storage.dropout(self.current_layout, probability, seed, iteration)),
                 Layout(self.shape())
             )
+            return autograd_record_dropout(result, self, probability, seed, iteration)
         }
-        return Tensor(
+        let result = Tensor(
             dropout_cpu_values(
                 self.cpu_storage().float_values(), self.current_layout,
                 probability, seed, iteration
             ),
             self.shape()
         )
+        return autograd_record_dropout(result, self, probability, seed, iteration)
     }
 
     private func require_pair_compatibility(other:Tensor, name:str) {
@@ -395,6 +437,24 @@ public struct Tensor {
         if !storage.same_device(device) { panic("Tensor.to cannot migrate between GPU devices; call cpu().to(other_device)") }
         return self
     }
+
+    private func require_no_autograd_transfer(operation:str) {
+        if self.current_provenance != null {
+            panic("Tensor.$(operation) cannot change placement or dtype inside a tracked graph; call detach() first")
+        }
+    }
+
+    module func autograd_node() AutogradNode? { return self.current_provenance }
+    module func autograd_detached() Tensor { return Tensor.from_storage(self.current_storage, self.current_layout) }
+    module func autograd_recorded(node:AutogradNode) Tensor {
+        var result = Tensor.from_storage(self.current_storage, self.current_layout)
+        result.current_provenance = node
+        return result
+    }
+    module func autograd_layout() Layout { return self.current_layout }
+    module func autograd_cpu_storage() CPUStorage { return self.cpu_storage() }
+    module func autograd_gpu_storage() GPUStorage { return self.gpu_storage() }
+    module static func autograd_from_storage(storage:Storage, layout:Layout) Tensor { return Tensor.from_storage(storage, layout) }
 }
 
 func cast_storage(storage:CPUStorage, layout:Layout, dtype:DType) CPUStorage {

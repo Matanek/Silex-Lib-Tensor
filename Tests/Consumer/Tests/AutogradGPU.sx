@@ -1,0 +1,138 @@
+use GFX.GPU
+use STD.Math
+use Tensor
+use Tensor.Autograd.Variable
+
+func gpu_gradient(variable:Variable) Tensor {
+    if let gradient = variable.gradient() { return gradient }
+    panic("expected a connected GPU gradient")
+}
+
+func gpu_autograd_same(actual:float[], expected:float[], tolerance:float = 0.0003) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if Math.abs(actual[index] - expected[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+test "keep broadcast activation and reduction backward resident on GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var bias_values:float[] = [10.0, 20.0, 30.0]
+    var input = Variable(Tensor(input_values, [2, 3]).to(device))
+    var bias = Variable(Tensor.vector(bias_values).to(device))
+    let same_device = input.value().to(device)
+    let loss = same_device.add(bias.value()).relu().mean()
+    device.reset_command_stats()
+    loss.backward()
+    let before_readback = device.command_stats()
+    assert(before_readback.uploads == 0 && before_readback.downloads == 0)
+    var expected_input:float[] = [0.16666667, 0.16666667, 0.16666667, 0.16666667, 0.16666667, 0.16666667]
+    var expected_bias:float[] = [0.33333334, 0.33333334, 0.33333334]
+    assert(gpu_autograd_same(gpu_gradient(input).cpu().values(), expected_input))
+    assert(gpu_autograd_same(gpu_gradient(bias).cpu().values(), expected_bias))
+}
+
+test "keep batched matmul and repeated gather backward resident on GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var left_values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var right_values:float[] = [5.0, 6.0, 7.0, 8.0]
+    var source_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var index_values:int32[] = [0 as int32, 0 as int32, 2 as int32, 1 as int32]
+    var left = Variable(Tensor(left_values, [1, 2, 2]).to(device))
+    var right = Variable(Tensor(right_values, [2, 2, 1]).to(device))
+    var source = Variable(Tensor(source_values, [2, 3]).to(device))
+    let product_loss = left.value().matmul(right.value()).sum()
+    let gather_loss = source.value().gather(1, Tensor(index_values, [2, 2]).to(device)).sum()
+    device.reset_command_stats()
+    product_loss.backward()
+    gather_loss.backward()
+    let before_readback = device.command_stats()
+    assert(before_readback.uploads == 0 && before_readback.downloads == 0)
+    var expected_left:float[] = [12.0, 14.0, 12.0, 14.0]
+    var expected_right:float[] = [4.0, 6.0, 4.0, 6.0]
+    var expected_source:float[] = [2.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+    assert(gpu_autograd_same(gpu_gradient(left).cpu().values(), expected_left))
+    assert(gpu_autograd_same(gpu_gradient(right).cpu().values(), expected_right))
+    assert(gpu_autograd_same(gpu_gradient(source).cpu().values(), expected_source))
+}
+
+test "keep convolution pooling and dropout backward resident on GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var image_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    var kernel_values:float[] = [1.0, 1.0, 1.0, 1.0]
+    var dropout_values:float[] = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    var image = Variable(Tensor(image_values, [1, 1, 3, 3]).to(device))
+    var kernel = Variable(Tensor(kernel_values, [1, 1, 2, 2]).to(device))
+    var maximum = Variable(Tensor(image_values, [1, 1, 3, 3]).to(device))
+    var average = Variable(Tensor(image_values, [1, 1, 3, 3]).to(device))
+    var dropped = Variable(Tensor.vector(dropout_values).to(device))
+    let convolution_loss = image.value().conv2d(kernel.value()).sum()
+    let maximum_loss = maximum.value().max_pool2d(2, 1).sum()
+    let average_loss = average.value().average_pool2d(2, 1).sum()
+    let dropped_output = dropped.value().dropout(0.25, 17, 2)
+    let dropout_loss = dropped_output.sum()
+    device.reset_command_stats()
+    convolution_loss.backward()
+    maximum_loss.backward()
+    average_loss.backward()
+    dropout_loss.backward()
+    let before_readback = device.command_stats()
+    assert(before_readback.uploads == 0 && before_readback.downloads == 0)
+    var expected_image:float[] = [1.0, 2.0, 1.0, 2.0, 4.0, 2.0, 1.0, 2.0, 1.0]
+    var expected_kernel:float[] = [12.0, 16.0, 24.0, 28.0]
+    var expected_maximum:float[] = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    var expected_average:float[] = [0.25, 0.5, 0.25, 0.5, 1.0, 0.5, 0.25, 0.5, 0.25]
+    assert(gpu_autograd_same(gpu_gradient(image).cpu().values(), expected_image))
+    assert(gpu_autograd_same(gpu_gradient(kernel).cpu().values(), expected_kernel))
+    assert(gpu_autograd_same(gpu_gradient(maximum).cpu().values(), expected_maximum))
+    assert(gpu_autograd_same(gpu_gradient(average).cpu().values(), expected_average))
+    assert(gpu_autograd_same(gpu_gradient(dropped).cpu().values(), dropped_output.detach().cpu().values()))
+}
+
+test "match normalization loss and recurrent oracle gradients on GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var layer_values:float[] = [1.0, 2.0, 3.0, -4.0, 0.0, 4.0]
+    var layer_weight_values:float[] = [1.0, -2.0, 3.0, 0.5, -1.0, 2.0]
+    var logits_values:float[] = [1000.0, 1001.0, 1002.0, -1000.0, -1001.0, -1002.0]
+    var class_values:int32[] = [2 as int32, 0 as int32]
+    var recurrent_weight_values:float[] = [0.3, -0.4, 0.2, 0.5]
+    var hidden_weight_values:float[] = [0.25, 0.1, -0.3, 0.4]
+    var recurrent_input_values:float[] = [0.5, -1.0, 1.5, 0.25]
+    var initial_values:float[] = [0.1, -0.2]
+
+    var layer = Variable(Tensor(layer_values, [2, 3]).to(device))
+    let layer_weights = Tensor(layer_weight_values, [2, 3]).to(device)
+    var logits = Variable(Tensor(logits_values, [2, 3]).to(device))
+    let classes = Tensor.vector(class_values).to(device)
+    var recurrent_weights = Variable(Tensor(recurrent_weight_values, [2, 2]).to(device))
+    let hidden_weights = Tensor(hidden_weight_values, [2, 2]).to(device)
+    let recurrent_inputs = Tensor(recurrent_input_values, [2, 2]).to(device)
+    var hidden = Tensor(initial_values, [1, 2]).to(device)
+
+    let layer_loss = layer.value().layer_norm().multiply(layer_weights).sum()
+    let class_loss = logits.value().cross_entropy(classes, 1)
+    hidden = recurrent_inputs.select(0, 0).reshape([1, 2]).matmul(recurrent_weights.value()).add(hidden.matmul(hidden_weights)).tanh()
+    hidden = recurrent_inputs.select(0, 1).reshape([1, 2]).matmul(recurrent_weights.value()).add(hidden.matmul(hidden_weights)).tanh()
+    let recurrent_loss = hidden.sum()
+    device.reset_command_stats()
+    layer_loss.backward()
+    class_loss.backward()
+    recurrent_loss.backward()
+    let before_readback = device.command_stats()
+    assert(before_readback.uploads == 0 && before_readback.downloads == 0)
+
+    var expected_layer:float[] = [1.63296235, -3.26596189, 1.63299918, 0.229639381, -0.45927912, 0.229639739]
+    var expected_logits:float[] = [0.0450152904, 0.122364245, -0.167379498, -0.167379498, 0.122364245, 0.0450152904]
+    var expected_recurrent:float[] = [1.05837512, 0.933322132, -0.0608897209, 0.120994762]
+    assert(gpu_autograd_same(gpu_gradient(layer).cpu().values(), expected_layer, 0.0003))
+    assert(gpu_autograd_same(gpu_gradient(logits).cpu().values(), expected_logits, 0.0003))
+    assert(gpu_autograd_same(gpu_gradient(recurrent_weights).cpu().values(), expected_recurrent, 0.0003))
+}

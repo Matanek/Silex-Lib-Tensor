@@ -46,6 +46,10 @@ uint storage_index(uint logical) {
 void compute_main(uint3 id : SV_DispatchThreadID) {
     uint index = id.x;
     if (index >= header.y) return;
+    if (header.x == 14) {
+        outputValues[index] = scalar;
+        return;
+    }
     float value = inputValues[storage_index(index)];
     if (header.x == 0) outputValues[index] = value + scalar;
     else if (header.x == 1) outputValues[index] = value - scalar;
@@ -58,5 +62,7 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     else if (header.x == 8) outputValues[index] = sqrt(value);
     else if (header.x == 9) outputValues[index] = isnan(value) ? value : max(value, 0.0);
     else if (header.x == 10) outputValues[index] = 1.0 / (1.0 + exp(-value));
-    else outputValues[index] = tanh(value);
+    else if (header.x == 11) outputValues[index] = tanh(value);
+    else if (header.x == 12) outputValues[index] = value > 0.0 ? 1.0 : (value < 0.0 ? -1.0 : 0.0);
+    else outputValues[index] = value > 0.0 ? 1.0 : 0.0;
 }

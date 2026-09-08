@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Autograd.Variable
+
+func main() {
+    var values:float[] = [1.0, 2.0]
+    var seed_values:int32[] = [1 as int32, 1 as int32]
+    var input = Variable(Tensor.vector(values))
+    input.value().multiply(2.0).backward(Tensor.vector(seed_values))
+}

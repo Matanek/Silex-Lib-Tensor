@@ -184,12 +184,14 @@ Les autres dimensions, dtype, placement et device doivent correspondre.
 identiques. Les deux opérations restent sur le placement courant et acceptent
 les neuf dtypes.
 
-`source.gather(axis, indices)` sélectionne une valeur par position hors de
-l'axe choisi. `indices` est un Tensor `int32` dont la forme est celle de la
-source sans cet axe : des logits `[batch, classes]` se sélectionnent ainsi avec
-des classes `[batch]`. Sur GPU, cette opération est l'exception d'adressage
-`int32` autorisée pour une source `float32`; elle ne rend pas le calcul entier
-général disponible.
+`source.gather(axis, indices)` accepte deux formes d'indices `int32`. La forme
+courte omet l'axe choisi et sélectionne une valeur par position restante : des
+logits `[batch, classes]` se sélectionnent ainsi avec des classes `[batch]`.
+La forme générale donne à `indices` le même rang que la source ; ses dimensions
+hors de l'axe choisi doivent correspondre à la source, sa dimension sur l'axe
+fixe la taille de sortie, et un même indice peut apparaître plusieurs fois. Sur
+GPU, cette opération est l'exception d'adressage `int32` autorisée pour une
+source `float32`; elle ne rend pas le calcul entier général disponible.
 Les indices doivent appartenir à l'axe sélectionné. Le chemin CPU les valide
 avant l'accès ; pour conserver le chemin GPU résident, un indice GPU hors
 borne produit un NaN sentinelle dans la sortie au lieu d'un readback caché.
@@ -249,6 +251,46 @@ l'itération explicite. Le même couple seed-itération reproduit le masque ; un
 autre itération le renouvelle. En évaluation, `training:false` conserve le
 Tensor. Sur GPU, le masque est généré par un compteur privé dans la passe de
 calcul : aucun upload de masque ni RNG global n'est caché.
+
+## Différencier un calcul eager
+
+Le module `Tensor.Autograd` fournit l'autodifférentiation inverse de `float32`.
+Une `Autograd.Variable` est une feuille mutable qui possède sa valeur Tensor et
+son éventuel gradient ; les opérations continuent de produire des `Tensor`
+immuables ordinaires :
+
+```sx
+use Tensor
+use Tensor.Autograd
+
+var samples:float[] = [1.0, 2.0, 3.0, 4.0]
+var targets:float[] = [0.0, 1.0]
+var weights = Autograd.Variable(Tensor(samples, [2, 2]))
+
+let prediction = Tensor.ones([1, 2]).matmul(weights.value())
+let loss = prediction.mse_loss(Tensor.vector(targets))
+loss.backward()
+
+if let gradient = weights.gradient() {
+    assert(gradient.shape()[0] == 2)
+}
+weights.zero_grad()
+```
+
+`backward()` sans argument exige une sortie scalaire et injecte une seed de
+un. Une sortie non scalaire reçoit explicitement un Tensor seed de même forme,
+dtype, placement et device. Les contributions d'une feuille répétée ou d'un
+graphe ramifié s'additionnent ; les appels issus de graphes distincts
+s'accumulent également jusqu'à `zero_grad()`. Une feuille déconnectée conserve
+un gradient absent (`null`).
+
+`detach()` rend la même valeur sans provenance. Le graphe d'une sortie est
+consommé après un `backward()` réussi : il n'existe ni rétention du graphe ni
+dérivée d'ordre supérieur dans cette version. Les changements de dtype ou de
+placement sont refusés au milieu d'un graphe suivi ; détachez d'abord la
+valeur. Sur GPU, le forward, les gradients et leur accumulation restent
+résidents. Pour observer un résultat, employez par exemple
+`gradient.detach().cpu()` ; ce `cpu()` demeure le readback explicite.
 
 ## Passer sur GPU
 

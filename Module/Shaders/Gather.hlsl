@@ -35,15 +35,17 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     uint remaining = logical;
     uint indexStorage = indexHeader.y;
     uint sourceStorage = sourceHeader.w;
-    int sourceAxis = int(sourceHeader.y) - 1;
-    for (int indexAxis = int(indexHeader.x) - 1; indexAxis >= 0; --indexAxis) {
+    int indexAxis = int(indexHeader.x) - 1;
+    for (int sourceAxis = int(sourceHeader.y) - 1; sourceAxis >= 0; --sourceAxis) {
+        if (sourceAxis == int(sourceHeader.z) && indexHeader.x != sourceHeader.y) continue;
         uint dimension = pair_component(indexShape0, indexShape1, uint(indexAxis));
         uint coordinate = dimension == 0 ? 0 : remaining % dimension;
         if (dimension > 0) remaining /= dimension;
         indexStorage += coordinate * pair_component(indexStrides0, indexStrides1, uint(indexAxis));
-        if (sourceAxis == int(sourceHeader.z)) --sourceAxis;
-        sourceStorage += coordinate * pair_component(sourceStrides0, sourceStrides1, uint(sourceAxis));
-        --sourceAxis;
+        if (sourceAxis != int(sourceHeader.z)) {
+            sourceStorage += coordinate * pair_component(sourceStrides0, sourceStrides1, uint(sourceAxis));
+        }
+        --indexAxis;
     }
     int selected = indexValues[indexStorage];
     if (selected < 0 || uint(selected) >= indexHeader.z) {

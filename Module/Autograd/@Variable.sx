@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.DType
+use Tensor.GradientSlot
+
+public nocopy class Variable {
+    private var current_value:Tensor
+    private var gradient_slot:GradientSlot
+
+    init(value:Tensor) {
+        if value.dtype() != DType.float32() {
+            panic("Tensor.Autograd.Variable supports only dtype float32")
+        }
+        self.gradient_slot = GradientSlot()
+        self.current_value = value.detach().autograd_leaf(self.gradient_slot)
+    }
+
+    func value() Tensor { return self.current_value }
+
+    func gradient() Tensor? { return self.gradient_slot.gradient() }
+
+    func zero_grad() { self.gradient_slot.zero(self.current_value.detach()) }
+}

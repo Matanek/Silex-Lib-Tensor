@@ -365,6 +365,185 @@ def build_cases() -> tuple[dict[str, Case], dict[str, str]]:
         )).numpy(),
     }, 2e-5, 1e-5))
 
+    autograd_input = np.asarray([
+        [-1.0, 2.0, 0.5],
+        [3.0, -2.0, 1.0],
+    ], dtype=np.float32)
+    autograd_bias = np.asarray([0.25, -0.5, 1.0], dtype=np.float32)
+
+    def pytorch_broadcast_gradient(operand: str) -> object:
+        input_value = torch.from_numpy(autograd_input).clone().requires_grad_(True)
+        bias_value = torch.from_numpy(autograd_bias).clone().requires_grad_(True)
+        torch.relu(input_value + bias_value).mean().backward()
+        return input_value.grad.numpy() if operand == "input" else bias_value.grad.numpy()
+
+    def tensorflow_broadcast_gradient(operand: str) -> object:
+        input_value = tf.Variable(autograd_input)
+        bias_value = tf.Variable(autograd_bias)
+        with tf.GradientTape() as tape:
+            loss = tf.reduce_mean(tf.nn.relu(input_value + bias_value))
+        input_gradient, bias_gradient = tape.gradient(loss, [input_value, bias_value])
+        return input_gradient.numpy() if operand == "input" else bias_gradient.numpy()
+
+    for operand in ("input", "bias"):
+        add_case(consensus(f"autograd_broadcast_{operand}", "autograd", "float32", {
+            "pytorch": lambda operand=operand: pytorch_broadcast_gradient(operand),
+            "tensorflow": lambda operand=operand: tensorflow_broadcast_gradient(operand),
+        }, 5e-5, 2e-5))
+
+    layer_weights = np.asarray([
+        [1.0, -2.0, 3.0],
+        [0.5, -1.0, 2.0],
+    ], dtype=np.float32)
+
+    def pytorch_layer_norm_gradient() -> object:
+        input_value = torch.from_numpy(layer_values).clone().requires_grad_(True)
+        normalized = torch.nn.functional.layer_norm(input_value, (3,), eps=1e-5)
+        torch.sum(normalized * torch.from_numpy(layer_weights)).backward()
+        return input_value.grad.numpy()
+
+    def tensorflow_layer_norm_gradient() -> object:
+        input_value = tf.Variable(layer_values)
+        weights = tf.constant(layer_weights)
+        with tf.GradientTape() as tape:
+            mean = tf.reduce_mean(input_value, axis=1, keepdims=True)
+            centered = input_value - mean
+            normalized = centered / tf.sqrt(
+                tf.reduce_mean(tf.square(centered), axis=1, keepdims=True) +
+                tf.constant(1e-5, dtype=tf.float32)
+            )
+            loss = tf.reduce_sum(normalized * weights)
+        return tape.gradient(loss, input_value).numpy()
+
+    add_case(consensus("autograd_layer_norm_input", "autograd", "float32", {
+        "pytorch": pytorch_layer_norm_gradient,
+        "tensorflow": tensorflow_layer_norm_gradient,
+    }, 8e-5, 3e-5))
+
+    def pytorch_batched_matmul_gradient(operand: str) -> object:
+        left_value = torch.from_numpy(batched_left).clone().requires_grad_(True)
+        right_value = torch.from_numpy(batched_right).clone().requires_grad_(True)
+        torch.matmul(left_value, right_value).sum().backward()
+        return left_value.grad.numpy() if operand == "left" else right_value.grad.numpy()
+
+    def tensorflow_batched_matmul_gradient(operand: str) -> object:
+        left_value = tf.Variable(batched_left)
+        right_value = tf.Variable(batched_right)
+        with tf.GradientTape() as tape:
+            loss = tf.reduce_sum(tf.matmul(left_value, right_value))
+        left_gradient, right_gradient = tape.gradient(loss, [left_value, right_value])
+        return left_gradient.numpy() if operand == "left" else right_gradient.numpy()
+
+    for operand in ("left", "right"):
+        add_case(consensus(f"autograd_batched_matmul_{operand}", "autograd", "float32", {
+            "pytorch": lambda operand=operand: pytorch_batched_matmul_gradient(operand),
+            "tensorflow": lambda operand=operand: tensorflow_batched_matmul_gradient(operand),
+        }, 6e-5, 2e-5))
+
+    def pytorch_convolution_gradient(operand: str) -> object:
+        input_value = torch.from_numpy(convolution_input).clone().requires_grad_(True)
+        kernel_value = torch.from_numpy(convolution_kernel).clone().requires_grad_(True)
+        torch.nn.functional.conv2d(input_value, kernel_value).sum().backward()
+        return input_value.grad.numpy() if operand == "input" else kernel_value.grad.numpy()
+
+    def tensorflow_convolution_gradient(operand: str) -> object:
+        input_value = tf.Variable(convolution_input)
+        kernel_value = tf.Variable(convolution_kernel)
+        with tf.GradientTape() as tape:
+            output = tf.nn.conv2d(
+                tf.transpose(input_value, (0, 2, 3, 1)),
+                tf.transpose(kernel_value, (2, 3, 1, 0)),
+                strides=1,
+                padding="VALID",
+            )
+            loss = tf.reduce_sum(output)
+        input_gradient, kernel_gradient = tape.gradient(loss, [input_value, kernel_value])
+        return input_gradient.numpy() if operand == "input" else kernel_gradient.numpy()
+
+    for operand in ("input", "kernel"):
+        add_case(consensus(f"autograd_conv2d_{operand}", "autograd", "float32", {
+            "pytorch": lambda operand=operand: pytorch_convolution_gradient(operand),
+            "tensorflow": lambda operand=operand: tensorflow_convolution_gradient(operand),
+        }, 7e-5, 2e-5))
+
+    def pytorch_pool_gradient(mode: str) -> object:
+        input_value = torch.from_numpy(convolution_input).clone().requires_grad_(True)
+        if mode == "max":
+            output = torch.nn.functional.max_pool2d(input_value, 2, 1)
+        else:
+            output = torch.nn.functional.avg_pool2d(input_value, 2, 1)
+        output.sum().backward()
+        return input_value.grad.numpy()
+
+    def tensorflow_pool_gradient(mode: str) -> object:
+        input_value = tf.Variable(convolution_input)
+        with tf.GradientTape() as tape:
+            channels_last = tf.transpose(input_value, (0, 2, 3, 1))
+            if mode == "max":
+                output = tf.nn.max_pool2d(channels_last, 2, 1, "VALID")
+            else:
+                output = tf.nn.avg_pool2d(channels_last, 2, 1, "VALID")
+            loss = tf.reduce_sum(output)
+        return tape.gradient(loss, input_value).numpy()
+
+    for mode in ("max", "average"):
+        add_case(consensus(f"autograd_{mode}_pool2d_input", "autograd", "float32", {
+            "pytorch": lambda mode=mode: pytorch_pool_gradient(mode),
+            "tensorflow": lambda mode=mode: tensorflow_pool_gradient(mode),
+        }, 6e-5, 2e-5))
+
+    def pytorch_cross_entropy_gradient() -> object:
+        logits_value = torch.from_numpy(neural_logits).clone().requires_grad_(True)
+        torch.nn.functional.cross_entropy(
+            logits_value, torch.from_numpy(class_targets).to(torch.int64)
+        ).backward()
+        return logits_value.grad.numpy()
+
+    def tensorflow_cross_entropy_gradient() -> object:
+        logits_value = tf.Variable(neural_logits)
+        with tf.GradientTape() as tape:
+            loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+                labels=tf.constant(class_targets), logits=logits_value
+            ))
+        return tape.gradient(loss, logits_value).numpy()
+
+    add_case(consensus("autograd_cross_entropy_logits", "autograd", "float32", {
+        "pytorch": pytorch_cross_entropy_gradient,
+        "tensorflow": tensorflow_cross_entropy_gradient,
+    }, 7e-5, 3e-5))
+
+    recurrent_inputs = np.asarray([[0.5, -1.0], [1.5, 0.25]], dtype=np.float32)
+    recurrent_initial = np.asarray([[0.1, -0.2]], dtype=np.float32)
+    recurrent_input_weights = np.asarray([[0.3, -0.4], [0.2, 0.5]], dtype=np.float32)
+    recurrent_hidden_weights = np.asarray([[0.25, 0.1], [-0.3, 0.4]], dtype=np.float32)
+
+    def pytorch_recurrent_gradient() -> object:
+        input_weights = torch.from_numpy(recurrent_input_weights).clone().requires_grad_(True)
+        hidden_weights = torch.from_numpy(recurrent_hidden_weights)
+        hidden = torch.from_numpy(recurrent_initial)
+        for step in recurrent_inputs:
+            hidden = torch.tanh(torch.from_numpy(step.reshape(1, 2)) @ input_weights + hidden @ hidden_weights)
+        hidden.sum().backward()
+        return input_weights.grad.numpy()
+
+    def tensorflow_recurrent_gradient() -> object:
+        input_weights = tf.Variable(recurrent_input_weights)
+        hidden_weights = tf.constant(recurrent_hidden_weights)
+        with tf.GradientTape() as tape:
+            hidden = tf.constant(recurrent_initial)
+            for step in recurrent_inputs:
+                hidden = tf.math.tanh(
+                    tf.matmul(tf.constant(step.reshape(1, 2)), input_weights) +
+                    tf.matmul(hidden, hidden_weights)
+                )
+            loss = tf.reduce_sum(hidden)
+        return tape.gradient(loss, input_weights).numpy()
+
+    add_case(consensus("autograd_recurrent_input_weights", "autograd", "float32", {
+        "pytorch": pytorch_recurrent_gradient,
+        "tensorflow": tensorflow_recurrent_gradient,
+    }, 1e-4, 4e-5))
+
     add_case(consensus("permuted_view", "transform", "int32", {
         "numpy": lambda: np.transpose(view_base, (2, 0, 1)),
         "pytorch": lambda: torch.from_numpy(view_base).permute(2, 0, 1).numpy(),
@@ -449,6 +628,7 @@ def render_fixture(cases: dict[str, Case], versions: dict[str, str]) -> str:
 use GFX.GPU
 use STD.Math
 use Tensor
+use Tensor.Autograd
 use Tensor.DType
 
 local func exact_values<T>(actual:T[], expected:T[]) bool {{
@@ -485,6 +665,11 @@ local func float_values_match(actual:float[], expected:float[], absolute:float, 
         index++
     }}
     return true
+}}
+
+local func required_gradient(variable:Autograd.Variable) Tensor {{
+    if let gradient = variable.gradient() {{ return gradient }}
+    panic("expected a connected oracle gradient")
 }}
 
 test "oracle comparison harness rejects deliberate mutations" {{
@@ -724,6 +909,75 @@ test "match PyTorch and TensorFlow neural fixtures" {{
     assert(float_values_match(logits.cross_entropy(Tensor.vector(class_targets), 1).values(), expected_class_loss, 0.00002, 0.00001))
 }}
 
+test "match PyTorch and TensorFlow eager gradients" {{
+    var input_values:float[] = [-1.0, 2.0, 0.5, 3.0, -2.0, 1.0]
+    var bias_values:float[] = [0.25, -0.5, 1.0]
+    var input = Autograd.Variable(Tensor(input_values, [2, 3]))
+    var bias = Autograd.Variable(Tensor.vector(bias_values))
+    input.value().add(bias.value()).relu().mean().backward()
+    var expected_input:float[] = [{values['autograd_broadcast_input']}]
+    var expected_bias:float[] = [{values['autograd_broadcast_bias']}]
+    assert(float_values_match(required_gradient(input).values(), expected_input, 0.00005, 0.00002))
+    assert(float_values_match(required_gradient(bias).values(), expected_bias, 0.00005, 0.00002))
+
+    var layer_values:float[] = [1.0, 2.0, 3.0, -4.0, 0.0, 4.0]
+    var layer_weights:float[] = [1.0, -2.0, 3.0, 0.5, -1.0, 2.0]
+    var layer = Autograd.Variable(Tensor(layer_values, [2, 3]))
+    layer.value().layer_norm().multiply(Tensor(layer_weights, [2, 3])).sum().backward()
+    var expected_layer:float[] = [{values['autograd_layer_norm_input']}]
+    assert(float_values_match(required_gradient(layer).values(), expected_layer, 0.00008, 0.00003))
+
+    var batch_left_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    var batch_right_values:float[] = [1.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+    var batch_left = Autograd.Variable(Tensor(batch_left_values, [2, 2, 3]))
+    var batch_right = Autograd.Variable(Tensor(batch_right_values, [1, 3, 2]))
+    batch_left.value().matmul(batch_right.value()).sum().backward()
+    var expected_batch_left:float[] = [{values['autograd_batched_matmul_left']}]
+    var expected_batch_right:float[] = [{values['autograd_batched_matmul_right']}]
+    assert(float_values_match(required_gradient(batch_left).values(), expected_batch_left, 0.00006, 0.00002))
+    assert(float_values_match(required_gradient(batch_right).values(), expected_batch_right, 0.00006, 0.00002))
+
+    var image_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    var kernel_values:float[] = [1.0, 1.0, 1.0, 1.0]
+    var image = Autograd.Variable(Tensor(image_values, [1, 1, 3, 3]))
+    var kernel = Autograd.Variable(Tensor(kernel_values, [1, 1, 2, 2]))
+    image.value().conv2d(kernel.value()).sum().backward()
+    var expected_image:float[] = [{values['autograd_conv2d_input']}]
+    var expected_kernel:float[] = [{values['autograd_conv2d_kernel']}]
+    assert(float_values_match(required_gradient(image).values(), expected_image, 0.00007, 0.00002))
+    assert(float_values_match(required_gradient(kernel).values(), expected_kernel, 0.00007, 0.00002))
+
+    var maximum = Autograd.Variable(Tensor(image_values, [1, 1, 3, 3]))
+    maximum.value().max_pool2d(2, 1).sum().backward()
+    var average = Autograd.Variable(Tensor(image_values, [1, 1, 3, 3]))
+    average.value().average_pool2d(2, 1).sum().backward()
+    var expected_maximum:float[] = [{values['autograd_max_pool2d_input']}]
+    var expected_average:float[] = [{values['autograd_average_pool2d_input']}]
+    assert(float_values_match(required_gradient(maximum).values(), expected_maximum, 0.00006, 0.00002))
+    assert(float_values_match(required_gradient(average).values(), expected_average, 0.00006, 0.00002))
+
+    var logits_values:float[] = [1000.0, 1001.0, 1002.0, -1000.0, -1001.0, -1002.0]
+    var class_targets:int32[] = [2 as int32, 0 as int32]
+    var logits = Autograd.Variable(Tensor(logits_values, [2, 3]))
+    logits.value().cross_entropy(Tensor.vector(class_targets), 1).backward()
+    var expected_logits:float[] = [{values['autograd_cross_entropy_logits']}]
+    assert(float_values_match(required_gradient(logits).values(), expected_logits, 0.00007, 0.00003))
+
+    var recurrent_weight_values:float[] = [0.3, -0.4, 0.2, 0.5]
+    var recurrent_hidden_values:float[] = [0.25, 0.1, -0.3, 0.4]
+    var recurrent_input_values:float[] = [0.5, -1.0, 1.5, 0.25]
+    var recurrent_initial_values:float[] = [0.1, -0.2]
+    var recurrent_weights = Autograd.Variable(Tensor(recurrent_weight_values, [2, 2]))
+    let hidden_weights = Tensor(recurrent_hidden_values, [2, 2])
+    let recurrent_inputs = Tensor(recurrent_input_values, [2, 2])
+    var hidden = Tensor(recurrent_initial_values, [1, 2])
+    hidden = recurrent_inputs.select(0, 0).reshape([1, 2]).matmul(recurrent_weights.value()).add(hidden.matmul(hidden_weights)).tanh()
+    hidden = recurrent_inputs.select(0, 1).reshape([1, 2]).matmul(recurrent_weights.value()).add(hidden.matmul(hidden_weights)).tanh()
+    hidden.sum().backward()
+    var expected_recurrent:float[] = [{values['autograd_recurrent_input_weights']}]
+    assert(float_values_match(required_gradient(recurrent_weights).values(), expected_recurrent, 0.0001, 0.00004))
+}}
+
 test "run the float32 oracle fixture on the available GPU" {{
     if !GPU.Device.is_supported() {{ return }}
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
@@ -802,6 +1056,7 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "| activations, softmax, layer norm and losses | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | axes, dtype and target shapes |",
         "| NCHW/OIHW convolution and pooling | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | channels, ranks, stride, padding and kernel shape |",
         "| seeded initialization and dropout | `Neural.sx`, `NeuralGPU.sx` | bounds, fan sizes, probability, seed and iteration |",
+        "| eager reverse-mode autodifferentiation | `Autograd.sx`, `AutogradGPU.sx`, `OracleDifferential.sx` | dtype, seed, consumed graph, transfer and disconnected graph |",
         "| `to`, `cpu`, CPU/GPU placement and resource lifetime | `GPU.sx`, `GPUViews.sx`, `GPUCompute.sx`, `GPUStress.sx`, `OracleDifferential.sx` | extraction on GPU, cross-device use and integer GPU compute |",
         "",
         "The successful suite includes targeted scalar, singleton, zero-sized, broadcast, strided-view, axis, signed-zero, NaN, infinity, integer-extrema, exact-conversion, large/small-amplitude, and bounded seeded pseudo-random cases. `Tests/Consumer/Diagnostics/README.md` indexes division-by-zero, overflow, out-of-range conversion, and structural errors.",

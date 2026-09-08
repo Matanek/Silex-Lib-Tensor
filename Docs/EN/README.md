@@ -179,11 +179,14 @@ other dimensions, dtype, placement, and device must match.
 shapes. Both operations stay on the current placement and accept all nine
 dtypes.
 
-`source.gather(axis, indices)` selects one value per position outside the
-chosen axis. `indices` is an `int32` Tensor shaped like the source without that
-axis: logits `[batch, classes]` are therefore selected by classes `[batch]`.
-On GPU, this operation is the authorized `int32` addressing exception for a
-`float32` source; it does not enable general integer computation.
+`source.gather(axis, indices)` accepts two `int32` index shapes. The shorthand
+omits the chosen axis and selects one value per remaining position: logits
+`[batch, classes]` are therefore selected by classes `[batch]`. The general
+form gives `indices` the same rank as the source; dimensions outside the chosen
+axis must match the source, the index dimension determines the output size,
+and an index may occur more than once. On GPU, this operation is the authorized
+`int32` addressing exception for a `float32` source; it does not enable general
+integer computation.
 Indices must belong to the selected axis. The CPU path validates them before
 access; to keep the GPU path resident, an out-of-range GPU index produces a
 NaN sentinel in the output instead of causing a hidden readback.
@@ -242,6 +245,44 @@ the iteration. The same seed-iteration pair reproduces the mask; another
 iteration refreshes it. In evaluation, `training:false` keeps the Tensor. On
 GPU, a private counter generates the mask in the compute pass: no mask upload
 or global RNG is hidden.
+
+## Differentiate eager computation
+
+The `Tensor.Autograd` module provides reverse-mode autodifferentiation for
+`float32`. An `Autograd.Variable` is a mutable leaf that owns its Tensor value
+and optional gradient; operations continue to produce ordinary immutable
+`Tensor` values:
+
+```sx
+use Tensor
+use Tensor.Autograd
+
+var samples:float[] = [1.0, 2.0, 3.0, 4.0]
+var targets:float[] = [0.0, 1.0]
+var weights = Autograd.Variable(Tensor(samples, [2, 2]))
+
+let prediction = Tensor.ones([1, 2]).matmul(weights.value())
+let loss = prediction.mse_loss(Tensor.vector(targets))
+loss.backward()
+
+if let gradient = weights.gradient() {
+    assert(gradient.shape()[0] == 2)
+}
+weights.zero_grad()
+```
+
+`backward()` without an argument requires a scalar output and injects a seed of
+one. A non-scalar output receives an explicit Tensor seed with the same shape,
+dtype, placement, and device. Contributions from a repeated leaf or branched
+graph are summed; calls from separate graphs also accumulate until
+`zero_grad()`. A disconnected leaf keeps an absent (`null`) gradient.
+
+`detach()` returns the same value without provenance. An output graph is
+consumed after a successful `backward()`: this release has neither retained
+graphs nor higher-order derivatives. Dtype and placement changes are rejected
+inside a tracked graph; detach the value first. On GPU, forward computation,
+gradients, and accumulation remain resident. To observe a result, use for
+example `gradient.detach().cpu()`; that `cpu()` remains the explicit readback.
 
 ## Move to the GPU
 

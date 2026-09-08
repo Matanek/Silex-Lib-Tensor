@@ -1,7 +1,13 @@
 use GFX.GPU
 use Tensor
+use Tensor.Autograd.Variable
 use Tensor.gpu_pipeline_compilations
 use Tensor.reset_gpu_pipeline_compilations
+
+func cached_gradient(variable:Variable) Tensor {
+    if let gradient = variable.gradient() { return gradient }
+    panic("expected a connected cached gradient")
+}
 
 test "reuse compiled elementwise binary reduction and linear pipelines" {
     if !GPU.Device.is_supported() { return }
@@ -63,4 +69,26 @@ test "reuse gather convolution pooling and dropout pipelines" {
     assert(maximum.cpu().count() == 4 && average.cpu().count() == 4)
     assert(dropout_once.cpu().count() == 9 && dropout_twice.cpu().count() == 9)
     assert(gpu_pipeline_compilations() == 4)
+}
+
+test "reuse backward pipelines and release each consumed graph" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device()
+    var source_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var indices:int32[] = [0 as int32, 0 as int32, 2 as int32, 1 as int32]
+    var source = Variable(Tensor(source_values, [2, 3]).to(device))
+    let index_tensor = Tensor(indices, [2, 2]).to(device)
+    var warm_compilations = 0
+    var iteration = 0
+    while iteration < 16 {
+        source.value().gather(1, index_tensor).sum().backward()
+        if iteration == 0 { warm_compilations = gpu_pipeline_compilations() }
+        assert(gpu_pipeline_compilations() == warm_compilations)
+        iteration++
+    }
+    assert(warm_compilations > 0)
+    let gradient = cached_gradient(source).detach().cpu().values()
+    assert(gradient[0] == 32.0 && gradient[1] == 0.0 && gradient[2] == 0.0)
+    assert(gradient[3] == 0.0 && gradient[4] == 16.0 && gradient[5] == 16.0)
 }
