@@ -15,5 +15,6 @@ silex install Tensor
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)
+- [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 
 The package requires Silex 0.43.0 or newer.
