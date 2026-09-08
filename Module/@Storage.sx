@@ -172,6 +172,49 @@ nocopy class GPUKernelCache {
 package func gpu_pipeline_compilations() int { return GPUKernelCache.compilations() }
 package func reset_gpu_pipeline_compilations() { GPUKernelCache.reset_compilations() }
 
+package struct GPUPerformanceStatistics {
+    let buffer_allocations:int
+    let upload_staging_allocations:int
+    let download_staging_allocations:int
+    let fence_creations:int
+}
+
+class GPUPerformanceCounters {
+    private static var buffer_allocations:int = 0
+    private static var upload_staging_allocations:int = 0
+    private static var download_staging_allocations:int = 0
+    private static var fence_creations:int = 0
+
+    module static func record_buffer() { GPUPerformanceCounters.buffer_allocations++ }
+    module static func record_upload_staging() { GPUPerformanceCounters.upload_staging_allocations++ }
+    module static func record_download_staging() { GPUPerformanceCounters.download_staging_allocations++ }
+    module static func record_fence() { GPUPerformanceCounters.fence_creations++ }
+
+    module static func reset() {
+        GPUPerformanceCounters.buffer_allocations = 0
+        GPUPerformanceCounters.upload_staging_allocations = 0
+        GPUPerformanceCounters.download_staging_allocations = 0
+        GPUPerformanceCounters.fence_creations = 0
+    }
+
+    module static func statistics() GPUPerformanceStatistics {
+        return GPUPerformanceStatistics(
+            buffer_allocations:GPUPerformanceCounters.buffer_allocations,
+            upload_staging_allocations:GPUPerformanceCounters.upload_staging_allocations,
+            download_staging_allocations:GPUPerformanceCounters.download_staging_allocations,
+            fence_creations:GPUPerformanceCounters.fence_creations
+        )
+    }
+}
+
+package func gpu_performance_statistics() GPUPerformanceStatistics {
+    return GPUPerformanceCounters.statistics()
+}
+
+package func reset_gpu_performance_statistics() {
+    GPUPerformanceCounters.reset()
+}
+
 nocopy class GPUStorage {
     private var current_device:GPU.Device
     private var kernel_cache:GPUKernelCache
@@ -287,11 +330,13 @@ nocopy class GPUStorage {
         if self.element_count == 0 { return CPUStorage.empty(self.current_dtype) }
         let byte_count = checked_byte_count(self.element_count, self.current_dtype.byte_width())
         var download = self.current_device.download_buffer(gpu_byte_count(byte_count), "Tensor download")
+        GPUPerformanceCounters.record_download_staging()
         var commands = self.current_device.commands()
         var transfer = commands.copy()
         transfer.download(self.required_buffer(), download, byte_count)
         transfer.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         completed.wait()
         if self.current_dtype == DType.float32() { return CPUStorage(download.read_floats(count:self.element_count)) }
         if self.current_dtype == DType.int8() { return CPUStorage(download.read_int8s(count:self.element_count)) }
@@ -308,11 +353,9 @@ nocopy class GPUStorage {
         if layout.count() == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
         let width = self.current_dtype.byte_width()
         let byte_count = checked_byte_count(layout.count(), width)
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:gpu_byte_count(byte_count),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor contiguous storage"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, gpu_byte_count(byte_count), "Tensor contiguous storage"
+        )
         var commands = self.current_device.commands()
         var transfer = commands.copy()
         var logical = 0
@@ -329,6 +372,7 @@ nocopy class GPUStorage {
         }
         transfer.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, layout.count())
     }
 
@@ -336,11 +380,9 @@ nocopy class GPUStorage {
         let count = layout.count()
         var metadata = elementwise_metadata(binary_code(operation), layout)
         if count == 0 { return self }
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(count, 4),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor float32 result"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 result"
+        )
         var pipeline = self.kernel_cache.elementwise()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -352,6 +394,7 @@ nocopy class GPUStorage {
         compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -359,11 +402,9 @@ nocopy class GPUStorage {
         let count = layout.count()
         var metadata = elementwise_metadata(unary_code(operation), layout)
         if count == 0 { return self }
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(count, 4),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor float32 unary result"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 unary result"
+        )
         var pipeline = self.kernel_cache.elementwise()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -375,6 +416,7 @@ nocopy class GPUStorage {
         compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -388,11 +430,9 @@ nocopy class GPUStorage {
         let count = shape_product(output_shape)
         var metadata = binary_metadata(binary_code(operation), output_shape, left_layout, right_layout)
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(count, 4),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor float32 binary result"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 binary result"
+        )
         var pipeline = self.kernel_cache.binary()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -404,6 +444,7 @@ nocopy class GPUStorage {
         compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -417,11 +458,9 @@ nocopy class GPUStorage {
         let count = shape_product(output_shape)
         var metadata = reduction_metadata(operation, layout, axes, keep_dimensions, count)
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(count, 4),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor float32 reduction result"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 reduction result"
+        )
         var pipeline = self.kernel_cache.reduction()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -432,6 +471,7 @@ nocopy class GPUStorage {
         compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -445,11 +485,9 @@ nocopy class GPUStorage {
         let count = shape_product(output_shape)
         var metadata = linear_metadata(left_layout, right_layout, operation, count)
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
-        var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(count, 4),
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor float32 linear result"
-        ))
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 linear result"
+        )
         var pipeline = self.kernel_cache.linear()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -461,6 +499,7 @@ nocopy class GPUStorage {
         compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -470,23 +509,30 @@ nocopy class GPUStorage {
     }
 
     private static func empty(device:GPU.Device, cache:GPUKernelCache, dtype:DType) GPUStorage {
-        var buffer = device.buffer(GPU.BufferSettings(
-            size:4,
-            usage:GPU.BufferUsage.storage(),
-            name:"Tensor empty storage"
-        ))
+        var buffer = GPUStorage.allocate_buffer(device, 4, "Tensor empty storage")
         return GPUStorage(device, cache, buffer, null, null, null, null, dtype, 0)
     }
 
     private static func finish_upload(device:GPU.Device, upload:GPU.TransferBuffer, dtype:DType, count:int) GPUStorage {
         let byte_count = checked_byte_count(count, dtype.byte_width())
-        var buffer = device.buffer(GPU.BufferSettings(size:gpu_byte_count(byte_count), usage:GPU.BufferUsage.storage(), name:"Tensor storage"))
+        GPUPerformanceCounters.record_upload_staging()
+        var buffer = GPUStorage.allocate_buffer(device, gpu_byte_count(byte_count), "Tensor storage")
         var commands = device.commands()
         var transfer = commands.copy()
         transfer.upload(upload, buffer, byte_count)
         transfer.finish()
         var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
         return GPUStorage(device, GPUKernelCache(device), buffer, upload, completed, null, null, dtype, count)
+    }
+
+    private static func allocate_buffer(device:GPU.Device, size:int, name:str) GPU.Buffer {
+        GPUPerformanceCounters.record_buffer()
+        return device.buffer(GPU.BufferSettings(
+            size:size,
+            usage:GPU.BufferUsage.storage(),
+            name:name
+        ))
     }
 
     private func required_buffer() GPU.Buffer {

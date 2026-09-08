@@ -1,0 +1,51 @@
+use GFX.GPU
+use Tensor
+use Tensor.gpu_performance_statistics
+use Tensor.gpu_pipeline_compilations
+use Tensor.reset_gpu_performance_statistics
+use Tensor.reset_gpu_pipeline_compilations
+
+func five_operation_chain(left:Tensor, right:Tensor) Tensor {
+    return left.add(1.0).multiply(0.5).matmul(right).sum().add(1.0)
+}
+
+test "bound resident allocations fences staging and pipeline creation" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_performance_statistics()
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let left = Tensor.ones([2, 2]).to(device)
+    let right = Tensor.ones([2, 2]).to(device)
+    device.wait_until_idle()
+
+    var result = five_operation_chain(left, right)
+    device.wait_until_idle()
+    let cold = gpu_performance_statistics()
+    assert(cold.buffer_allocations == 7)
+    assert(cold.upload_staging_allocations == 2)
+    assert(cold.download_staging_allocations == 0)
+    assert(cold.fence_creations == 7)
+    assert(gpu_pipeline_compilations() == 3)
+
+    assert(result.cpu().item() == 9.0)
+    let after_readback = gpu_performance_statistics()
+    assert(after_readback.download_staging_allocations == 1)
+    assert(after_readback.fence_creations == 8)
+
+    device.reset_command_stats()
+    var iteration = 0
+    while iteration < 8 {
+        result = five_operation_chain(left, right)
+        device.wait_until_idle()
+        iteration++
+    }
+    let warm = gpu_performance_statistics()
+    let commands = device.command_stats()
+    assert(warm.buffer_allocations == 47)
+    assert(warm.upload_staging_allocations == 2)
+    assert(warm.download_staging_allocations == 1)
+    assert(warm.fence_creations == 48)
+    assert(gpu_pipeline_compilations() == 3)
+    assert(commands.uploads == 0 && commands.downloads == 0)
+    assert(commands.compute_passes == 40)
+}
