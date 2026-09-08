@@ -1,0 +1,2 @@
+use Tensor
+func main() { var left:uint8[] = [255 as uint8]; var right:uint8[] = [2 as uint8]; print(Tensor(left, [1, 1]).matmul(Tensor(right, [1, 1])).uint8_item()) }

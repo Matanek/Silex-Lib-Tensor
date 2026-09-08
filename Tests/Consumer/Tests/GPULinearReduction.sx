@@ -1,0 +1,115 @@
+use GFX.GPU
+use STD.Math
+use Tensor
+
+func close_enough(left:float, right:float, terms:int) bool {
+    let absolute = 0.00001 * terms as float
+    let relative = 0.00001 * Math.abs(right)
+    var tolerance = absolute
+    if relative > tolerance { tolerance = relative }
+    return Math.abs(left - right) <= tolerance
+}
+
+test "keep float reductions resident on the GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    device.reset_command_stats()
+    var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    let gpu = Tensor(values, [2, 3]).to(device)
+    let sum = gpu.sum()
+    let mean = gpu.mean([1], true)
+    let minimum = gpu.min([0])
+    let maximum = gpu.max([1])
+    let before = device.command_stats()
+    assert(sum.is_gpu() && sum.rank() == 0)
+    assert(mean.is_gpu() && mean.shape()[0] == 2 && mean.shape()[1] == 1)
+    assert(minimum.is_gpu() && maximum.is_gpu())
+    assert(before.uploads == 1 && before.downloads == 0 && before.compute_passes == 4)
+    assert(close_enough(sum.cpu().item(), 21.0, 6))
+    let means = mean.cpu().values()
+    assert(close_enough(means[0], 2.0, 3) && close_enough(means[1], 5.0, 3))
+    let minima = minimum.cpu().values()
+    let maxima = maximum.cpu().values()
+    assert(minima[0] == 1.0 && minima[2] == 3.0)
+    assert(maxima[0] == 3.0 && maxima[1] == 6.0)
+}
+
+test "match CPU dot and matmul on resident GPU views" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    device.reset_command_stats()
+    var left_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var right_values:float[] = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    let cpu_left = Tensor(left_values, [3, 2]).transpose()
+    let cpu_right = Tensor(right_values, [2, 3]).transpose()
+    let expected = cpu_left.matmul(cpu_right).values()
+    let left = cpu_left.to(device)
+    let right = cpu_right.to(device)
+    let product = left.matmul(right)
+    var dot_left:float[] = [1.0, 2.0, 3.0, 4.0]
+    var dot_right:float[] = [5.0, 6.0, 7.0, 8.0]
+    let dot = Tensor.vector(dot_left).to(device).dot(Tensor.vector(dot_right).to(device))
+    let before = device.command_stats()
+    assert(product.is_gpu() && dot.is_gpu() && before.downloads == 0)
+    let actual = product.cpu().values()
+    var index = 0
+    while index < expected.count() {
+        assert(close_enough(actual[index], expected[index], 3))
+        index++
+    }
+    assert(close_enough(dot.cpu().item(), 70.0, 4))
+}
+
+test "reduce float32 GPU tensors from rank zero through five" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device()
+    assert(Tensor.scalar(2.0).to(device).sum().cpu().item() == 2.0)
+    assert(Tensor.ones([3]).to(device).sum().cpu().item() == 3.0)
+    assert(Tensor.ones([2, 3]).to(device).sum().cpu().item() == 6.0)
+    assert(Tensor.ones([2, 3, 4]).to(device).sum().cpu().item() == 24.0)
+    assert(Tensor.ones([2, 2, 2, 2]).to(device).sum().cpu().item() == 16.0)
+    assert(Tensor.ones([1, 2, 1, 3, 4]).to(device).sum().cpu().item() == 24.0)
+}
+
+test "handle empty GPU reduction and linear domains" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device()
+    let reduced = Tensor.zeros([2, 0, 3]).to(device).sum([1])
+    assert(reduced.is_gpu() && reduced.shape()[0] == 2 && reduced.shape()[1] == 3)
+    assert(reduced.cpu().values()[5] == 0.0)
+
+    var empty:float[] = []
+    let left = Tensor.vector(empty).to(device)
+    let right = Tensor.vector(empty).to(device)
+    assert(left.dot(right).cpu().item() == 0.0)
+
+    let product = Tensor.zeros([2, 0]).to(device).matmul(Tensor.zeros([0, 3]).to(device))
+    assert(product.is_gpu() && product.shape()[0] == 2 && product.shape()[1] == 3)
+    assert(product.cpu().values()[5] == 0.0)
+}
+
+test "preserve the reduction oracle for signed zeros on GPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device()
+    var values:float[] = [0.0, -0.0]
+    let source = Tensor.vector(values).to(device)
+    assert(Math.sign_bit(source.min().cpu().item()))
+    assert(!Math.sign_bit(source.max().cpu().item()))
+}
+
+test "match larger floating workloads within the documented tolerance" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device()
+    let left = Tensor.ones([17, 31])
+    let right = Tensor.ones([31, 13])
+    let expected = left.matmul(right).values()
+    let actual = left.to(device).matmul(right.to(device)).cpu().values()
+    var index = 0
+    while index < expected.count() {
+        assert(close_enough(actual[index], expected[index], 31))
+        index++
+    }
+
+    let reduced = Tensor.ones([8, 16, 32]).to(device).sum().cpu().item()
+    assert(close_enough(reduced, 4096.0, 4096))
+}

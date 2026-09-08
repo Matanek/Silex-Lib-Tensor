@@ -1,0 +1,2 @@
+use Tensor
+func main() { var values:int32[] = [1 as int32]; let result = Tensor.ones([1]).dot(Tensor.vector(values)); print(result.count()) }

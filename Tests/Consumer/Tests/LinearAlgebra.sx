@@ -1,0 +1,67 @@
+use Tensor
+
+test "compute float dot products and rectangular matrix products" {
+    var left_values:float[] = [1.0, 2.0, 3.0]
+    var right_values:float[] = [4.0, 5.0, 6.0]
+    let dot = Tensor.vector(left_values).dot(Tensor.vector(right_values))
+    assert(dot.rank() == 0 && dot.item() == 32.0)
+
+    var matrix_left:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var matrix_right:float[] = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    let product = Tensor(matrix_left, [2, 3]).matmul(Tensor(matrix_right, [3, 2]))
+    assert(product.shape()[0] == 2 && product.shape()[1] == 2)
+    assert(product.at([0, 0]) == 58.0 && product.at([0, 1]) == 64.0)
+    assert(product.at([1, 0]) == 139.0 && product.at([1, 1]) == 154.0)
+}
+
+test "honor strided matrix operands and empty inner dimensions" {
+    var left_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var right_values:float[] = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    let left = Tensor(left_values, [3, 2]).transpose()
+    let right = Tensor(right_values, [2, 3]).transpose()
+    let product = left.matmul(right)
+    assert(product.shape()[0] == 2 && product.shape()[1] == 2)
+    assert(product.at([0, 0]) == 76.0 && product.at([1, 1]) == 136.0)
+
+    let zeros = Tensor.zeros([2, 0]).matmul(Tensor.zeros([0, 3]))
+    assert(zeros.shape()[0] == 2 && zeros.shape()[1] == 3)
+    assert(zeros.count() == 6 && zeros.values()[5] == 0.0)
+    var empty:float[] = []
+    assert(Tensor.vector(empty).dot(Tensor.vector(empty)).item() == 0.0)
+}
+
+test "compute dot and matmul for every integer dtype on CPU" {
+    var i8:int8[] = [1 as int8, 2 as int8]
+    var u8:uint8[] = [1 as uint8, 2 as uint8]
+    var i16:int16[] = [1 as int16, 2 as int16]
+    var u16:uint16[] = [1 as uint16, 2 as uint16]
+    var i32:int32[] = [1 as int32, 2 as int32]
+    var u32:uint32[] = [1 as uint32, 2 as uint32]
+    var i64:int64[] = [1 as int64, 2 as int64]
+    var u64:uint64[] = [1 as uint64, 2 as uint64]
+    assert(Tensor.vector(i8).dot(Tensor.vector(i8)).int8_item() == 5 as int8)
+    assert(Tensor.vector(u8).dot(Tensor.vector(u8)).uint8_item() == 5 as uint8)
+    assert(Tensor.vector(i16).dot(Tensor.vector(i16)).int16_item() == 5 as int16)
+    assert(Tensor.vector(u16).dot(Tensor.vector(u16)).uint16_item() == 5 as uint16)
+    assert(Tensor.vector(i32).dot(Tensor.vector(i32)).int32_item() == 5 as int32)
+    assert(Tensor.vector(u32).dot(Tensor.vector(u32)).uint32_item() == 5 as uint32)
+    assert(Tensor.vector(i64).dot(Tensor.vector(i64)).int64_item() == 5 as int64)
+    assert(Tensor.vector(u64).dot(Tensor.vector(u64)).uint64_item() == 5 as uint64)
+
+    var identity8:int8[] = [1 as int8, 0 as int8, 0 as int8, 1 as int8]
+    var identityu8:uint8[] = [1 as uint8, 0 as uint8, 0 as uint8, 1 as uint8]
+    var identity16:int16[] = [1 as int16, 0 as int16, 0 as int16, 1 as int16]
+    var identityu16:uint16[] = [1 as uint16, 0 as uint16, 0 as uint16, 1 as uint16]
+    var identity32:int32[] = [1 as int32, 0 as int32, 0 as int32, 1 as int32]
+    var identityu32:uint32[] = [1 as uint32, 0 as uint32, 0 as uint32, 1 as uint32]
+    var identity64:int64[] = [1 as int64, 0 as int64, 0 as int64, 1 as int64]
+    var identityu64:uint64[] = [1 as uint64, 0 as uint64, 0 as uint64, 1 as uint64]
+    assert(Tensor(i8, [1, 2]).matmul(Tensor(identity8, [2, 2])).int8_values()[1] == 2 as int8)
+    assert(Tensor(u8, [1, 2]).matmul(Tensor(identityu8, [2, 2])).uint8_values()[1] == 2 as uint8)
+    assert(Tensor(i16, [1, 2]).matmul(Tensor(identity16, [2, 2])).int16_values()[1] == 2 as int16)
+    assert(Tensor(u16, [1, 2]).matmul(Tensor(identityu16, [2, 2])).uint16_values()[1] == 2 as uint16)
+    assert(Tensor(i32, [1, 2]).matmul(Tensor(identity32, [2, 2])).int32_values()[1] == 2 as int32)
+    assert(Tensor(u32, [1, 2]).matmul(Tensor(identityu32, [2, 2])).uint32_values()[1] == 2 as uint32)
+    assert(Tensor(i64, [1, 2]).matmul(Tensor(identity64, [2, 2])).int64_values()[1] == 2 as int64)
+    assert(Tensor(u64, [1, 2]).matmul(Tensor(identityu64, [2, 2])).uint64_values()[1] == 2 as uint64)
+}

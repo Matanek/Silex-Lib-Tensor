@@ -160,7 +160,7 @@ public struct Tensor {
     }
 
     module func binary(other:Tensor, operation:BinaryOperation) Tensor {
-        self.require_binary_compatibility(other, operation)
+        self.require_pair_compatibility(other, binary_name(operation))
         let shape = broadcast_shape(self.shape(), other.shape(), binary_name(operation))
         if self.is_gpu() {
             self.require_gpu_float_compute(binary_name(operation))
@@ -214,8 +214,49 @@ public struct Tensor {
         )
     }
 
-    private func require_binary_compatibility(other:Tensor, operation:BinaryOperation) {
-        let name = binary_name(operation)
+    module func reduction(axes:int[]?, keep_dimensions:bool, operation:ReductionOperation) Tensor {
+        let name = reduction_name(operation)
+        if operation == ReductionOperation.mean && self.dtype() != DType.float32() {
+            panic("Tensor.mean supports only dtype float32; call cast(DType.float32())")
+        }
+        let reduced_axes = normalized_axes(axes, self.rank(), name)
+        if reduced_axes.is_empty() { return self }
+        let shape = reduced_shape(self.shape(), reduced_axes, keep_dimensions)
+        require_reduction_domain(self.shape(), reduced_axes, shape, operation)
+        if self.is_gpu() {
+            self.require_gpu_float_compute(name)
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(storage.reduction(self.current_layout, reduced_axes, keep_dimensions, operation, shape)),
+                Layout(shape)
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(reduction_cpu_storage(self.cpu_storage(), self.current_layout, reduced_axes, keep_dimensions, operation, shape)),
+            Layout(shape)
+        )
+    }
+
+    module func linear(other:Tensor, operation:LinearOperation) Tensor {
+        let name = linear_name(operation)
+        self.require_pair_compatibility(other, name)
+        let shape = linear_shape(self.current_layout, other.current_layout, operation)
+        if self.is_gpu() {
+            self.require_gpu_float_compute(name)
+            var left = self.gpu_storage()
+            var right = other.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(left.linear(right, self.current_layout, other.current_layout, operation, shape)),
+                Layout(shape)
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(linear_cpu_storage(self.cpu_storage(), self.current_layout, other.cpu_storage(), other.current_layout, operation, shape)),
+            Layout(shape)
+        )
+    }
+
+    private func require_pair_compatibility(other:Tensor, name:str) {
         if self.dtype() != other.dtype() { panic("Tensor.$(name) requires matching dtypes") }
         if self.is_cpu() != other.is_cpu() { panic("Tensor.$(name) requires matching placements") }
         if self.is_gpu() {

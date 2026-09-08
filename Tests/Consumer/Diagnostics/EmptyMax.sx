@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.zeros([0, 2]).max([0]); print(result.count()) }

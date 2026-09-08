@@ -1,0 +1,2 @@
+use Tensor
+func main() { var left:int8[] = [127 as int8]; var right:int8[] = [2 as int8]; print(Tensor.vector(left).dot(Tensor.vector(right)).int8_item()) }

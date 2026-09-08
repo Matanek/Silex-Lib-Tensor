@@ -15,6 +15,20 @@ Every fixture must fail and mention its intended contract:
   observable;
 - `UnsignedNegate.sx`: negation requires a floating or signed dtype;
 - `FloatOnlyUnary.sx`: transcendental operations require `float32`;
+- `ReductionAxis.sx` and `ReductionDuplicate.sx`: reduction axes are unique and
+  inside the tensor rank;
+- `EmptyMean.sx`, `EmptyMin.sx`, and `EmptyMax.sx`: reductions without an
+  identity reject an empty domain;
+- `IntegerMean.sx`: `mean` requires an explicit conversion to `float32`;
+- `GPUIntegerReduction.sx`, `GPUIntegerDot.sx`, and
+  `GPUIntegerMatmul.sx`: integer reductions and linear algebra remain CPU-only;
+- `DotRank.sx`, `DotShape.sx`, `MatmulRank.sx`, and `MatmulShape.sx`: linear
+  algebra validates ranks and dimensions before calculation;
+- `LinearDType.sx` and `LinearPlacement.sx`: both operands retain one dtype and
+  one placement;
+- `SignedSumOverflow.sx`, `UnsignedSumOverflow.sx`, `SignedDotOverflow.sx`,
+  and `UnsignedMatmulOverflow.sx`: reduction and multiply-accumulate overflow
+  remains checked in the tensor dtype;
 - `CrossDevice.sx`: explicit CPU staging between devices;
 - `Placement.sx`: matching placements;
 - `DTypeMismatch.sx`: matching dtypes;

@@ -1,0 +1,3 @@
+use GFX.GPU
+use Tensor
+func main() { var device = GPU.Device(); let result = Tensor.ones([1]).dot(Tensor.ones([1]).to(device)); print(result.count()) }

@@ -203,7 +203,7 @@ func binary_signed_values<T>(
     return result
 }
 
-func checked_signed<T>(left:T, right:T, operation:BinaryOperation, minimum:T, maximum:T, dtype:str) T {
+module func checked_signed<T>(left:T, right:T, operation:BinaryOperation, minimum:T, maximum:T, dtype:str) T {
     let zero = 0 as T
     let one = 1 as T
     let negative_one = -one
@@ -261,7 +261,7 @@ func binary_unsigned_values<T>(
     return result
 }
 
-func checked_unsigned<T>(left:T, right:T, operation:BinaryOperation, maximum:T, dtype:str) T {
+module func checked_unsigned<T>(left:T, right:T, operation:BinaryOperation, maximum:T, dtype:str) T {
     let zero = 0 as T
     if operation == BinaryOperation.add {
         if left > maximum - right { integer_failure(operation, dtype, "overflow") }

@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.zeros([2, 0]).mean([1]); print(result.count()) }

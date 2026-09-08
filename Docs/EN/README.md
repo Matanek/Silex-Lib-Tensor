@@ -119,6 +119,52 @@ return bit-exactly to the CPU, but any integer GPU computation fails before
 pipeline creation or submission. Elementwise pipelines are reused throughout
 a resident chain.
 
+## Reductions and linear algebra
+
+`sum`, `mean`, `min`, and `max` always return a `Tensor`. With no argument they
+reduce every axis and produce the scalar shape `[]`. The optional `axes`
+parameter selects dimensions to reduce; `[]` performs no reduction, while
+`keep_dimensions:true` replaces each reduced dimension with `1`:
+
+```sx
+use Tensor
+
+var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+let matrix = Tensor(values, [2, 3])
+
+let columns = matrix.sum([0])
+let rows = matrix.mean([1], true)
+
+assert(columns.shape()[0] == 3 && columns.values()[2] == 9.0)
+assert(rows.shape()[0] == 2 && rows.shape()[1] == 1)
+```
+
+`sum`, `min`, and `max` accept all nine dtypes; `mean` is restricted to
+`float32`. A sum over an empty domain is zero. `mean`, `min`, and `max` reject
+an empty domain when an output value exists. Out-of-range and duplicate axes
+are also rejected. NaN propagates, and `min`/`max` select `-0.0` and `+0.0`
+respectively when both signed zeros occur. Integer sums remain in their dtype
+and fail on overflow.
+
+`dot` accepts two vectors of the same length and returns a scalar Tensor.
+`matmul` accepts two matrices whose inner dimensions match:
+
+```sx
+var left:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+var right:float[] = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+
+let product = Tensor(left, [2, 3]).matmul(Tensor(right, [3, 2]))
+assert(product.at([1, 1]) == 154.0)
+```
+
+Both operands retain the same dtype and placement. On the CPU, `dot` and
+`matmul` accept `float32` and all eight integer dtypes; integer products and
+sums are checked within the dtype. On the GPU, reductions, `dot`, and `matmul`
+accept only `float32`, return a GPU Tensor, and cause no implicit readback.
+The floating CPU/GPU comparisons in the tests use an absolute tolerance of
+`1e-5 × term count` and a relative tolerance of `1e-5 × |reference|`, taking
+the larger value.
+
 ## Move to the GPU
 
 Create the device with `GFX.GPU`, then place the tensor explicitly:

@@ -1,0 +1,2 @@
+use Tensor
+func main() { var values:uint8[] = [255 as uint8, 1 as uint8]; print(Tensor.vector(values).sum().uint8_item()) }

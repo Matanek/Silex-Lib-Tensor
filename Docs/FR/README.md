@@ -123,6 +123,52 @@ résider sur le GPU et revenir bit pour bit sur CPU, mais tout calcul entier GPU
 échoue avant création de pipeline ou soumission. Les pipelines élémentaires
 sont réutilisés au fil d'une chaîne résidente.
 
+## Réductions et algèbre linéaire
+
+`sum`, `mean`, `min` et `max` retournent toujours un `Tensor`. Sans argument,
+ils réduisent tous les axes et produisent la forme scalaire `[]`. Le paramètre
+optionnel `axes` sélectionne les dimensions à réduire ; `[]` ne réduit rien et
+`keep_dimensions:true` remplace chaque dimension réduite par `1` :
+
+```sx
+use Tensor
+
+var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+let matrix = Tensor(values, [2, 3])
+
+let columns = matrix.sum([0])
+let rows = matrix.mean([1], true)
+
+assert(columns.shape()[0] == 3 && columns.values()[2] == 9.0)
+assert(rows.shape()[0] == 2 && rows.shape()[1] == 1)
+```
+
+`sum`, `min` et `max` acceptent les neuf dtypes ; `mean` est réservé à
+`float32`. Une somme de domaine vide vaut zéro. `mean`, `min` et `max` refusent
+un domaine vide lorsqu'il existe une valeur de sortie. Les axes hors limites
+ou dupliqués sont également refusés. NaN se propage et `min`/`max` choisissent
+respectivement `-0.0` et `+0.0` lorsque les deux signes de zéro sont présents.
+Les sommes entières restent dans leur dtype et échouent en cas d'overflow.
+
+`dot` accepte deux vecteurs de même longueur et retourne un Tensor scalaire.
+`matmul` accepte deux matrices dont les dimensions intérieures correspondent :
+
+```sx
+var left:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+var right:float[] = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+
+let product = Tensor(left, [2, 3]).matmul(Tensor(right, [3, 2]))
+assert(product.at([1, 1]) == 154.0)
+```
+
+Les deux opérandes gardent le même dtype et le même placement. Sur CPU,
+`dot` et `matmul` acceptent `float32` et les huit dtypes entiers ; les produits
+et sommes entiers sont contrôlés dans le dtype. Sur GPU, réductions, `dot` et
+`matmul` acceptent `float32` uniquement, rendent un Tensor GPU et ne provoquent
+aucun readback implicite. Les comparaisons CPU/GPU flottantes des tests
+emploient une tolérance absolue de `1e-5 × nombre de termes` et une tolérance
+relative de `1e-5 × |référence|`, en retenant la plus grande.
+
 ## Passer sur GPU
 
 Créez le device avec `GFX.GPU`, puis placez explicitement le tenseur :

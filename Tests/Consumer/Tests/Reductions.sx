@@ -1,0 +1,103 @@
+use STD.Math
+use Tensor
+
+test "reduce ranks zero through five globally" {
+    assert(Tensor.scalar(7.0).sum().shape().is_empty())
+    assert(Tensor.scalar(7.0).sum().item() == 7.0)
+    assert(Tensor.ones([3]).sum().item() == 3.0)
+    assert(Tensor.ones([2, 3]).sum().item() == 6.0)
+    assert(Tensor.ones([2, 3, 4]).sum().item() == 24.0)
+    assert(Tensor.ones([2, 2, 2, 2]).sum().item() == 16.0)
+    assert(Tensor.ones([1, 2, 1, 3, 4]).sum().item() == 24.0)
+}
+
+test "reduce selected axes and preserve dimensions on strided views" {
+    var values:float[] = [
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+        7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+    ]
+    let source = Tensor(values, [2, 3, 2])
+    let collapsed = source.sum([0, 2])
+    assert(collapsed.shape()[0] == 3)
+    assert(collapsed.values()[0] == 18.0 && collapsed.values()[1] == 26.0 && collapsed.values()[2] == 34.0)
+
+    let kept = source.sum([0, 2], true)
+    assert(kept.rank() == 3)
+    assert(kept.shape()[0] == 1 && kept.shape()[1] == 3 && kept.shape()[2] == 1)
+    assert(kept.at([0, 2, 0]) == 34.0)
+
+    let mean = source.mean([1])
+    assert(mean.shape()[0] == 2 && mean.shape()[1] == 2)
+    assert(mean.at([0, 0]) == 3.0 && mean.at([1, 1]) == 10.0)
+
+    let transposed = Tensor(values, [3, 4]).transpose()
+    let minima = transposed.min([1])
+    let maxima = transposed.max([0])
+    assert(minima.values()[0] == 1.0 && minima.values()[3] == 4.0)
+    assert(maxima.values()[0] == 4.0 && maxima.values()[2] == 12.0)
+}
+
+test "treat an empty axes list as no reduction" {
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    let source = Tensor(values, [2, 2]).transpose()
+    let sum = source.sum([])
+    let mean = source.mean([], true)
+    let minimum = source.min([])
+    let maximum = source.max([], true)
+    assert(sum.shape()[0] == 2 && sum.shape()[1] == 2)
+    assert(sum.strides()[0] == 1 && sum.at([1, 0]) == 2.0)
+    assert(mean.at([0, 1]) == 3.0)
+    assert(minimum.at([1, 1]) == 4.0)
+    assert(maximum.at([0, 0]) == 1.0)
+}
+
+test "define empty sums and preserve empty outputs without reduction domains" {
+    let global = Tensor.zeros([0, 3]).sum()
+    assert(global.rank() == 0 && global.item() == 0.0)
+
+    let domains = Tensor.zeros([2, 0, 3]).sum([1])
+    assert(domains.shape()[0] == 2 && domains.shape()[1] == 3)
+    assert(domains.count() == 6 && domains.values()[5] == 0.0)
+
+    let no_outputs = Tensor.zeros([0, 3]).mean([1])
+    assert(no_outputs.shape()[0] == 0 && no_outputs.count() == 0)
+}
+
+test "propagate NaN and retain infinities in float reductions" {
+    let nan = Tensor.scalar(-1.0).sqrt().item()
+    let infinity = Tensor.scalar(1.0).divide(0.0).item()
+    var values:float[] = [1.0, nan, infinity]
+    let source = Tensor.vector(values)
+    assert(Math.is_nan(source.sum().item()))
+    assert(Math.is_nan(source.mean().item()))
+    assert(Math.is_nan(source.min().item()))
+    assert(Math.is_nan(source.max().item()))
+    var infinite_values:float[] = [-infinity, 2.0, infinity]
+    let infinite = Tensor.vector(infinite_values)
+    assert(Math.is_infinite(infinite.min().item()) && infinite.min().item() < 0.0)
+    assert(Math.is_infinite(infinite.max().item()) && infinite.max().item() > 0.0)
+
+    var zeros:float[] = [0.0, -0.0]
+    let signed_zeros = Tensor.vector(zeros)
+    assert(Math.sign_bit(signed_zeros.min().item()))
+    assert(!Math.sign_bit(signed_zeros.max().item()))
+}
+
+test "reduce every integer dtype on CPU" {
+    var i8:int8[] = [3 as int8, 1 as int8, 2 as int8]
+    var u8:uint8[] = [3 as uint8, 1 as uint8, 2 as uint8]
+    var i16:int16[] = [3 as int16, 1 as int16, 2 as int16]
+    var u16:uint16[] = [3 as uint16, 1 as uint16, 2 as uint16]
+    var i32:int32[] = [3 as int32, 1 as int32, 2 as int32]
+    var u32:uint32[] = [3 as uint32, 1 as uint32, 2 as uint32]
+    var i64:int64[] = [3 as int64, 1 as int64, 2 as int64]
+    var u64:uint64[] = [3 as uint64, 1 as uint64, 2 as uint64]
+    assert(Tensor.vector(i8).sum().int8_item() == 6 as int8 && Tensor.vector(i8).min().int8_item() == 1 as int8 && Tensor.vector(i8).max().int8_item() == 3 as int8)
+    assert(Tensor.vector(u8).sum().uint8_item() == 6 as uint8 && Tensor.vector(u8).min().uint8_item() == 1 as uint8 && Tensor.vector(u8).max().uint8_item() == 3 as uint8)
+    assert(Tensor.vector(i16).sum().int16_item() == 6 as int16 && Tensor.vector(i16).min().int16_item() == 1 as int16 && Tensor.vector(i16).max().int16_item() == 3 as int16)
+    assert(Tensor.vector(u16).sum().uint16_item() == 6 as uint16 && Tensor.vector(u16).min().uint16_item() == 1 as uint16 && Tensor.vector(u16).max().uint16_item() == 3 as uint16)
+    assert(Tensor.vector(i32).sum().int32_item() == 6 as int32 && Tensor.vector(i32).min().int32_item() == 1 as int32 && Tensor.vector(i32).max().int32_item() == 3 as int32)
+    assert(Tensor.vector(u32).sum().uint32_item() == 6 as uint32 && Tensor.vector(u32).min().uint32_item() == 1 as uint32 && Tensor.vector(u32).max().uint32_item() == 3 as uint32)
+    assert(Tensor.vector(i64).sum().int64_item() == 6 as int64 && Tensor.vector(i64).min().int64_item() == 1 as int64 && Tensor.vector(i64).max().int64_item() == 3 as int64)
+    assert(Tensor.vector(u64).sum().uint64_item() == 6 as uint64 && Tensor.vector(u64).min().uint64_item() == 1 as uint64 && Tensor.vector(u64).max().uint64_item() == 3 as uint64)
+}

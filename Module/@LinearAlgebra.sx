@@ -1,0 +1,136 @@
+use Tensor.DType.DType
+
+enum LinearOperation {
+    dot
+    matrix_multiply
+}
+
+extend Tensor {
+    func dot(other:Tensor) Tensor { return self.linear(other, LinearOperation.dot) }
+    func matmul(other:Tensor) Tensor { return self.linear(other, LinearOperation.matrix_multiply) }
+}
+
+func linear_name(operation:LinearOperation) str {
+    return match operation { dot => "dot"; matrix_multiply => "matmul" }
+}
+
+func linear_shape(left:Layout, right:Layout, operation:LinearOperation) int[] {
+    if operation == LinearOperation.dot {
+        if left.rank() != 1 || right.rank() != 1 { panic("Tensor.dot requires two rank-1 tensors") }
+        if left.shape()[0] != right.shape()[0] { panic("Tensor.dot requires vectors with the same length") }
+        var scalar:int[] = []
+        return scalar
+    }
+    if left.rank() != 2 || right.rank() != 2 { panic("Tensor.matmul requires two rank-2 tensors") }
+    if left.shape()[1] != right.shape()[0] { panic("Tensor.matmul requires matching inner dimensions") }
+    return [left.shape()[0], right.shape()[1]]
+}
+
+func linear_cpu_storage(
+    left:CPUStorage, left_layout:Layout,
+    right:CPUStorage, right_layout:Layout,
+    operation:LinearOperation, output_shape:int[]
+) CPUStorage {
+    let dtype = left.dtype()
+    if dtype == DType.float32() { return CPUStorage(linear_float_values(left.float_values(), left_layout, right.float_values(), right_layout, operation, output_shape)) }
+    if dtype == DType.int8() { return CPUStorage(linear_signed_values<int8>(left.int8_values(), left_layout, right.int8_values(), right_layout, operation, output_shape, (-127 as int8) - (1 as int8), 127 as int8, "int8")) }
+    if dtype == DType.uint8() { return CPUStorage(linear_unsigned_values<uint8>(left.uint8_values(), left_layout, right.uint8_values(), right_layout, operation, output_shape, 255 as uint8, "uint8")) }
+    if dtype == DType.int16() { return CPUStorage(linear_signed_values<int16>(left.int16_values(), left_layout, right.int16_values(), right_layout, operation, output_shape, (-32767 as int16) - (1 as int16), 32767 as int16, "int16")) }
+    if dtype == DType.uint16() { return CPUStorage(linear_unsigned_values<uint16>(left.uint16_values(), left_layout, right.uint16_values(), right_layout, operation, output_shape, 65535 as uint16, "uint16")) }
+    if dtype == DType.int32() { return CPUStorage(linear_signed_values<int32>(left.int32_values(), left_layout, right.int32_values(), right_layout, operation, output_shape, (-2147483647 as int32) - (1 as int32), 2147483647 as int32, "int32")) }
+    if dtype == DType.uint32() { let maximum:uint32 = 0xffff_ffff; return CPUStorage(linear_unsigned_values<uint32>(left.uint32_values(), left_layout, right.uint32_values(), right_layout, operation, output_shape, maximum, "uint32")) }
+    if dtype == DType.int64() { return CPUStorage(linear_signed_values<int64>(left.int64_values(), left_layout, right.int64_values(), right_layout, operation, output_shape, (-9223372036854775807 as int64) - (1 as int64), 9223372036854775807 as int64, "int64")) }
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    return CPUStorage(linear_unsigned_values<uint64>(left.uint64_values(), left_layout, right.uint64_values(), right_layout, operation, output_shape, maximum, "uint64"))
+}
+
+func linear_dimensions(left:Layout, right:Layout, operation:LinearOperation) (int, int, int) {
+    if operation == LinearOperation.dot { return (1, 1, left.shape()[0]) }
+    return (left.shape()[0], right.shape()[1], left.shape()[1])
+}
+
+func left_linear_index(layout:Layout, row:int, inner:int, operation:LinearOperation) int {
+    if operation == LinearOperation.dot { return layout.offset() + inner * layout.strides()[0] }
+    return layout.offset() + row * layout.strides()[0] + inner * layout.strides()[1]
+}
+
+func right_linear_index(layout:Layout, column:int, inner:int, operation:LinearOperation) int {
+    if operation == LinearOperation.dot { return layout.offset() + inner * layout.strides()[0] }
+    return layout.offset() + inner * layout.strides()[0] + column * layout.strides()[1]
+}
+
+func linear_float_values(
+    left:float[], left_layout:Layout, right:float[], right_layout:Layout,
+    operation:LinearOperation, output_shape:int[]
+) float[] {
+    let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
+    var result:float[] = []
+    var row = 0
+    while row < rows {
+        var column = 0
+        while column < columns {
+            var value = 0.0
+            var inner = 0
+            while inner < shared {
+                value += left[left_linear_index(left_layout, row, inner, operation)] * right[right_linear_index(right_layout, column, inner, operation)]
+                inner++
+            }
+            result.append(value)
+            column++
+        }
+        row++
+    }
+    return result
+}
+
+func linear_signed_values<T>(
+    left:T[], left_layout:Layout, right:T[], right_layout:Layout,
+    operation:LinearOperation, output_shape:int[], minimum:T, maximum:T, dtype:str
+) T[] {
+    let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
+    let zero = 0 as T
+    var result:T[] = []
+    var row = 0
+    while row < rows {
+        var column = 0
+        while column < columns {
+            var value = zero
+            var inner = 0
+            while inner < shared {
+                let product = checked_signed<T>(left[left_linear_index(left_layout, row, inner, operation)], right[right_linear_index(right_layout, column, inner, operation)], BinaryOperation.multiply, minimum, maximum, dtype)
+                value = checked_signed<T>(value, product, BinaryOperation.add, minimum, maximum, dtype)
+                inner++
+            }
+            result.append(value)
+            column++
+        }
+        row++
+    }
+    return result
+}
+
+func linear_unsigned_values<T>(
+    left:T[], left_layout:Layout, right:T[], right_layout:Layout,
+    operation:LinearOperation, output_shape:int[], maximum:T, dtype:str
+) T[] {
+    let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
+    let zero = 0 as T
+    var result:T[] = []
+    var row = 0
+    while row < rows {
+        var column = 0
+        while column < columns {
+            var value = zero
+            var inner = 0
+            while inner < shared {
+                let product = checked_unsigned<T>(left[left_linear_index(left_layout, row, inner, operation)], right[right_linear_index(right_layout, column, inner, operation)], BinaryOperation.multiply, maximum, dtype)
+                value = checked_unsigned<T>(value, product, BinaryOperation.add, maximum, dtype)
+                inner++
+            }
+            result.append(value)
+            column++
+        }
+        row++
+    }
+    return result
+}

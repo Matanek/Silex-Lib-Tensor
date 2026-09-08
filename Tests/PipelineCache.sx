@@ -3,7 +3,7 @@ use Tensor
 use Tensor.gpu_pipeline_compilations
 use Tensor.reset_gpu_pipeline_compilations
 
-test "reuse compiled elementwise and binary pipelines in one resident chain" {
+test "reuse compiled elementwise binary reduction and linear pipelines" {
     if !GPU.Device.is_supported() { return }
     reset_gpu_pipeline_compilations()
     var device = GPU.Device()
@@ -12,6 +12,29 @@ test "reuse compiled elementwise and binary pipelines in one resident chain" {
     let left = Tensor.vector(left_values).to(device)
     let right = Tensor.vector(right_values).to(device)
     let result = left.add(1.0).multiply(2.0).abs().add(right).subtract(right)
-    assert(result.cpu().values()[1] == 6.0)
+    let first_sum = result.sum()
+    let second_sum = result.sum()
+    let first_dot = result.dot(right)
+    let second_dot = result.dot(right)
+    assert(first_sum.cpu().item() == 10.0 && second_sum.cpu().item() == 10.0)
+    assert(first_dot.cpu().item() == 36.0 && second_dot.cpu().item() == 36.0)
+    assert(gpu_pipeline_compilations() == 4)
+}
+
+test "release repeated reduction and linear temporaries after warmup" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device()
+    var left_values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var right_values:float[] = [5.0, 6.0, 7.0, 8.0]
+    let left = Tensor(left_values, [2, 2]).to(device)
+    let right = Tensor(right_values, [2, 2]).to(device)
+
+    var iteration = 0
+    while iteration < 24 {
+        let result = left.matmul(right).sum()
+        assert(result.cpu().item() == 134.0)
+        iteration++
+    }
     assert(gpu_pipeline_compilations() == 2)
 }

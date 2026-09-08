@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([2, 3]).matmul(Tensor.ones([2, 2])); print(result.count()) }

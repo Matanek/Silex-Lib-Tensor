@@ -1,0 +1,242 @@
+use STD.Math
+use Tensor.DType.DType
+
+enum ReductionOperation {
+    sum
+    mean
+    minimum
+    maximum
+}
+
+extend Tensor {
+    func sum(axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        return self.reduction(axes, keep_dimensions, ReductionOperation.sum)
+    }
+
+    func mean(axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        return self.reduction(axes, keep_dimensions, ReductionOperation.mean)
+    }
+
+    func min(axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        return self.reduction(axes, keep_dimensions, ReductionOperation.minimum)
+    }
+
+    func max(axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        return self.reduction(axes, keep_dimensions, ReductionOperation.maximum)
+    }
+}
+
+func reduction_name(operation:ReductionOperation) str {
+    return match operation {
+        sum => "sum"
+        mean => "mean"
+        minimum => "min"
+        maximum => "max"
+    }
+}
+
+func normalized_axes(requested:int[]?, rank:int, operation:str) int[] {
+    var axes:int[] = []
+    if let explicit = requested {
+        for axis in explicit {
+            require_axis(axis, rank, operation)
+            if contains_axis(axes, axis) { panic("Tensor.$(operation) axes must be unique") }
+            axes.append(axis)
+        }
+        return axes
+    }
+    var axis = 0
+    while axis < rank { axes.append(axis); axis++ }
+    return axes
+}
+
+func contains_axis(axes:int[], expected:int) bool {
+    for axis in axes { if axis == expected { return true } }
+    return false
+}
+
+func reduction_mask(rank:int, axes:int[]) bool[] {
+    var reduced:bool[] = []
+    var axis = 0
+    while axis < rank { reduced.append(false); axis++ }
+    for selected in axes { reduced[selected] = true }
+    return reduced
+}
+
+func reduced_shape(input:int[], axes:int[], keep_dimensions:bool) int[] {
+    let reduced = reduction_mask(input.count(), axes)
+    var output:int[] = []
+    var axis = 0
+    while axis < input.count() {
+        if reduced[axis] {
+            if keep_dimensions { output.append(1) }
+        } else { output.append(input[axis]) }
+        axis++
+    }
+    return output
+}
+
+func reduction_domain_size(shape:int[], axes:int[]) int {
+    var count = 1
+    for axis in axes { count = checked_product(count, shape[axis], "Tensor reduction domain overflows int") }
+    return count
+}
+
+func require_reduction_domain(
+    input_shape:int[],
+    axes:int[],
+    output_shape:int[],
+    operation:ReductionOperation
+) {
+    if operation == ReductionOperation.sum { return }
+    if shape_product(output_shape) > 0 && reduction_domain_size(input_shape, axes) == 0 {
+        panic("Tensor.$(reduction_name(operation)) cannot reduce an empty domain")
+    }
+}
+
+func reduction_cpu_storage(
+    storage:CPUStorage,
+    layout:Layout,
+    axes:int[],
+    keep_dimensions:bool,
+    operation:ReductionOperation,
+    output_shape:int[]
+) CPUStorage {
+    let dtype = storage.dtype()
+    if dtype == DType.float32() {
+        return CPUStorage(reduce_float_values(storage.float_values(), layout, axes, keep_dimensions, operation, output_shape))
+    }
+    if dtype == DType.int8() { return CPUStorage(reduce_signed_values<int8>(storage.int8_values(), layout, axes, keep_dimensions, operation, output_shape, (-127 as int8) - (1 as int8), 127 as int8, "int8")) }
+    if dtype == DType.uint8() { return CPUStorage(reduce_unsigned_values<uint8>(storage.uint8_values(), layout, axes, keep_dimensions, operation, output_shape, 255 as uint8, "uint8")) }
+    if dtype == DType.int16() { return CPUStorage(reduce_signed_values<int16>(storage.int16_values(), layout, axes, keep_dimensions, operation, output_shape, (-32767 as int16) - (1 as int16), 32767 as int16, "int16")) }
+    if dtype == DType.uint16() { return CPUStorage(reduce_unsigned_values<uint16>(storage.uint16_values(), layout, axes, keep_dimensions, operation, output_shape, 65535 as uint16, "uint16")) }
+    if dtype == DType.int32() { return CPUStorage(reduce_signed_values<int32>(storage.int32_values(), layout, axes, keep_dimensions, operation, output_shape, (-2147483647 as int32) - (1 as int32), 2147483647 as int32, "int32")) }
+    if dtype == DType.uint32() { let maximum:uint32 = 0xffff_ffff; return CPUStorage(reduce_unsigned_values<uint32>(storage.uint32_values(), layout, axes, keep_dimensions, operation, output_shape, maximum, "uint32")) }
+    if dtype == DType.int64() { return CPUStorage(reduce_signed_values<int64>(storage.int64_values(), layout, axes, keep_dimensions, operation, output_shape, (-9223372036854775807 as int64) - (1 as int64), 9223372036854775807 as int64, "int64")) }
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    return CPUStorage(reduce_unsigned_values<uint64>(storage.uint64_values(), layout, axes, keep_dimensions, operation, output_shape, maximum, "uint64"))
+}
+
+func reduction_output_index(
+    logical:int,
+    input_shape:int[],
+    reduced:bool[],
+    output_strides:int[],
+    keep_dimensions:bool
+) int {
+    var result = 0
+    var remaining = logical
+    var input_axis = input_shape.count() - 1
+    var output_axis = output_strides.count() - 1
+    while input_axis >= 0 {
+        let dimension = input_shape[input_axis]
+        var coordinate = 0
+        if dimension > 0 { coordinate = remaining % dimension; remaining /= dimension }
+        if reduced[input_axis] {
+            if keep_dimensions { output_axis-- }
+        } else {
+            result += coordinate * output_strides[output_axis]
+            output_axis--
+        }
+        input_axis--
+    }
+    return result
+}
+
+func initialized_values<T>(count:int, value:T) T[] {
+    var result:T[] = []
+    var index = 0
+    while index < count { result.append(value); index++ }
+    return result
+}
+
+func false_values(count:int) bool[] {
+    var result:bool[] = []
+    var index = 0
+    while index < count { result.append(false); index++ }
+    return result
+}
+
+func reduce_float_values(
+    values:float[], layout:Layout, axes:int[], keep_dimensions:bool,
+    operation:ReductionOperation, output_shape:int[]
+) float[] {
+    let output_count = shape_product(output_shape)
+    var result = initialized_values<float>(output_count, 0.0)
+    var initialized = false_values(output_count)
+    let reduced = reduction_mask(layout.rank(), axes)
+    let output_strides = contiguous_strides(output_shape)
+    var logical = 0
+    while logical < layout.count() {
+        let output = reduction_output_index(logical, layout.shape(), reduced, output_strides, keep_dimensions)
+        let value = values[layout.flat_storage_index(logical)]
+        if operation == ReductionOperation.sum || operation == ReductionOperation.mean {
+            result[output] += value
+        } elif !initialized[output] || Math.is_nan(value) {
+            result[output] = value
+            initialized[output] = true
+        } elif !Math.is_nan(result[output]) {
+            if operation == ReductionOperation.minimum { result[output] = Math.min(result[output], value) }
+            elif operation == ReductionOperation.maximum { result[output] = Math.max(result[output], value) }
+        }
+        logical++
+    }
+    if operation == ReductionOperation.mean {
+        let divisor = reduction_domain_size(layout.shape(), axes) as float
+        var output = 0
+        while output < output_count { result[output] /= divisor; output++ }
+    }
+    return result
+}
+
+func reduce_signed_values<T>(
+    values:T[], layout:Layout, axes:int[], keep_dimensions:bool,
+    operation:ReductionOperation, output_shape:int[], minimum:T, maximum:T, dtype:str
+) T[] {
+    let zero = 0 as T
+    let output_count = shape_product(output_shape)
+    var result = initialized_values<T>(output_count, zero)
+    var initialized = false_values(output_count)
+    let reduced = reduction_mask(layout.rank(), axes)
+    let output_strides = contiguous_strides(output_shape)
+    var logical = 0
+    while logical < layout.count() {
+        let output = reduction_output_index(logical, layout.shape(), reduced, output_strides, keep_dimensions)
+        let value = values[layout.flat_storage_index(logical)]
+        if operation == ReductionOperation.sum {
+            result[output] = checked_signed<T>(result[output], value, BinaryOperation.add, minimum, maximum, dtype)
+        } elif !initialized[output] {
+            result[output] = value
+            initialized[output] = true
+        } elif operation == ReductionOperation.minimum && value < result[output] { result[output] = value }
+        elif operation == ReductionOperation.maximum && value > result[output] { result[output] = value }
+        logical++
+    }
+    return result
+}
+
+func reduce_unsigned_values<T>(
+    values:T[], layout:Layout, axes:int[], keep_dimensions:bool,
+    operation:ReductionOperation, output_shape:int[], maximum:T, dtype:str
+) T[] {
+    let zero = 0 as T
+    let output_count = shape_product(output_shape)
+    var result = initialized_values<T>(output_count, zero)
+    var initialized = false_values(output_count)
+    let reduced = reduction_mask(layout.rank(), axes)
+    let output_strides = contiguous_strides(output_shape)
+    var logical = 0
+    while logical < layout.count() {
+        let output = reduction_output_index(logical, layout.shape(), reduced, output_strides, keep_dimensions)
+        let value = values[layout.flat_storage_index(logical)]
+        if operation == ReductionOperation.sum {
+            result[output] = checked_unsigned<T>(result[output], value, BinaryOperation.add, maximum, dtype)
+        } elif !initialized[output] {
+            result[output] = value
+            initialized[output] = true
+        } elif operation == ReductionOperation.minimum && value < result[output] { result[output] = value }
+        elif operation == ReductionOperation.maximum && value > result[output] { result[output] = value }
+        logical++
+    }
+    return result
+}
