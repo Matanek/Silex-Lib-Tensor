@@ -111,7 +111,7 @@ enum Storage {
     gpu(GPUStorage)
 }
 
-noncopyable class GPUKernelCache {
+nocopy class GPUKernelCache {
     private static var compilation_count:int = 0
     private var current_device:GPU.Device
     private var elementwise_pipeline:GPU.ComputePipeline? = null
@@ -172,7 +172,7 @@ noncopyable class GPUKernelCache {
 package func gpu_pipeline_compilations() int { return GPUKernelCache.compilations() }
 package func reset_gpu_pipeline_compilations() { GPUKernelCache.reset_compilations() }
 
-noncopyable class GPUStorage {
+nocopy class GPUStorage {
     private var current_device:GPU.Device
     private var kernel_cache:GPUKernelCache
     private var current_buffer:GPU.Buffer? = null

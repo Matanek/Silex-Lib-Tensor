@@ -34,7 +34,7 @@ Every fixture must fail and mention its intended contract:
 - `DTypeMismatch.sx`: matching dtypes;
 - `ScalarDTypeMismatch.sx`: a scalar has the exact dtype selected by its Silex
   type;
-- `CopyTensor.sx`: a value reaching a `noncopyable` class cannot be cloned;
+- `CopyTensor.sx`: a value reaching a `nocopy` class cannot be cloned;
 - `NegativeShape.sx`: shape dimensions are non-negative;
 - `ShapeOverflow.sx`: shape cardinality overflow is rejected before allocation;
 - `ByteSizeOverflow.sx`: physical byte-size overflow is rejected before allocation;
