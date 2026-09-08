@@ -35,6 +35,52 @@ extractors, such as `int32_values()` and `int32_item()`. A mismatched extraction
 fails instead of converting silently. `cast(dtype)` performs a checked numeric
 conversion on the CPU and preserves the shape.
 
+## Transform shapes and views
+
+A shape contains positive or zero dimensions. A scalar uses `[]`, and a zero
+dimension produces an empty tensor. `shape()`, `strides()`, `offset()`,
+`rank()`, `count()`, and `is_contiguous()` inspect the layout without reading
+elements, including on the GPU. Strides describe a dense row-major layout for
+a new tensor.
+
+`reshape(shape)` and `flatten()` do not copy a contiguous tensor. A reshape
+shape may contain exactly one inferred `-1`; every other dimension remains
+positive or zero. Inference made ambiguous by a zero cardinality is rejected.
+
+`permute(axes)` reorders every axis. `transpose()` is its matrix shortcut.
+`select(axis, index)` removes an axis, while `narrow(axis, start, count)` keeps
+the axis and selects a unit-step range. These operations produce immutable
+views that share their storage and keep it alive:
+
+```sx
+use Tensor
+
+var values:int32[] = [
+    1 as int32, 2 as int32, 3 as int32,
+    4 as int32, 5 as int32, 6 as int32,
+]
+
+let matrix = Tensor(values, [2, 3])
+let columns = matrix.transpose()
+let compact = columns.contiguous()
+
+assert(columns.shape()[0] == 3)
+assert(columns.strides()[0] == 1)
+assert(columns.int32_at([2, 1]) == 6 as int32)
+assert(compact.offset() == 0)
+```
+
+Indices are zero-based and non-negative, and scalar access supplies one index
+per dimension. `at()` reads `float32`; `int32_at()` and the matching typed
+forms preserve the exact dtype. Like array extractors, these accesses are
+CPU-only: call `cpu()` explicitly before reading a GPU tensor.
+
+`contiguous()` preserves a tensor that already covers its canonical storage;
+otherwise, it materializes the logical values into new dense storage without
+changing the dtype. On the GPU this remains a GPU copy and causes no readback.
+A strided view must be made contiguous before a GPU operation that requires a
+canonical layout.
+
 ## Move to the GPU
 
 Create the device with `GFX.GPU`, then place the tensor explicitly:
@@ -55,9 +101,9 @@ let cpu = result.cpu()
 assert(cpu.values()[0] == 9.0)
 ```
 
-`shape()`, `rank()`, `count()`, `dtype()`, `is_cpu()`, and `is_gpu()` cause no
-transfer. `cpu()` is the first synchronization point in a GPU chain. Value and
-item extraction is CPU-only.
+Shape and placement metadata cause no transfer. `cpu()` is the first
+synchronization point in a GPU chain. Value, item, and scalar-index extraction
+is CPU-only.
 
 This release runs only `add(float)` and `multiply(float)` for `float32` on the
 GPU. All nine dtypes transfer without loss, but integer GPU computation is

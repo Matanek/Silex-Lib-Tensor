@@ -1,0 +1,108 @@
+use Tensor
+use Tensor.DType
+
+func same_values<T>(left:T[], right:T[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}
+
+func view_after_parent_scope() Tensor {
+    var values:int32[] = [1 as int32, 2 as int32, 3 as int32, 4 as int32, 5 as int32, 6 as int32]
+    let parent = Tensor(values, [2, 3])
+    return parent.transpose().select(0, 1)
+}
+
+test "model ranks zero through five and empty dimensions" {
+    let rank0 = Tensor.scalar(1.0)
+    let rank1 = Tensor.ones([4])
+    let rank2 = Tensor.ones([2, 3])
+    let rank3 = Tensor.ones([2, 1, 3])
+    let rank4 = Tensor.ones([2, 0, 3, 4])
+    let rank5 = Tensor.ones([1, 1, 1, 1, 1])
+    assert(rank0.rank() == 0 && rank0.count() == 1 && rank0.strides().is_empty() && rank0.at([]) == 1.0)
+    assert(rank1.rank() == 1 && rank1.strides()[0] == 1)
+    assert(rank2.rank() == 2 && rank2.strides()[0] == 3 && rank2.strides()[1] == 1)
+    assert(rank3.rank() == 3 && rank3.strides()[0] == 3 && rank3.strides()[1] == 3)
+    assert(rank4.rank() == 4 && rank4.count() == 0 && rank4.is_empty())
+    assert(rank4.strides()[0] == 0 && rank4.strides()[1] == 12 && rank4.strides()[3] == 1)
+    assert(rank5.rank() == 5 && rank5.count() == 1 && rank5.is_contiguous())
+}
+
+test "reshape and flatten share contiguous layout metadata" {
+    var values:int32[] = [1 as int32, 2 as int32, 3 as int32, 4 as int32, 5 as int32, 6 as int32]
+    let source = Tensor(values, [2, 3])
+    let inferred = source.reshape([3, -1])
+    let flattened = inferred.flatten()
+    let empty = Tensor.zeros([0, 3], DType.uint16()).reshape([-1, 3])
+    assert(inferred.shape()[0] == 3 && inferred.shape()[1] == 2)
+    assert(inferred.strides()[0] == 2 && inferred.strides()[1] == 1)
+    assert(inferred.offset() == 0 && inferred.is_contiguous())
+    assert(flattened.rank() == 1 && flattened.count() == 6)
+    assert(flattened.int32_at([4]) == 5 as int32)
+    assert(empty.shape()[0] == 0 && empty.count() == 0 && empty.dtype() == DType.uint16())
+}
+
+test "permute transpose select narrow and contiguous preserve logical order" {
+    var values:int32[] = [
+        0 as int32, 1 as int32, 2 as int32,
+        3 as int32, 4 as int32, 5 as int32,
+        6 as int32, 7 as int32, 8 as int32,
+        9 as int32, 10 as int32, 11 as int32,
+    ]
+    let source = Tensor(values, [2, 2, 3])
+    let permuted = source.permute([2, 0, 1])
+    let selected = source.select(1, 1)
+    let narrowed = source.narrow(2, 1, 2)
+    let empty = source.narrow(1, 2, 0)
+    let compact = narrowed.contiguous()
+    assert(permuted.shape()[0] == 3 && permuted.strides()[0] == 1)
+    assert(permuted.int32_at([2, 1, 1]) == 11 as int32)
+    assert(selected.rank() == 2 && selected.offset() == 3 && !selected.is_contiguous())
+    var selected_expected:int32[] = [3 as int32, 4 as int32, 5 as int32, 9 as int32, 10 as int32, 11 as int32]
+    assert(same_values<int32>(selected.int32_values(), selected_expected))
+    var narrow_expected:int32[] = [1 as int32, 2 as int32, 4 as int32, 5 as int32, 7 as int32, 8 as int32, 10 as int32, 11 as int32]
+    assert(!narrowed.is_contiguous() && compact.is_contiguous() && compact.offset() == 0)
+    assert(compact.dtype() == DType.int32() && same_values<int32>(compact.int32_values(), narrow_expected))
+    assert(empty.is_empty() && empty.shape()[1] == 0 && empty.int32_values().is_empty())
+    assert(source.select(0, 1).select(0, 1).select(0, 2).rank() == 0)
+
+    var matrix_values:int32[] = [1 as int32, 2 as int32, 3 as int32, 4 as int32, 5 as int32, 6 as int32]
+    let transposed = Tensor.matrix(matrix_values, 2, 3).transpose()
+    var transpose_expected:int32[] = [1 as int32, 4 as int32, 2 as int32, 5 as int32, 3 as int32, 6 as int32]
+    assert(!transposed.is_contiguous())
+    assert(same_values<int32>(transposed.contiguous().int32_values(), transpose_expected))
+}
+
+test "index every CPU dtype through a strided view" {
+    var floats:float[] = [1.0, 2.0, 3.0, 4.0]
+    var i8:int8[] = [1 as int8, 2 as int8, 3 as int8, 4 as int8]
+    var u8:uint8[] = [1 as uint8, 2 as uint8, 3 as uint8, 4 as uint8]
+    var i16:int16[] = [1 as int16, 2 as int16, 3 as int16, 4 as int16]
+    var u16:uint16[] = [1 as uint16, 2 as uint16, 3 as uint16, 4 as uint16]
+    var i32:int32[] = [1 as int32, 2 as int32, 3 as int32, 4 as int32]
+    var u32:uint32[] = [1 as uint32, 2 as uint32, 3 as uint32, 4 as uint32]
+    var i64:int64[] = [1 as int64, 2 as int64, 3 as int64, 4 as int64]
+    var u64:uint64[] = [1 as uint64, 2 as uint64, 3 as uint64, 4 as uint64]
+    let indices:int[] = [1, 0]
+    assert(Tensor(floats, [2, 2]).transpose().at(indices) == 2.0)
+    assert(Tensor(i8, [2, 2]).transpose().int8_at(indices) == 2 as int8)
+    assert(Tensor(u8, [2, 2]).transpose().uint8_at(indices) == 2 as uint8)
+    assert(Tensor(i16, [2, 2]).transpose().int16_at(indices) == 2 as int16)
+    assert(Tensor(u16, [2, 2]).transpose().uint16_at(indices) == 2 as uint16)
+    assert(Tensor(i32, [2, 2]).transpose().int32_at(indices) == 2 as int32)
+    assert(Tensor(u32, [2, 2]).transpose().uint32_at(indices) == 2 as uint32)
+    assert(Tensor(i64, [2, 2]).transpose().int64_at(indices) == 2 as int64)
+    assert(Tensor(u64, [2, 2]).transpose().uint64_at(indices) == 2 as uint64)
+}
+
+test "keep a view alive after its parent leaves scope" {
+    let view = view_after_parent_scope()
+    var expected:int32[] = [2 as int32, 5 as int32]
+    assert(view.shape()[0] == 2)
+    assert(same_values<int32>(view.int32_values(), expected))
+}

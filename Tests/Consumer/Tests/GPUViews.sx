@@ -1,0 +1,96 @@
+use GFX.GPU
+use Tensor
+use Tensor.DType
+
+func equal_values<T>(left:T[], right:T[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}
+
+func compact_float(device:GPU.Device) {
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var expected:float[] = [1.0, 3.0, 2.0, 4.0]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.float32() && equal_values<float>(result.values(), expected))
+}
+func compact_int8(device:GPU.Device) {
+    var values:int8[] = [1 as int8, 2 as int8, 3 as int8, 4 as int8]
+    var expected:int8[] = [1 as int8, 3 as int8, 2 as int8, 4 as int8]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.int8() && equal_values<int8>(result.int8_values(), expected))
+}
+func compact_uint8(device:GPU.Device) {
+    var values:uint8[] = [1 as uint8, 2 as uint8, 3 as uint8, 4 as uint8]
+    var expected:uint8[] = [1 as uint8, 3 as uint8, 2 as uint8, 4 as uint8]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.uint8() && equal_values<uint8>(result.uint8_values(), expected))
+}
+func compact_int16(device:GPU.Device) {
+    var values:int16[] = [1 as int16, 2 as int16, 3 as int16, 4 as int16]
+    var expected:int16[] = [1 as int16, 3 as int16, 2 as int16, 4 as int16]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.int16() && equal_values<int16>(result.int16_values(), expected))
+}
+func compact_uint16(device:GPU.Device) {
+    var values:uint16[] = [1 as uint16, 2 as uint16, 3 as uint16, 4 as uint16]
+    var expected:uint16[] = [1 as uint16, 3 as uint16, 2 as uint16, 4 as uint16]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.uint16() && equal_values<uint16>(result.uint16_values(), expected))
+}
+func compact_int32(device:GPU.Device) {
+    var values:int32[] = [1 as int32, 2 as int32, 3 as int32, 4 as int32]
+    var expected:int32[] = [1 as int32, 3 as int32, 2 as int32, 4 as int32]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.int32() && equal_values<int32>(result.int32_values(), expected))
+}
+func compact_uint32(device:GPU.Device) {
+    var values:uint32[] = [1 as uint32, 2 as uint32, 3 as uint32, 4 as uint32]
+    var expected:uint32[] = [1 as uint32, 3 as uint32, 2 as uint32, 4 as uint32]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.uint32() && equal_values<uint32>(result.uint32_values(), expected))
+}
+func compact_int64(device:GPU.Device) {
+    var values:int64[] = [1 as int64, 2 as int64, 3 as int64, 4 as int64]
+    var expected:int64[] = [1 as int64, 3 as int64, 2 as int64, 4 as int64]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.int64() && equal_values<int64>(result.int64_values(), expected))
+}
+func compact_uint64(device:GPU.Device) {
+    var values:uint64[] = [1 as uint64, 2 as uint64, 3 as uint64, 4 as uint64]
+    var expected:uint64[] = [1 as uint64, 3 as uint64, 2 as uint64, 4 as uint64]
+    let result = Tensor(values, [2, 2]).to(device).transpose().contiguous().cpu()
+    assert(result.dtype() == DType.uint64() && equal_values<uint64>(result.uint64_values(), expected))
+}
+
+test "transform GPU metadata without upload download or compute" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    let resident = Tensor(values, [2, 3]).to(device)
+    device.reset_command_stats()
+    let view = resident.reshape([3, 2]).transpose().select(0, 1).narrow(0, 1, 2)
+    let stats = device.command_stats()
+    assert(view.is_gpu() && view.shape()[0] == 2 && view.strides()[0] == 2 && view.offset() == 3)
+    assert(stats.uploads == 0 && stats.downloads == 0 && stats.compute_passes == 0)
+    var expected:float[] = [5.0, 7.0]
+    assert(equal_values<float>(view.contiguous().add(1.0).cpu().values(), expected))
+}
+
+test "materialize every GPU dtype without changing its representation" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    compact_float(device)
+    compact_int8(device)
+    compact_uint8(device)
+    compact_int16(device)
+    compact_uint16(device)
+    compact_int32(device)
+    compact_uint32(device)
+    compact_int64(device)
+    compact_uint64(device)
+}

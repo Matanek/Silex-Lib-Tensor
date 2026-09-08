@@ -1,0 +1,2 @@
+use Tensor
+func main() { let tensor = Tensor.zeros([3037000500, 3037000500]); print(tensor.count()) }

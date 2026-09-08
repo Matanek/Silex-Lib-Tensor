@@ -1,0 +1,339 @@
+use GFX.GPU
+use Tensor.DType.DType
+
+enum CPUValues {
+    floats(float[])
+    signed8(int8[])
+    unsigned8(uint8[])
+    signed16(int16[])
+    unsigned16(uint16[])
+    signed32(int32[])
+    unsigned32(uint32[])
+    signed64(int64[])
+    unsigned64(uint64[])
+}
+
+class CPUStorage {
+    private let current_values:CPUValues
+
+    init(values:float[]) { self.current_values = CPUValues.floats(values) }
+    init(values:int8[]) { self.current_values = CPUValues.signed8(values) }
+    init(values:uint8[]) { self.current_values = CPUValues.unsigned8(values) }
+    init(values:int16[]) { self.current_values = CPUValues.signed16(values) }
+    init(values:uint16[]) { self.current_values = CPUValues.unsigned16(values) }
+    init(values:int32[]) { self.current_values = CPUValues.signed32(values) }
+    init(values:uint32[]) { self.current_values = CPUValues.unsigned32(values) }
+    init(values:int64[]) { self.current_values = CPUValues.signed64(values) }
+    init(values:uint64[]) { self.current_values = CPUValues.unsigned64(values) }
+    private init(values:CPUValues) { self.current_values = values }
+
+    func dtype() DType {
+        return match self.current_values {
+            floats(values) => DType.float32()
+            signed8(values) => DType.int8()
+            unsigned8(values) => DType.uint8()
+            signed16(values) => DType.int16()
+            unsigned16(values) => DType.uint16()
+            signed32(values) => DType.int32()
+            unsigned32(values) => DType.uint32()
+            signed64(values) => DType.int64()
+            unsigned64(values) => DType.uint64()
+        }
+    }
+
+    func count() int {
+        return match self.current_values {
+            floats(values) => values.count()
+            signed8(values) => values.count()
+            unsigned8(values) => values.count()
+            signed16(values) => values.count()
+            unsigned16(values) => values.count()
+            signed32(values) => values.count()
+            unsigned32(values) => values.count()
+            signed64(values) => values.count()
+            unsigned64(values) => values.count()
+        }
+    }
+
+    func float_values() float[] { return match self.current_values { floats(values) => values; else => storage_mismatch<float>() } }
+    func int8_values() int8[] { return match self.current_values { signed8(values) => values; else => storage_mismatch<int8>() } }
+    func uint8_values() uint8[] { return match self.current_values { unsigned8(values) => values; else => storage_mismatch<uint8>() } }
+    func int16_values() int16[] { return match self.current_values { signed16(values) => values; else => storage_mismatch<int16>() } }
+    func uint16_values() uint16[] { return match self.current_values { unsigned16(values) => values; else => storage_mismatch<uint16>() } }
+    func int32_values() int32[] { return match self.current_values { signed32(values) => values; else => storage_mismatch<int32>() } }
+    func uint32_values() uint32[] { return match self.current_values { unsigned32(values) => values; else => storage_mismatch<uint32>() } }
+    func int64_values() int64[] { return match self.current_values { signed64(values) => values; else => storage_mismatch<int64>() } }
+    func uint64_values() uint64[] { return match self.current_values { unsigned64(values) => values; else => storage_mismatch<uint64>() } }
+
+    func materialized(layout:Layout) CPUStorage {
+        return match self.current_values {
+            floats(values) => CPUStorage(gather_values<float>(values, layout))
+            signed8(values) => CPUStorage(gather_values<int8>(values, layout))
+            unsigned8(values) => CPUStorage(gather_values<uint8>(values, layout))
+            signed16(values) => CPUStorage(gather_values<int16>(values, layout))
+            unsigned16(values) => CPUStorage(gather_values<uint16>(values, layout))
+            signed32(values) => CPUStorage(gather_values<int32>(values, layout))
+            unsigned32(values) => CPUStorage(gather_values<uint32>(values, layout))
+            signed64(values) => CPUStorage(gather_values<int64>(values, layout))
+            unsigned64(values) => CPUStorage(gather_values<uint64>(values, layout))
+        }
+    }
+
+    func gpu(device:GPU.Device) GPUStorage {
+        return match self.current_values {
+            floats(values) => GPUStorage.upload(device, values)
+            signed8(values) => GPUStorage.upload(device, values)
+            unsigned8(values) => GPUStorage.upload(device, values)
+            signed16(values) => GPUStorage.upload(device, values)
+            unsigned16(values) => GPUStorage.upload(device, values)
+            signed32(values) => GPUStorage.upload(device, values)
+            unsigned32(values) => GPUStorage.upload(device, values)
+            signed64(values) => GPUStorage.upload(device, values)
+            unsigned64(values) => GPUStorage.upload(device, values)
+        }
+    }
+
+    static func empty(dtype:DType) CPUStorage {
+        if dtype == DType.float32() { var values:float[] = []; return CPUStorage(values) }
+        if dtype == DType.int8() { var values:int8[] = []; return CPUStorage(values) }
+        if dtype == DType.uint8() { var values:uint8[] = []; return CPUStorage(values) }
+        if dtype == DType.int16() { var values:int16[] = []; return CPUStorage(values) }
+        if dtype == DType.uint16() { var values:uint16[] = []; return CPUStorage(values) }
+        if dtype == DType.int32() { var values:int32[] = []; return CPUStorage(values) }
+        if dtype == DType.uint32() { var values:uint32[] = []; return CPUStorage(values) }
+        if dtype == DType.int64() { var values:int64[] = []; return CPUStorage(values) }
+        var values:uint64[] = []
+        return CPUStorage(values)
+    }
+}
+
+enum Storage {
+    cpu(CPUStorage)
+    gpu(GPUStorage)
+}
+
+enum ScalarOperation {
+    add
+    multiply
+}
+
+noncopyable class GPUStorage {
+    private var current_device:GPU.Device
+    private var current_buffer:GPU.Buffer? = null
+    private var upload_buffer:GPU.TransferBuffer? = null
+    private var pipeline:GPU.ComputePipeline? = null
+    private var completion:GPU.Fence? = null
+    private var parent:GPUStorage? = null
+    private let current_dtype:DType
+    private let element_count:int
+
+    init(
+        device:GPU.Device,
+        buffer:GPU.Buffer?,
+        upload:GPU.TransferBuffer?,
+        pipeline:GPU.ComputePipeline?,
+        completion:GPU.Fence?,
+        parent:GPUStorage?,
+        dtype:DType,
+        count:int
+    ) {
+        self.current_device = device
+        self.current_buffer = buffer
+        self.upload_buffer = upload
+        self.pipeline = pipeline
+        self.completion = completion
+        self.parent = parent
+        self.current_dtype = dtype
+        self.element_count = count
+    }
+
+    drop {
+        if var fence = self.completion { fence.wait() }
+        self.completion = null
+        self.pipeline = null
+        self.upload_buffer = null
+        self.current_buffer = null
+        self.parent = null
+    }
+
+    func dtype() DType { return self.current_dtype }
+    func count() int { return self.element_count }
+    func same_device(other:@GPU.Device) bool { return self.current_device == other }
+    func same_device(other:@GPUStorage) bool { return self.current_device == other.current_device }
+
+    static func upload(device:GPU.Device, values:float[]) GPUStorage {
+        let dtype = DType.float32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 4)), "Tensor float32 upload")
+        upload.write_floats(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int8[]) GPUStorage {
+        let dtype = DType.int8()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count()), "Tensor int8 upload")
+        upload.write_int8s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint8[]) GPUStorage {
+        let dtype = DType.uint8()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(values.count()), "Tensor uint8 upload")
+        upload.write_uint8s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int16[]) GPUStorage {
+        let dtype = DType.int16()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 2)), "Tensor int16 upload")
+        upload.write_int16s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint16[]) GPUStorage {
+        let dtype = DType.uint16()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 2)), "Tensor uint16 upload")
+        upload.write_uint16s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int32[]) GPUStorage {
+        let dtype = DType.int32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 4)), "Tensor int32 upload")
+        upload.write_int32s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint32[]) GPUStorage {
+        let dtype = DType.uint32()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 4)), "Tensor uint32 upload")
+        upload.write_uint32s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:int64[]) GPUStorage {
+        let dtype = DType.int64()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 8)), "Tensor int64 upload")
+        upload.write_int64s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+    static func upload(device:GPU.Device, values:uint64[]) GPUStorage {
+        let dtype = DType.uint64()
+        if values.is_empty() { return GPUStorage.empty(device, dtype) }
+        var upload = device.upload_buffer(gpu_byte_count(checked_byte_count(values.count(), 8)), "Tensor uint64 upload")
+        upload.write_uint64s(@values[0:values.count()])
+        return GPUStorage.finish_upload(device, upload, dtype, values.count())
+    }
+
+    func cpu_storage() CPUStorage {
+        if self.element_count == 0 { return CPUStorage.empty(self.current_dtype) }
+        let byte_count = checked_byte_count(self.element_count, self.current_dtype.byte_width())
+        var download = self.current_device.download_buffer(gpu_byte_count(byte_count), "Tensor download")
+        var commands = self.current_device.commands()
+        var transfer = commands.copy()
+        transfer.download(self.required_buffer(), download, byte_count)
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        completed.wait()
+        if self.current_dtype == DType.float32() { return CPUStorage(download.read_floats(count:self.element_count)) }
+        if self.current_dtype == DType.int8() { return CPUStorage(download.read_int8s(count:self.element_count)) }
+        if self.current_dtype == DType.uint8() { return CPUStorage(download.read_uint8s(count:self.element_count)) }
+        if self.current_dtype == DType.int16() { return CPUStorage(download.read_int16s(count:self.element_count)) }
+        if self.current_dtype == DType.uint16() { return CPUStorage(download.read_uint16s(count:self.element_count)) }
+        if self.current_dtype == DType.int32() { return CPUStorage(download.read_int32s(count:self.element_count)) }
+        if self.current_dtype == DType.uint32() { return CPUStorage(download.read_uint32s(count:self.element_count)) }
+        if self.current_dtype == DType.int64() { return CPUStorage(download.read_int64s(count:self.element_count)) }
+        return CPUStorage(download.read_uint64s(count:self.element_count))
+    }
+
+    func contiguous(layout:Layout) GPUStorage {
+        if layout.count() == 0 { return GPUStorage.empty(self.current_device, self.current_dtype) }
+        let width = self.current_dtype.byte_width()
+        let byte_count = checked_byte_count(layout.count(), width)
+        var output = self.current_device.buffer(GPU.BufferSettings(
+            size:gpu_byte_count(byte_count),
+            usage:GPU.BufferUsage.storage(),
+            name:"Tensor contiguous storage"
+        ))
+        var commands = self.current_device.commands()
+        var transfer = commands.copy()
+        var logical = 0
+        while logical < layout.count() {
+            transfer.copy(
+                self.required_buffer(),
+                output,
+                width,
+                layout:checked_byte_count(layout.flat_storage_index(logical), width),
+                offset:checked_byte_count(logical, width),
+                cycle:false
+            )
+            logical++
+        }
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(self.current_device, output, null, null, completed, self, self.current_dtype, layout.count())
+    }
+
+    func scalar(operation:ScalarOperation, value:float) GPUStorage {
+        if self.current_dtype != DType.float32() {
+            panic("Tensor GPU scalar arithmetic supports only dtype float32; call cpu().cast(DType.float32()).to(device)")
+        }
+        if self.element_count == 0 { return self }
+        var output = self.current_device.buffer(GPU.BufferSettings(
+            size:checked_byte_count(self.element_count, 4),
+            usage:GPU.BufferUsage.storage(),
+            name:"Tensor float32 result"
+        ))
+        var pipeline = match operation {
+            add => self.current_device.compute_pipeline(GPU.ComputeProgram.hlsl(file:"Shaders/ScalarAdd.hlsl"), "Tensor float32 scalar add")
+            multiply => self.current_device.compute_pipeline(GPU.ComputeProgram.hlsl(file:"Shaders/ScalarMultiply.hlsl"), "Tensor float32 scalar multiply")
+        }
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, value)
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(self.element_count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(self.current_device, output, null, pipeline, completed, self, self.current_dtype, self.element_count)
+    }
+
+    private static func empty(device:GPU.Device, dtype:DType) GPUStorage {
+        return GPUStorage(device, null, null, null, null, null, dtype, 0)
+    }
+
+    private static func finish_upload(device:GPU.Device, upload:GPU.TransferBuffer, dtype:DType, count:int) GPUStorage {
+        let byte_count = checked_byte_count(count, dtype.byte_width())
+        var buffer = device.buffer(GPU.BufferSettings(size:gpu_byte_count(byte_count), usage:GPU.BufferUsage.storage(), name:"Tensor storage"))
+        var commands = device.commands()
+        var transfer = commands.copy()
+        transfer.upload(upload, buffer, byte_count)
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(device, buffer, upload, null, completed, null, dtype, count)
+    }
+
+    private func required_buffer() GPU.Buffer {
+        if var buffer = self.current_buffer { return buffer }
+        panic("Tensor empty GPU storage has no buffer")
+    }
+}
+
+func gather_values<T>(values:T[], layout:Layout) T[] {
+    var result:T[] = []
+    var logical = 0
+    while logical < layout.count() {
+        result.append(values[layout.flat_storage_index(logical)])
+        logical++
+    }
+    return result
+}
+
+func storage_mismatch<T>() T[] { panic("Tensor internal storage dtype mismatch") }
+
+func gpu_byte_count(logical_count:int) int {
+    if logical_count < 4 { return 4 }
+    return logical_count
+}

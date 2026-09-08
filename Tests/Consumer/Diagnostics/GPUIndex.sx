@@ -1,0 +1,7 @@
+use GFX.GPU
+use Tensor
+func main() {
+    var device = GPU.Device()
+    let value = Tensor.ones([2, 3]).to(device).at([0, 0])
+    print(value)
+}

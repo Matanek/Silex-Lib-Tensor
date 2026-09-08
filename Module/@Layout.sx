@@ -1,0 +1,188 @@
+struct Layout {
+    let dimensions:int[]
+    let stride_values:int[]
+    let start:int
+    let element_count:int
+
+    init(shape:int[]) {
+        self.dimensions = shape
+        self.element_count = shape_product(shape)
+        self.stride_values = contiguous_strides(shape)
+        self.start = 0
+    }
+
+    init(shape:int[], strides:int[], offset:int) {
+        if shape.count() != strides.count() { panic("Tensor internal layout rank mismatch") }
+        self.dimensions = shape
+        self.element_count = shape_product(shape)
+        self.stride_values = strides
+        self.start = offset
+    }
+
+    func shape() int[] { return self.dimensions }
+    func strides() int[] { return self.stride_values }
+    func offset() int { return self.start }
+    func rank() int { return self.dimensions.count() }
+    func count() int { return self.element_count }
+
+    func is_contiguous() bool {
+        let expected = contiguous_strides(self.dimensions)
+        var axis = 0
+        while axis < self.rank() {
+            if self.dimensions[axis] > 1 && self.stride_values[axis] != expected[axis] { return false }
+            axis++
+        }
+        return true
+    }
+
+    func is_canonical(storage_count:int) bool {
+        return self.start == 0 && self.element_count == storage_count && self.is_contiguous()
+    }
+
+    func storage_index(indices:int[]) int {
+        if indices.count() != self.rank() { panic("Tensor.at requires one index per dimension") }
+        var result = self.start
+        var axis = 0
+        while axis < self.rank() {
+            let index = indices[axis]
+            if index < 0 || index >= self.dimensions[axis] {
+                panic("Tensor.at index is outside the tensor shape")
+            }
+            result += index * self.stride_values[axis]
+            axis++
+        }
+        return result
+    }
+
+    func flat_storage_index(flat:int) int {
+        if flat < 0 || flat >= self.element_count { panic("Tensor internal flat index is outside the tensor shape") }
+        var result = self.start
+        var remaining = flat
+        var axis = self.rank() - 1
+        while axis >= 0 {
+            let dimension = self.dimensions[axis]
+            if dimension > 0 {
+                let coordinate = remaining % dimension
+                remaining /= dimension
+                result += coordinate * self.stride_values[axis]
+            }
+            axis--
+        }
+        return result
+    }
+
+    func reshaped(requested:int[]) Layout {
+        if !self.is_contiguous() {
+            panic("Tensor.reshape requires a contiguous tensor; call contiguous().reshape(shape)")
+        }
+        let shape = inferred_shape(requested, self.element_count)
+        return Layout(shape, contiguous_strides(shape), self.start)
+    }
+
+    func permuted(axes:int[]) Layout {
+        if axes.count() != self.rank() { panic("Tensor.permute requires one axis per dimension") }
+        var seen:bool[] = []
+        var axis = 0
+        while axis < self.rank() { seen.append(false); axis++ }
+        var shape:int[] = []
+        var strides:int[] = []
+        for source in axes {
+            require_axis(source, self.rank(), "permute")
+            if seen[source] { panic("Tensor.permute axes must be unique") }
+            seen[source] = true
+            shape.append(self.dimensions[source])
+            strides.append(self.stride_values[source])
+        }
+        return Layout(shape, strides, self.start)
+    }
+
+    func selected(axis:int, index:int) Layout {
+        require_axis(axis, self.rank(), "select")
+        if index < 0 || index >= self.dimensions[axis] {
+            panic("Tensor.select index is outside the selected axis")
+        }
+        var shape:int[] = []
+        var strides:int[] = []
+        var current = 0
+        while current < self.rank() {
+            if current != axis {
+                shape.append(self.dimensions[current])
+                strides.append(self.stride_values[current])
+            }
+            current++
+        }
+        return Layout(shape, strides, self.start + index * self.stride_values[axis])
+    }
+
+    func narrowed(axis:int, first:int, count:int) Layout {
+        require_axis(axis, self.rank(), "narrow")
+        if first < 0 || count < 0 || first > self.dimensions[axis] || count > self.dimensions[axis] - first {
+            panic("Tensor.narrow range is outside the selected axis")
+        }
+        var shape = self.dimensions
+        shape[axis] = count
+        return Layout(shape, self.stride_values, self.start + first * self.stride_values[axis])
+    }
+}
+
+func shape_product(shape:int[]) int {
+    var result = 1
+    for dimension in shape {
+        if dimension < 0 { panic("Tensor shape dimensions must be non-negative") }
+        result = checked_product(result, dimension, "Tensor shape cardinality overflows int")
+    }
+    return result
+}
+
+func contiguous_strides(shape:int[]) int[] {
+    var strides:int[] = []
+    var axis = 0
+    while axis < shape.count() { strides.append(0); axis++ }
+    var stride = 1
+    axis = shape.count() - 1
+    while axis >= 0 {
+        strides[axis] = stride
+        stride = checked_product(stride, shape[axis], "Tensor shape cardinality overflows int")
+        axis--
+    }
+    return strides
+}
+
+func inferred_shape(requested:int[], count:int) int[] {
+    var shape = requested
+    var inferred = -1
+    var known = 1
+    var axis = 0
+    while axis < shape.count() {
+        let dimension = shape[axis]
+        if dimension == -1 {
+            if inferred >= 0 { panic("Tensor.reshape accepts at most one inferred dimension") }
+            inferred = axis
+        } else {
+            if dimension < 0 { panic("Tensor.reshape dimensions must be non-negative or -1") }
+            known = checked_product(known, dimension, "Tensor reshape cardinality overflows int")
+        }
+        axis++
+    }
+    if inferred >= 0 {
+        if known == 0 { panic("Tensor.reshape cannot infer an ambiguous empty dimension") }
+        if count % known != 0 { panic("Tensor.reshape shape must preserve the element count") }
+        shape[inferred] = count / known
+    }
+    if shape_product(shape) != count { panic("Tensor.reshape shape must preserve the element count") }
+    return shape
+}
+
+func require_axis(axis:int, rank:int, operation:str) {
+    if axis < 0 || axis >= rank { panic("Tensor.$(operation) axis is outside the tensor rank") }
+}
+
+func checked_product(left:int, right:int, message:str) int {
+    if left < 0 || right < 0 { panic("Tensor internal product requires non-negative values") }
+    if left != 0 && right > 9223372036854775807 / left { panic(message) }
+    return left * right
+}
+
+func checked_byte_count(count:int, width:int) int {
+    return checked_product(count, width, "Tensor physical byte size overflows int")
+}

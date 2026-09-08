@@ -1,0 +1,2 @@
+use Tensor
+func main() { let value = Tensor.ones([2, 3]).at([-1, 0]); print(value) }

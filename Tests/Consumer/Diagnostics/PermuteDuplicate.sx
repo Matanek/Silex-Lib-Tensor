@@ -1,0 +1,2 @@
+use Tensor
+func main() { let tensor = Tensor.ones([2, 3]).permute([0, 0]); print(tensor.count()) }
