@@ -1,5 +1,4 @@
 use GFX.GPU
-public use Tensor.DType.DType
 
 public struct Tensor {
     private var current_storage:Storage

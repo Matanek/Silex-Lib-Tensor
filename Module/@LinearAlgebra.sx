@@ -1,5 +1,3 @@
-use Tensor.DType.DType
-
 enum LinearOperation {
     dot
     matrix_multiply

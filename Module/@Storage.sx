@@ -1,5 +1,4 @@
 use GFX.GPU
-use Tensor.DType.DType
 
 enum CPUValues {
     floats(float[])

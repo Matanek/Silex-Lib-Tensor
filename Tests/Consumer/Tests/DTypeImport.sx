@@ -1,0 +1,6 @@
+use Tensor.DType
+
+test "import the root DType declaration directly" {
+    assert(DType.float32().byte_width() == 4)
+    assert(DType.int32().is_signed_integer())
+}

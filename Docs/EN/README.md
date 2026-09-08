@@ -27,8 +27,9 @@ assert(y.int32_values()[0] == 2 as int32)
 
 The nine `DType` values are `float32`, `int8`, `uint8`, `int16`, `uint16`,
 `int32`, `uint32`, `int64`, and `uint64`. They expose only their width and
-numeric family. `zeros`, `ones`, and the `full` overloads cover common filled
-constructions.
+numeric family. `DType` belongs directly to the `Tensor` module, with no
+intermediate child module: `use Tensor.DType` selects that exact declaration.
+`zeros`, `ones`, and the `full` overloads cover common filled constructions.
 
 `values()` and `item()` extract only `float32`. Each integer dtype has matching
 extractors, such as `int32_values()` and `int32_item()`. A mismatched extraction

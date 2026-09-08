@@ -1,5 +1,4 @@
 use STD.Math
-use Tensor.DType.DType
 
 enum ReductionOperation {
     sum
