@@ -1,9 +1,9 @@
 # Tensor
 
-`Tensor` fournit le socle numérique multidimensionnel de Silex. Son API
-publique adopte des valeurs immuables et une exécution immédiate simple ; les
-backends accélérés, l'autodifférentiation et les packages de réseaux de
-neurones pourront s'appuyer sur ce contrat sans appartenir à ce noyau.
+`Tensor` provides Silex's multidimensional numerical foundation. Its public
+API uses immutable values and straightforward eager execution; accelerated
+backends, automatic differentiation, and neural-network packages can build on
+this contract without belonging to the core.
 
 ```text
 silex install Tensor
@@ -11,7 +11,7 @@ silex install Tensor
 
 ## Documentation
 
-- [Documentation française](Docs/FR/README.md)
+- [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 
-Le package nécessite Silex 0.43.0 ou une version ultérieure.
+The package requires Silex 0.43.0 or newer.
