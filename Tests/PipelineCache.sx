@@ -38,3 +38,29 @@ test "release repeated reduction and linear temporaries after warmup" {
     }
     assert(gpu_pipeline_compilations() == 2)
 }
+
+test "reuse gather convolution pooling and dropout pipelines" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device()
+    var image_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    var indices:int32[] = [0 as int32, 0 as int32, 0 as int32]
+    let image = Tensor(image_values, [1, 1, 3, 3]).to(device)
+    let kernel = Tensor.ones([1, 1, 2, 2]).to(device)
+    let index_tensor = Tensor(indices, [1, 1, 3]).to(device)
+
+    let gathered_once = image.gather(2, index_tensor)
+    let gathered_twice = image.gather(2, index_tensor)
+    let convolution_once = image.conv2d(kernel)
+    let convolution_twice = image.conv2d(kernel)
+    let maximum = image.max_pool2d(2, 1)
+    let average = image.average_pool2d(2, 1)
+    let dropout_once = image.dropout(0.25, 7, 1)
+    let dropout_twice = image.dropout(0.25, 7, 1)
+
+    assert(gathered_once.cpu().count() == 3 && gathered_twice.cpu().count() == 3)
+    assert(convolution_once.cpu().count() == 4 && convolution_twice.cpu().count() == 4)
+    assert(maximum.cpu().count() == 4 && average.cpu().count() == 4)
+    assert(dropout_once.cpu().count() == 9 && dropout_twice.cpu().count() == 9)
+    assert(gpu_pipeline_compilations() == 4)
+}

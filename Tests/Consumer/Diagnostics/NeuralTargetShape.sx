@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([2, 3]).cross_entropy(Tensor.ones([2, 2]), 1); print(result.item()) }

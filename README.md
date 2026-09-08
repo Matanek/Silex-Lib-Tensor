@@ -3,8 +3,10 @@
 `Tensor` provides Silex's multidimensional numerical foundation. One immutable
 public value covers `float32` and eight integer dtypes, explicit CPU/GPU
 placement, lossless transfers, shared shape views, typed indexing, broadcasting,
-and checked elementwise computation. Automatic differentiation and neural-network packages
-can build on this contract without belonging to the core.
+checked numerical computation, seeded initialization, and eager neural
+primitives for dense, convolutional, and recurrent models. Automatic
+differentiation can build on this immutable contract without exposing its
+graph in the core API.
 
 ```text
 silex install Tensor

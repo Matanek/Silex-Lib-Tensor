@@ -55,5 +55,8 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     else if (header.x == 5) outputValues[index] = abs(value);
     else if (header.x == 6) outputValues[index] = exp(value);
     else if (header.x == 7) outputValues[index] = log(value);
-    else outputValues[index] = sqrt(value);
+    else if (header.x == 8) outputValues[index] = sqrt(value);
+    else if (header.x == 9) outputValues[index] = isnan(value) ? value : max(value, 0.0);
+    else if (header.x == 10) outputValues[index] = 1.0 / (1.0 + exp(-value));
+    else outputValues[index] = tanh(value);
 }

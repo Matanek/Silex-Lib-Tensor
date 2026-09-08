@@ -1,0 +1,176 @@
+use STD.Math
+
+enum PoolOperation {
+    maximum
+    average
+}
+
+extend Tensor {
+    func conv2d(
+        kernel:Tensor,
+        bias:Tensor? = null,
+        stride:int = 1,
+        padding:int = 0
+    ) Tensor {
+        var result = self.convolution(kernel, stride, padding)
+        if let values = bias {
+            if values.rank() != 1 || values.shape()[0] != result.shape()[1] {
+                panic("Tensor.conv2d bias must contain one value per output channel")
+            }
+            result = result.add(values.contiguous().reshape([1, values.shape()[0], 1, 1]))
+        }
+        return result
+    }
+
+    func max_pool2d(kernel_size:int, stride:int? = null, padding:int = 0) Tensor {
+        return self.pool2d(kernel_size, pool_stride(kernel_size, stride), padding, PoolOperation.maximum)
+    }
+
+    func average_pool2d(kernel_size:int, stride:int? = null, padding:int = 0) Tensor {
+        return self.pool2d(kernel_size, pool_stride(kernel_size, stride), padding, PoolOperation.average)
+    }
+}
+
+func pool_stride(kernel_size:int, requested:int?) int {
+    if let value = requested { return value }
+    return kernel_size
+}
+
+func convolution_shape(input:Layout, kernel:Layout, stride:int, padding:int) int[] {
+    require_spatial_parameters(stride, padding, "conv2d")
+    if input.rank() != 4 || kernel.rank() != 4 {
+        panic("Tensor.conv2d requires NCHW input and OIHW kernel tensors of rank 4")
+    }
+    if input.shape()[1] != kernel.shape()[1] {
+        panic("Tensor.conv2d input channels must match kernel input channels")
+    }
+    if kernel.shape()[2] <= 0 || kernel.shape()[3] <= 0 {
+        panic("Tensor.conv2d kernel dimensions must be positive")
+    }
+    let height = spatial_output_size(input.shape()[2], kernel.shape()[2], stride, padding, "conv2d")
+    let width = spatial_output_size(input.shape()[3], kernel.shape()[3], stride, padding, "conv2d")
+    return [input.shape()[0], kernel.shape()[0], height, width]
+}
+
+func pooling_shape(input:Layout, kernel_size:int, stride:int, padding:int, operation:PoolOperation) int[] {
+    let name = pool_name(operation)
+    require_spatial_parameters(stride, padding, name)
+    if input.rank() != 4 { panic("Tensor.$(name) requires an NCHW tensor of rank 4") }
+    if kernel_size <= 0 { panic("Tensor.$(name) kernel size must be positive") }
+    let height = spatial_output_size(input.shape()[2], kernel_size, stride, padding, name)
+    let width = spatial_output_size(input.shape()[3], kernel_size, stride, padding, name)
+    return [input.shape()[0], input.shape()[1], height, width]
+}
+
+func require_spatial_parameters(stride:int, padding:int, operation:str) {
+    if stride <= 0 { panic("Tensor.$(operation) stride must be positive") }
+    if padding < 0 { panic("Tensor.$(operation) padding must be non-negative") }
+}
+
+func spatial_output_size(input:int, kernel:int, stride:int, padding:int, operation:str) int {
+    let padding_width = checked_product(padding, 2, "Tensor spatial padding overflows int")
+    if padding_width > 9223372036854775807 - input { panic("Tensor spatial padding overflows int") }
+    let padded = input + padding_width
+    if padded < kernel { panic("Tensor.$(operation) kernel exceeds the padded input") }
+    return (padded - kernel) / stride + 1
+}
+
+func pool_name(operation:PoolOperation) str {
+    return match operation { maximum => "max_pool2d"; average => "average_pool2d" }
+}
+
+func convolution_cpu_values(
+    input:float[], input_layout:Layout,
+    kernel:float[], kernel_layout:Layout,
+    output_shape:int[], stride:int, padding:int
+) float[] {
+    var values:float[] = []
+    var batch = 0
+    while batch < output_shape[0] {
+        var output_channel = 0
+        while output_channel < output_shape[1] {
+            var output_y = 0
+            while output_y < output_shape[2] {
+                var output_x = 0
+                while output_x < output_shape[3] {
+                    var value = 0.0
+                    var input_channel = 0
+                    while input_channel < input_layout.shape()[1] {
+                        var kernel_y = 0
+                        while kernel_y < kernel_layout.shape()[2] {
+                            let input_y = output_y * stride + kernel_y - padding
+                            var kernel_x = 0
+                            while kernel_x < kernel_layout.shape()[3] {
+                                let input_x = output_x * stride + kernel_x - padding
+                                if input_y >= 0 && input_y < input_layout.shape()[2] && input_x >= 0 && input_x < input_layout.shape()[3] {
+                                    let input_index = input_layout.offset() +
+                                        batch * input_layout.strides()[0] + input_channel * input_layout.strides()[1] +
+                                        input_y * input_layout.strides()[2] + input_x * input_layout.strides()[3]
+                                    let kernel_index = kernel_layout.offset() +
+                                        output_channel * kernel_layout.strides()[0] + input_channel * kernel_layout.strides()[1] +
+                                        kernel_y * kernel_layout.strides()[2] + kernel_x * kernel_layout.strides()[3]
+                                    value += input[input_index] * kernel[kernel_index]
+                                }
+                                kernel_x++
+                            }
+                            kernel_y++
+                        }
+                        input_channel++
+                    }
+                    values.append(value)
+                    output_x++
+                }
+                output_y++
+            }
+            output_channel++
+        }
+        batch++
+    }
+    return values
+}
+
+func pooling_cpu_values(
+    input:float[], layout:Layout, output_shape:int[],
+    kernel_size:int, stride:int, padding:int, operation:PoolOperation
+) float[] {
+    var values:float[] = []
+    var batch = 0
+    while batch < output_shape[0] {
+        var channel = 0
+        while channel < output_shape[1] {
+            var output_y = 0
+            while output_y < output_shape[2] {
+                var output_x = 0
+                while output_x < output_shape[3] {
+                    var value = 0.0
+                    var has_value = false
+                    var kernel_y = 0
+                    while kernel_y < kernel_size {
+                        let input_y = output_y * stride + kernel_y - padding
+                        var kernel_x = 0
+                        while kernel_x < kernel_size {
+                            let input_x = output_x * stride + kernel_x - padding
+                            if input_y >= 0 && input_y < layout.shape()[2] && input_x >= 0 && input_x < layout.shape()[3] {
+                                let index = layout.offset() + batch * layout.strides()[0] + channel * layout.strides()[1] + input_y * layout.strides()[2] + input_x * layout.strides()[3]
+                                let next = input[index]
+                                if operation == PoolOperation.average { value += next }
+                                elif !has_value || Math.is_nan(next) || next > value { value = next }
+                                has_value = true
+                            }
+                            kernel_x++
+                        }
+                        kernel_y++
+                    }
+                    if operation == PoolOperation.average { value /= (kernel_size * kernel_size) as float }
+                    elif !has_value { value = -1.0 / 0.0 }
+                    values.append(value)
+                    output_x++
+                }
+                output_y++
+            }
+            channel++
+        }
+        batch++
+    }
+    return values
+}

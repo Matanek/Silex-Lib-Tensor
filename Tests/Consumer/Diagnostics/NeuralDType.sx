@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.scalar(1 as int32).relu(); print(result.int32_item()) }

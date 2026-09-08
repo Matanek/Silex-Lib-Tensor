@@ -1,0 +1,60 @@
+extend Tensor {
+    func softmax(axis:int) Tensor {
+        require_neural_float(self, "softmax")
+        require_axis(axis, self.rank(), "softmax")
+        let maximum = self.max([axis], true)
+        let shifted = self.subtract(maximum)
+        let exponentials = shifted.exp()
+        return exponentials.divide(exponentials.sum([axis], true))
+    }
+
+    func log_softmax(axis:int) Tensor {
+        require_neural_float(self, "log_softmax")
+        require_axis(axis, self.rank(), "log_softmax")
+        let maximum = self.max([axis], true)
+        let shifted = self.subtract(maximum)
+        return shifted.subtract(shifted.exp().sum([axis], true).log())
+    }
+
+    func layer_norm(dimensions:int = 1, epsilon:float = 0.00001) Tensor {
+        require_neural_float(self, "layer_norm")
+        if dimensions <= 0 || dimensions > self.rank() {
+            panic("Tensor.layer_norm dimensions must select one or more trailing axes")
+        }
+        if epsilon <= 0.0 { panic("Tensor.layer_norm epsilon must be positive") }
+        var axes:int[] = []
+        var axis = self.rank() - dimensions
+        while axis < self.rank() { axes.append(axis); axis++ }
+        let mean = self.mean(axes, true)
+        let centered = self.subtract(mean)
+        let variance = centered.multiply(centered).mean(axes, true)
+        return centered.divide(variance.add(epsilon).sqrt())
+    }
+
+    func mse_loss(target:Tensor) Tensor {
+        require_neural_float(self, "mse_loss")
+        let difference = self.subtract(target)
+        return difference.multiply(difference).mean()
+    }
+
+    func cross_entropy(target:Tensor, axis:int) Tensor {
+        require_neural_float(self, "cross_entropy")
+        require_axis(axis, self.rank(), "cross_entropy")
+        if target.dtype() == DType.float32() {
+            if !shapes_equal(self.shape(), target.shape()) {
+                panic("Tensor.cross_entropy dense targets must have the same shape as the logits")
+            }
+            return self.log_softmax(axis).multiply(target).sum([axis]).negate().mean()
+        }
+        if target.dtype() == DType.int32() {
+            return self.log_softmax(axis).gather(axis, target).negate().mean()
+        }
+        panic("Tensor.cross_entropy targets must use dtype float32 or int32")
+    }
+}
+
+func require_neural_float(tensor:Tensor, operation:str) {
+    if tensor.dtype() != DType.float32() {
+        panic("Tensor.$(operation) supports only dtype float32; call cast(DType.float32())")
+    }
+}

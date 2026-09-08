@@ -161,6 +161,16 @@ func shape_product(shape:int[]) int {
     return result
 }
 
+func shapes_equal(left:int[], right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var axis = 0
+    while axis < left.count() {
+        if left[axis] != right[axis] { return false }
+        axis++
+    }
+    return true
+}
+
 func contiguous_strides(shape:int[]) int[] {
     var strides:int[] = []
     var axis = 0

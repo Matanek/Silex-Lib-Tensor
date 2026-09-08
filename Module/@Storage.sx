@@ -118,6 +118,10 @@ nocopy class GPUKernelCache {
     private var binary_pipeline:GPU.ComputePipeline? = null
     private var reduction_pipeline:GPU.ComputePipeline? = null
     private var linear_pipeline:GPU.ComputePipeline? = null
+    private var gather_pipeline:GPU.ComputePipeline? = null
+    private var convolution_pipeline:GPU.ComputePipeline? = null
+    private var pooling_pipeline:GPU.ComputePipeline? = null
+    private var dropout_pipeline:GPU.ComputePipeline? = null
 
     init(device:GPU.Device) { self.current_device = device }
 
@@ -161,6 +165,50 @@ nocopy class GPUKernelCache {
             "Tensor float32 linear algebra"
         )
         self.linear_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    func gather() GPU.ComputePipeline {
+        if var pipeline = self.gather_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Gather.hlsl"),
+            "Tensor float32 gather"
+        )
+        self.gather_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    func convolution() GPU.ComputePipeline {
+        if var pipeline = self.convolution_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Convolution.hlsl"),
+            "Tensor float32 convolution"
+        )
+        self.convolution_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    func pooling() GPU.ComputePipeline {
+        if var pipeline = self.pooling_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Pooling.hlsl"),
+            "Tensor float32 pooling"
+        )
+        self.pooling_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    func dropout() GPU.ComputePipeline {
+        if var pipeline = self.dropout_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Dropout.hlsl"),
+            "Tensor float32 dropout"
+        )
+        self.dropout_pipeline = pipeline
         GPUKernelCache.compilation_count++
         return pipeline
     }
@@ -503,6 +551,156 @@ nocopy class GPUStorage {
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
+    func concatenate(
+        other:GPUStorage,
+        left_layout:Layout,
+        right_layout:Layout,
+        axis:int
+    ) GPUStorage {
+        let count = left_layout.count() + right_layout.count()
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        let width = self.current_dtype.byte_width()
+        let inner = trailing_product(left_layout.shape(), axis + 1)
+        let left_block = checked_product(left_layout.shape()[axis], inner, "Tensor concatenate block size overflows int")
+        let right_block = checked_product(right_layout.shape()[axis], inner, "Tensor concatenate block size overflows int")
+        let block = left_block + right_block
+        var output = GPUStorage.allocate_buffer(
+            self.current_device,
+            gpu_byte_count(checked_byte_count(count, width)),
+            "Tensor concatenated storage"
+        )
+        var commands = self.current_device.commands()
+        var transfer = commands.copy()
+        var logical = 0
+        while logical < count {
+            let within = logical % block
+            let outer = logical / block
+            if within < left_block {
+                transfer.copy(
+                    self.required_buffer(), output, width,
+                    layout:checked_byte_count(left_layout.flat_storage_index(outer * left_block + within), width),
+                    offset:checked_byte_count(logical, width), cycle:false
+                )
+            } else {
+                transfer.copy(
+                    other.required_buffer(), output, width,
+                    layout:checked_byte_count(right_layout.flat_storage_index(outer * right_block + within - left_block), width),
+                    offset:checked_byte_count(logical, width), cycle:false
+                )
+            }
+            logical++
+        }
+        transfer.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
+    }
+
+    func gather(indices:GPUStorage, source:Layout, index_layout:Layout, axis:int) GPUStorage {
+        let count = index_layout.count()
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        var metadata = gather_metadata(source, index_layout, axis)
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 gather result"
+        )
+        var pipeline = self.kernel_cache.gather()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.storage_buffer(1, indices.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, indices, self.current_dtype, count)
+    }
+
+    func convolution(
+        kernel:GPUStorage,
+        input_layout:Layout,
+        kernel_layout:Layout,
+        output_shape:int[],
+        stride:int,
+        padding:int
+    ) GPUStorage {
+        let count = shape_product(output_shape)
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        var metadata = convolution_metadata(input_layout, kernel_layout, output_shape, stride, padding)
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 convolution result"
+        )
+        var pipeline = self.kernel_cache.convolution()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.storage_buffer(1, kernel.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, kernel, self.current_dtype, count)
+    }
+
+    func pooling(
+        input_layout:Layout,
+        output_shape:int[],
+        kernel_size:int,
+        stride:int,
+        padding:int,
+        operation:PoolOperation
+    ) GPUStorage {
+        let count = shape_product(output_shape)
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        var metadata = pooling_metadata(input_layout, output_shape, kernel_size, stride, padding, operation)
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 pooling result"
+        )
+        var pipeline = self.kernel_cache.pooling()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
+    }
+
+    func dropout(layout:Layout, probability:float, seed:int, iteration:int) GPUStorage {
+        let count = layout.count()
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        var metadata = elementwise_metadata(0, layout)
+        var output = GPUStorage.allocate_buffer(
+            self.current_device, checked_byte_count(count, 4), "Tensor float32 dropout result"
+        )
+        var pipeline = self.kernel_cache.dropout()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        commands.compute_uniform(1, probability)
+        commands.compute_uniform(2, 1.0 / (1.0 - probability))
+        var counter_words:uint32[] = [seed as uint32, iteration as uint32]
+        var counter_bytes = uint32_bytes(counter_words)
+        commands.compute_uniform(3, @counter_bytes[0:counter_bytes.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
+    }
+
     private static func empty(device:GPU.Device, dtype:DType) GPUStorage {
         var cache = GPUKernelCache(device)
         return GPUStorage.empty(device, cache, dtype)
@@ -632,25 +830,106 @@ func linear_metadata(
     require_gpu_uint32(rows, "linear row count")
     require_gpu_uint32(columns, "linear column count")
     require_gpu_uint32(shared, "linear inner dimension")
+    var batch_rank = 0
+    if operation == LinearOperation.matrix_multiply { batch_rank = output_count_rank(left, right) }
     var words:uint32[] = []
     words.append(rows as uint32)
     words.append(columns as uint32)
     words.append(shared as uint32)
     words.append(output_count as uint32)
+    words.append(batch_rank as uint32)
+    words.append(left.rank() as uint32)
+    words.append(right.rank() as uint32)
+    if operation == LinearOperation.dot { words.append(1 as uint32) }
+    else { words.append(0 as uint32) }
     words.append(left.offset() as uint32)
     words.append(right.offset() as uint32)
-    if operation == LinearOperation.dot {
-        words.append(0 as uint32)
-        words.append(left.strides()[0] as uint32)
-        words.append(right.strides()[0] as uint32)
-        words.append(0 as uint32)
-    } else {
-        words.append(left.strides()[0] as uint32)
-        words.append(left.strides()[1] as uint32)
-        words.append(right.strides()[0] as uint32)
-        words.append(right.strides()[1] as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    var output_batch:int[] = []
+    var axis = 0
+    while axis < batch_rank {
+        let left_axis = axis - (batch_rank - (left.rank() - 2))
+        let right_axis = axis - (batch_rank - (right.rank() - 2))
+        var dimension = 1
+        if left_axis >= 0 { dimension = left.shape()[left_axis] }
+        if right_axis >= 0 && right.shape()[right_axis] > dimension { dimension = right.shape()[right_axis] }
+        output_batch.append(dimension)
+        axis++
     }
-    while words.count() < 16 { words.append(0 as uint32) }
+    append_padded_shape(words, output_batch)
+    append_padded_shape(words, left.shape())
+    append_padded_strides(words, left.strides(), left.shape(), left.rank())
+    append_padded_shape(words, right.shape())
+    append_padded_strides(words, right.strides(), right.shape(), right.rank())
+    return uint32_bytes(words)
+}
+
+func output_count_rank(left:Layout, right:Layout) int {
+    var rank = left.rank() - 2
+    if right.rank() - 2 > rank { rank = right.rank() - 2 }
+    return rank
+}
+
+func gather_metadata(source:Layout, indices:Layout, axis:int) uint8[] {
+    require_gpu_layout(source)
+    require_gpu_layout(indices)
+    var words:uint32[] = []
+    words.append(indices.count() as uint32)
+    words.append(source.rank() as uint32)
+    words.append(axis as uint32)
+    words.append(source.offset() as uint32)
+    words.append(indices.rank() as uint32)
+    words.append(indices.offset() as uint32)
+    words.append(source.shape()[axis] as uint32)
+    words.append(0 as uint32)
+    append_padded_shape(words, source.shape())
+    append_padded_strides(words, source.strides(), source.shape(), source.rank())
+    append_padded_shape(words, indices.shape())
+    append_padded_strides(words, indices.strides(), indices.shape(), indices.rank())
+    return uint32_bytes(words)
+}
+
+func convolution_metadata(
+    input:Layout, kernel:Layout, output_shape:int[], stride:int, padding:int
+) uint8[] {
+    require_gpu_layout(input)
+    require_gpu_layout(kernel)
+    var words:uint32[] = []
+    words.append(shape_product(output_shape) as uint32)
+    words.append(stride as uint32)
+    words.append(padding as uint32)
+    words.append(input.offset() as uint32)
+    words.append(kernel.offset() as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    for value in input.shape() { words.append(value as uint32) }
+    for value in input.strides() { words.append(value as uint32) }
+    for value in kernel.shape() { words.append(value as uint32) }
+    for value in kernel.strides() { words.append(value as uint32) }
+    for value in output_shape { words.append(value as uint32) }
+    return uint32_bytes(words)
+}
+
+func pooling_metadata(
+    input:Layout, output_shape:int[], kernel_size:int, stride:int,
+    padding:int, operation:PoolOperation
+) uint8[] {
+    require_gpu_layout(input)
+    var words:uint32[] = []
+    words.append(shape_product(output_shape) as uint32)
+    words.append(kernel_size as uint32)
+    words.append(stride as uint32)
+    words.append(padding as uint32)
+    if operation == PoolOperation.maximum { words.append(0 as uint32) }
+    else { words.append(1 as uint32) }
+    words.append(input.offset() as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    for value in input.shape() { words.append(value as uint32) }
+    for value in input.strides() { words.append(value as uint32) }
+    for value in output_shape { words.append(value as uint32) }
     return uint32_bytes(words)
 }
 
@@ -659,7 +938,7 @@ func reduction_code(operation:ReductionOperation) int {
 }
 
 func require_gpu_layout(layout:Layout) {
-    if layout.rank() > 5 { panic("Tensor GPU elementwise computation supports ranks up to 5") }
+    if layout.rank() > 5 { panic("Tensor GPU computation supports ranks up to 5") }
     require_gpu_uint32(layout.count(), "element count")
     require_gpu_uint32(layout.offset(), "layout offset")
     for dimension in layout.shape() { require_gpu_uint32(dimension, "shape dimension") }

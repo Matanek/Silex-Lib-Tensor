@@ -1,0 +1,7 @@
+use STD.Randomizer
+use Tensor
+func main() {
+    var randomizer = Randomizer(1)
+    let result = Tensor.uniform([2], randomizer, 1.0, 1.0)
+    print(result.count())
+}

@@ -171,6 +171,85 @@ aucun readback implicite. Les comparaisons CPU/GPU flottantes des tests
 emploient une tolérance absolue de `1e-5 × nombre de termes` et une tolérance
 relative de `1e-5 × |référence|`, en retenant la plus grande.
 
+`matmul` accepte aussi des lots de matrices de rang supérieur ou égal à 2. Les
+dimensions de tête suivent le broadcasting habituel et les deux dernières
+dimensions portent lignes, colonnes et dimension intérieure. Les versions CPU
+et GPU adressent directement les lots et les vues stridées.
+
+## Composer et sélectionner
+
+`Tensor.concatenate(tensors, axis)` joint une liste non vide le long d'un axe.
+Les autres dimensions, dtype, placement et device doivent correspondre.
+`Tensor.stack(tensors, axis)` ajoute d'abord un axe puis joint des formes
+identiques. Les deux opérations restent sur le placement courant et acceptent
+les neuf dtypes.
+
+`source.gather(axis, indices)` sélectionne une valeur par position hors de
+l'axe choisi. `indices` est un Tensor `int32` dont la forme est celle de la
+source sans cet axe : des logits `[batch, classes]` se sélectionnent ainsi avec
+des classes `[batch]`. Sur GPU, cette opération est l'exception d'adressage
+`int32` autorisée pour une source `float32`; elle ne rend pas le calcul entier
+général disponible.
+Les indices doivent appartenir à l'axe sélectionné. Le chemin CPU les valide
+avant l'accès ; pour conserver le chemin GPU résident, un indice GPU hors
+borne produit un NaN sentinelle dans la sortie au lieu d'un readback caché.
+
+## Calcul neuronal eager
+
+`relu`, `sigmoid`, `tanh`, `softmax(axis)` et `log_softmax(axis)` opèrent sur
+des tenseurs `float32`. Softmax et log-softmax soustraient le maximum de l'axe
+avant l'exponentielle. Les NaN se propagent ; un axe vide ou invalide échoue
+selon les mêmes règles que les réductions.
+
+`layer_norm(dimensions, epsilon)` normalise les dernières dimensions, sans
+état entraînable dans cette version du socle. `mse_loss(target)` produit la
+MSE scalaire. `cross_entropy(target, axis)` accepte soit une cible dense
+`float32` de même forme, soit un Tensor de classes `int32` dont la forme omet
+l'axe des classes. Ces opérations composent des Tensor ordinaires et restent
+résidentes sur GPU jusqu'à `cpu()`.
+
+La convolution 2D emploie un layout public unique : entrée NCHW et kernel
+OIHW. `conv2d(kernel, bias, stride, padding)` accepte un stride scalaire et un
+padding symétrique. `max_pool2d` et `average_pool2d` emploient une fenêtre
+carrée ; le stride vaut la taille de fenêtre par défaut. Le pooling moyen
+compte les cellules de padding comme des zéros dans son diviseur. Dilation,
+groupes et convolution transposée ne font pas partie de 0.1.0.
+
+```sx
+use Tensor
+
+let logits = Tensor.ones([4, 10]).matmul(Tensor.ones([10, 3]))
+let probabilities = logits.softmax(1)
+var labels:int32[] = [0 as int32, 1 as int32, 2 as int32, 0 as int32]
+let classes = probabilities.gather(1, Tensor.vector(labels))
+
+let features = Tensor.ones([1, 3, 16, 16])
+let kernels = Tensor.ones([8, 3, 3, 3])
+let pooled = features.conv2d(kernels, stride:1, padding:1).relu().max_pool2d(2)
+```
+
+## Initialiser et appliquer le dropout
+
+Les constructeurs `uniform`, `normal`, `xavier_uniform` et `he_uniform`
+reçoivent un `STD.Randomizer` explicite. Une même seed et la même séquence
+d'appels reproduisent les valeurs ; un appel suivant avance la source. Les
+initialisations sont créées sur CPU puis transférées explicitement au besoin.
+
+```sx
+use STD.Randomizer
+use Tensor
+
+var randomizer = Randomizer(42)
+let weights = Tensor.xavier_uniform([64, 128], randomizer)
+let noise = Tensor.normal([64], randomizer, standard_deviation:0.01)
+```
+
+`dropout(probability, seed, iteration, training)` exige une seed et rend
+l'itération explicite. Le même couple seed-itération reproduit le masque ; une
+autre itération le renouvelle. En évaluation, `training:false` conserve le
+Tensor. Sur GPU, le masque est généré par un compteur privé dans la passe de
+calcul : aucun upload de masque ni RNG global n'est caché.
+
 ## Passer sur GPU
 
 Créez le device avec `GFX.GPU`, puis placez explicitement le tenseur :

@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([1, 2, 3, 3]).conv2d(Tensor.ones([1, 1, 2, 2])); print(result.count()) }

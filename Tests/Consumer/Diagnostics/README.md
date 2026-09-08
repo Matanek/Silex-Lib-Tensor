@@ -49,5 +49,12 @@ Every fixture must fail and mention its intended contract:
 - `IndexRank.sx`, `IndexBounds.sx`, `NegativeIndex.sx`, and `GPUIndex.sx`:
   scalar indexing supplies every non-negative in-range axis and remains
   CPU-only;
+- `NeuralAxis.sx` and `NeuralDType.sx`: neural activations validate axes and
+  require `float32`;
+- `NeuralTargetShape.sx`: dense cross-entropy targets match the logits shape;
+- `GatherShape.sx`: gather indices match all non-selected dimensions;
+- `InitializerBounds.sx` and `DropoutProbability.sx`: random initialization
+  bounds and dropout probabilities are valid;
+- `ConvolutionShape.sx`: convolution channels agree before calculation;
 - transposed GPU views are covered as successful stride-aware computation in
   `Tests/GPUCompute.sx`.

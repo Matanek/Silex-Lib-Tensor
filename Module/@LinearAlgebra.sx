@@ -19,9 +19,20 @@ func linear_shape(left:Layout, right:Layout, operation:LinearOperation) int[] {
         var scalar:int[] = []
         return scalar
     }
-    if left.rank() != 2 || right.rank() != 2 { panic("Tensor.matmul requires two rank-2 tensors") }
-    if left.shape()[1] != right.shape()[0] { panic("Tensor.matmul requires matching inner dimensions") }
-    return [left.shape()[0], right.shape()[1]]
+    if left.rank() < 2 || right.rank() < 2 { panic("Tensor.matmul requires tensors of rank 2 or greater") }
+    if left.shape()[left.rank() - 1] != right.shape()[right.rank() - 2] {
+        panic("Tensor.matmul requires matching inner dimensions")
+    }
+    var left_batch:int[] = []
+    var axis = 0
+    while axis < left.rank() - 2 { left_batch.append(left.shape()[axis]); axis++ }
+    var right_batch:int[] = []
+    axis = 0
+    while axis < right.rank() - 2 { right_batch.append(right.shape()[axis]); axis++ }
+    var shape = broadcast_shape(left_batch, right_batch, "matmul")
+    shape.append(left.shape()[left.rank() - 2])
+    shape.append(right.shape()[right.rank() - 1])
+    return shape
 }
 
 func linear_cpu_storage(
@@ -44,17 +55,53 @@ func linear_cpu_storage(
 
 func linear_dimensions(left:Layout, right:Layout, operation:LinearOperation) (int, int, int) {
     if operation == LinearOperation.dot { return (1, 1, left.shape()[0]) }
-    return (left.shape()[0], right.shape()[1], left.shape()[1])
+    return (
+        left.shape()[left.rank() - 2],
+        right.shape()[right.rank() - 1],
+        left.shape()[left.rank() - 1]
+    )
 }
 
-func left_linear_index(layout:Layout, row:int, inner:int, operation:LinearOperation) int {
+func left_linear_index(layout:Layout, batch:int, row:int, inner:int, operation:LinearOperation, output_shape:int[]) int {
     if operation == LinearOperation.dot { return layout.offset() + inner * layout.strides()[0] }
-    return layout.offset() + row * layout.strides()[0] + inner * layout.strides()[1]
+    return linear_batch_offset(layout, batch, output_shape) +
+        row * layout.strides()[layout.rank() - 2] + inner * layout.strides()[layout.rank() - 1]
 }
 
-func right_linear_index(layout:Layout, column:int, inner:int, operation:LinearOperation) int {
+func right_linear_index(layout:Layout, batch:int, column:int, inner:int, operation:LinearOperation, output_shape:int[]) int {
     if operation == LinearOperation.dot { return layout.offset() + inner * layout.strides()[0] }
-    return layout.offset() + inner * layout.strides()[0] + column * layout.strides()[1]
+    return linear_batch_offset(layout, batch, output_shape) +
+        inner * layout.strides()[layout.rank() - 2] + column * layout.strides()[layout.rank() - 1]
+}
+
+func linear_batch_offset(layout:Layout, batch:int, output_shape:int[]) int {
+    var result = layout.offset()
+    let output_rank = output_shape.count() - 2
+    let input_rank = layout.rank() - 2
+    var remaining = batch
+    var output_axis = output_rank - 1
+    while output_axis >= 0 {
+        let dimension = output_shape[output_axis]
+        var coordinate = 0
+        if dimension > 0 { coordinate = remaining % dimension; remaining /= dimension }
+        let input_axis = output_axis - (output_rank - input_rank)
+        if input_axis >= 0 && layout.shape()[input_axis] != 1 {
+            result += coordinate * layout.strides()[input_axis]
+        }
+        output_axis--
+    }
+    return result
+}
+
+func linear_batch_count(operation:LinearOperation, output_shape:int[]) int {
+    if operation == LinearOperation.dot { return 1 }
+    var count = 1
+    var axis = 0
+    while axis < output_shape.count() - 2 {
+        count = checked_product(count, output_shape[axis], "Tensor matmul batch size overflows int")
+        axis++
+    }
+    return count
 }
 
 func linear_float_values(
@@ -63,20 +110,24 @@ func linear_float_values(
 ) float[] {
     let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
     var result:float[] = []
-    var row = 0
-    while row < rows {
-        var column = 0
-        while column < columns {
-            var value = 0.0
-            var inner = 0
-            while inner < shared {
-                value += left[left_linear_index(left_layout, row, inner, operation)] * right[right_linear_index(right_layout, column, inner, operation)]
-                inner++
+    var batch = 0
+    while batch < linear_batch_count(operation, output_shape) {
+        var row = 0
+        while row < rows {
+            var column = 0
+            while column < columns {
+                var value = 0.0
+                var inner = 0
+                while inner < shared {
+                    value += left[left_linear_index(left_layout, batch, row, inner, operation, output_shape)] * right[right_linear_index(right_layout, batch, column, inner, operation, output_shape)]
+                    inner++
+                }
+                result.append(value)
+                column++
             }
-            result.append(value)
-            column++
+            row++
         }
-        row++
+        batch++
     }
     return result
 }
@@ -88,21 +139,25 @@ func linear_signed_values<T>(
     let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
     let zero = 0 as T
     var result:T[] = []
-    var row = 0
-    while row < rows {
-        var column = 0
-        while column < columns {
-            var value = zero
-            var inner = 0
-            while inner < shared {
-                let product = checked_signed<T>(left[left_linear_index(left_layout, row, inner, operation)], right[right_linear_index(right_layout, column, inner, operation)], BinaryOperation.multiply, minimum, maximum, dtype)
-                value = checked_signed<T>(value, product, BinaryOperation.add, minimum, maximum, dtype)
-                inner++
+    var batch = 0
+    while batch < linear_batch_count(operation, output_shape) {
+        var row = 0
+        while row < rows {
+            var column = 0
+            while column < columns {
+                var value = zero
+                var inner = 0
+                while inner < shared {
+                    let product = checked_signed<T>(left[left_linear_index(left_layout, batch, row, inner, operation, output_shape)], right[right_linear_index(right_layout, batch, column, inner, operation, output_shape)], BinaryOperation.multiply, minimum, maximum, dtype)
+                    value = checked_signed<T>(value, product, BinaryOperation.add, minimum, maximum, dtype)
+                    inner++
+                }
+                result.append(value)
+                column++
             }
-            result.append(value)
-            column++
+            row++
         }
-        row++
+        batch++
     }
     return result
 }
@@ -114,21 +169,25 @@ func linear_unsigned_values<T>(
     let (rows, columns, shared) = linear_dimensions(left_layout, right_layout, operation)
     let zero = 0 as T
     var result:T[] = []
-    var row = 0
-    while row < rows {
-        var column = 0
-        while column < columns {
-            var value = zero
-            var inner = 0
-            while inner < shared {
-                let product = checked_unsigned<T>(left[left_linear_index(left_layout, row, inner, operation)], right[right_linear_index(right_layout, column, inner, operation)], BinaryOperation.multiply, maximum, dtype)
-                value = checked_unsigned<T>(value, product, BinaryOperation.add, maximum, dtype)
-                inner++
+    var batch = 0
+    while batch < linear_batch_count(operation, output_shape) {
+        var row = 0
+        while row < rows {
+            var column = 0
+            while column < columns {
+                var value = zero
+                var inner = 0
+                while inner < shared {
+                    let product = checked_unsigned<T>(left[left_linear_index(left_layout, batch, row, inner, operation, output_shape)], right[right_linear_index(right_layout, batch, column, inner, operation, output_shape)], BinaryOperation.multiply, maximum, dtype)
+                    value = checked_unsigned<T>(value, product, BinaryOperation.add, maximum, dtype)
+                    inner++
+                }
+                result.append(value)
+                column++
             }
-            result.append(value)
-            column++
+            row++
         }
-        row++
+        batch++
     }
     return result
 }

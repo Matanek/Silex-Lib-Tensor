@@ -1,0 +1,171 @@
+extend Tensor {
+    static func concatenate(tensors:Tensor[], axis:int) Tensor {
+        if tensors.is_empty() { panic("Tensor.concatenate requires at least one tensor") }
+        require_axis(axis, tensors[0].rank(), "concatenate")
+        var result = tensors[0]
+        var index = 1
+        while index < tensors.count() {
+            result = result.concatenate_pair(tensors[index], axis)
+            index++
+        }
+        return result
+    }
+
+    static func stack(tensors:Tensor[], axis:int = 0) Tensor {
+        if tensors.is_empty() { panic("Tensor.stack requires at least one tensor") }
+        let rank = tensors[0].rank()
+        if axis < 0 || axis > rank { panic("Tensor.stack axis is outside the result rank") }
+        var expanded:Tensor[] = []
+        for tensor in tensors {
+            if !shapes_equal(tensor.shape(), tensors[0].shape()) { panic("Tensor.stack requires tensors with matching shapes") }
+            var shape = tensor.shape()
+            shape.insert(axis, 1)
+            expanded.append(tensor.contiguous().reshape(shape))
+        }
+        return Tensor.concatenate(expanded, axis)
+    }
+
+    func gather(axis:int, indices:Tensor) Tensor {
+        return self.gather_indices(axis, indices)
+    }
+}
+
+func concatenated_shape(left:Layout, right:Layout, axis:int) int[] {
+    require_axis(axis, left.rank(), "concatenate")
+    if left.rank() != right.rank() { panic("Tensor.concatenate requires tensors with matching ranks") }
+    var shape = left.shape()
+    var current = 0
+    while current < shape.count() {
+        if current != axis && shape[current] != right.shape()[current] {
+            panic("Tensor.concatenate requires matching dimensions outside the concatenation axis")
+        }
+        current++
+    }
+    if right.shape()[axis] > 9223372036854775807 - shape[axis] {
+        panic("Tensor.concatenate axis size overflows int")
+    }
+    shape[axis] += right.shape()[axis]
+    let count = shape_product(shape)
+    return shape
+}
+
+func concatenate_cpu_storage(
+    left:CPUStorage, left_layout:Layout,
+    right:CPUStorage, right_layout:Layout,
+    axis:int
+) CPUStorage {
+    let dtype = left.dtype()
+    if dtype == DType.float32() { return CPUStorage(concatenate_values<float>(left.float_values(), left_layout, right.float_values(), right_layout, axis)) }
+    if dtype == DType.int8() { return CPUStorage(concatenate_values<int8>(left.int8_values(), left_layout, right.int8_values(), right_layout, axis)) }
+    if dtype == DType.uint8() { return CPUStorage(concatenate_values<uint8>(left.uint8_values(), left_layout, right.uint8_values(), right_layout, axis)) }
+    if dtype == DType.int16() { return CPUStorage(concatenate_values<int16>(left.int16_values(), left_layout, right.int16_values(), right_layout, axis)) }
+    if dtype == DType.uint16() { return CPUStorage(concatenate_values<uint16>(left.uint16_values(), left_layout, right.uint16_values(), right_layout, axis)) }
+    if dtype == DType.int32() { return CPUStorage(concatenate_values<int32>(left.int32_values(), left_layout, right.int32_values(), right_layout, axis)) }
+    if dtype == DType.uint32() { return CPUStorage(concatenate_values<uint32>(left.uint32_values(), left_layout, right.uint32_values(), right_layout, axis)) }
+    if dtype == DType.int64() { return CPUStorage(concatenate_values<int64>(left.int64_values(), left_layout, right.int64_values(), right_layout, axis)) }
+    return CPUStorage(concatenate_values<uint64>(left.uint64_values(), left_layout, right.uint64_values(), right_layout, axis))
+}
+
+func concatenate_values<T>(
+    left:T[], left_layout:Layout,
+    right:T[], right_layout:Layout,
+    axis:int
+) T[] {
+    let inner = trailing_product(left_layout.shape(), axis + 1)
+    let left_block = checked_product(left_layout.shape()[axis], inner, "Tensor concatenate block size overflows int")
+    let right_block = checked_product(right_layout.shape()[axis], inner, "Tensor concatenate block size overflows int")
+    let block = left_block + right_block
+    let count = left_layout.count() + right_layout.count()
+    var values:T[] = []
+    var output = 0
+    while output < count {
+        let within = output % block
+        let outer = output / block
+        if within < left_block {
+            values.append(left[left_layout.flat_storage_index(outer * left_block + within)])
+        } else {
+            values.append(right[right_layout.flat_storage_index(outer * right_block + within - left_block)])
+        }
+        output++
+    }
+    return values
+}
+
+func gather_shape(source:Layout, indices:Layout, axis:int) int[] {
+    require_axis(axis, source.rank(), "gather")
+    if indices.rank() != source.rank() - 1 {
+        panic("Tensor.gather indices must have the source rank minus the selected axis")
+    }
+    var source_axis = 0
+    var index_axis = 0
+    while source_axis < source.rank() {
+        if source_axis != axis {
+            if source.shape()[source_axis] != indices.shape()[index_axis] {
+                panic("Tensor.gather indices must match every source dimension outside the selected axis")
+            }
+            index_axis++
+        }
+        source_axis++
+    }
+    return indices.shape()
+}
+
+func gather_cpu_storage(source:CPUStorage, layout:Layout, indices:CPUStorage, index_layout:Layout, axis:int) CPUStorage {
+    let selected = gather_index_values(indices.int32_values(), index_layout, layout, axis)
+    let dtype = source.dtype()
+    if dtype == DType.float32() { return CPUStorage(gather_selected_values<float>(source.float_values(), selected)) }
+    if dtype == DType.int8() { return CPUStorage(gather_selected_values<int8>(source.int8_values(), selected)) }
+    if dtype == DType.uint8() { return CPUStorage(gather_selected_values<uint8>(source.uint8_values(), selected)) }
+    if dtype == DType.int16() { return CPUStorage(gather_selected_values<int16>(source.int16_values(), selected)) }
+    if dtype == DType.uint16() { return CPUStorage(gather_selected_values<uint16>(source.uint16_values(), selected)) }
+    if dtype == DType.int32() { return CPUStorage(gather_selected_values<int32>(source.int32_values(), selected)) }
+    if dtype == DType.uint32() { return CPUStorage(gather_selected_values<uint32>(source.uint32_values(), selected)) }
+    if dtype == DType.int64() { return CPUStorage(gather_selected_values<int64>(source.int64_values(), selected)) }
+    return CPUStorage(gather_selected_values<uint64>(source.uint64_values(), selected))
+}
+
+func gather_index_values(values:int32[], indices:Layout, source:Layout, axis:int) int[] {
+    var selected:int[] = []
+    var logical = 0
+    while logical < indices.count() {
+        let index = values[indices.flat_storage_index(logical)] as int
+        if index < 0 || index >= source.shape()[axis] { panic("Tensor.gather index is outside the selected axis") }
+        selected.append(gather_source_index(source, indices, axis, logical, index))
+        logical++
+    }
+    return selected
+}
+
+func gather_selected_values<T>(values:T[], selected:int[]) T[] {
+    var result:T[] = []
+    for index in selected { result.append(values[index]) }
+    return result
+}
+
+func gather_source_index(source:Layout, indices:Layout, axis:int, logical:int, selected:int) int {
+    var result = source.offset() + selected * source.strides()[axis]
+    var remaining = logical
+    var index_axis = indices.rank() - 1
+    var source_axis = source.rank() - 1
+    while source_axis >= 0 {
+        if source_axis != axis {
+            let dimension = indices.shape()[index_axis]
+            var coordinate = 0
+            if dimension > 0 { coordinate = remaining % dimension; remaining /= dimension }
+            result += coordinate * source.strides()[source_axis]
+            index_axis--
+        }
+        source_axis--
+    }
+    return result
+}
+
+func trailing_product(shape:int[], start:int) int {
+    var result = 1
+    var axis = start
+    while axis < shape.count() {
+        result = checked_product(result, shape[axis], "Tensor trailing size overflows int")
+        axis++
+    }
+    return result
+}

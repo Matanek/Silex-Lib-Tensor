@@ -255,6 +255,114 @@ public struct Tensor {
         )
     }
 
+    module func concatenate_pair(other:Tensor, axis:int) Tensor {
+        self.require_pair_compatibility(other, "concatenate")
+        let shape = concatenated_shape(self.current_layout, other.current_layout, axis)
+        if self.is_gpu() {
+            var left = self.gpu_storage()
+            var right = other.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(left.concatenate(right, self.current_layout, other.current_layout, axis)),
+                Layout(shape)
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(concatenate_cpu_storage(
+                self.cpu_storage(), self.current_layout,
+                other.cpu_storage(), other.current_layout,
+                axis
+            )),
+            Layout(shape)
+        )
+    }
+
+    module func gather_indices(axis:int, indices:Tensor) Tensor {
+        if indices.dtype() != DType.int32() { panic("Tensor.gather indices must use dtype int32") }
+        if self.is_cpu() != indices.is_cpu() { panic("Tensor.gather requires matching placements") }
+        let shape = gather_shape(self.current_layout, indices.current_layout, axis)
+        if self.is_gpu() {
+            self.require_gpu_float_compute("gather")
+            var source = self.gpu_storage()
+            var index_storage = indices.gpu_storage()
+            if !source.same_device(index_storage) { panic("Tensor.gather requires tensors on the same GPU device") }
+            return Tensor.from_storage(
+                Storage.gpu(source.gather(index_storage, self.current_layout, indices.current_layout, axis)),
+                Layout(shape)
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(gather_cpu_storage(
+                self.cpu_storage(), self.current_layout,
+                indices.cpu_storage(), indices.current_layout,
+                axis
+            )),
+            Layout(shape)
+        )
+    }
+
+    module func convolution(kernel:Tensor, stride:int, padding:int) Tensor {
+        require_neural_float(self, "conv2d")
+        self.require_pair_compatibility(kernel, "conv2d")
+        let shape = convolution_shape(self.current_layout, kernel.current_layout, stride, padding)
+        if self.is_gpu() {
+            var input_storage = self.gpu_storage()
+            var kernel_storage = kernel.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(input_storage.convolution(
+                    kernel_storage, self.current_layout, kernel.current_layout,
+                    shape, stride, padding
+                )),
+                Layout(shape)
+            )
+        }
+        return Tensor(
+            convolution_cpu_values(
+                self.cpu_storage().float_values(), self.current_layout,
+                kernel.cpu_storage().float_values(), kernel.current_layout,
+                shape, stride, padding
+            ),
+            shape
+        )
+    }
+
+    module func pool2d(kernel_size:int, stride:int, padding:int, operation:PoolOperation) Tensor {
+        require_neural_float(self, pool_name(operation))
+        let shape = pooling_shape(self.current_layout, kernel_size, stride, padding, operation)
+        if self.is_gpu() {
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(storage.pooling(
+                    self.current_layout, shape, kernel_size, stride, padding, operation
+                )),
+                Layout(shape)
+            )
+        }
+        return Tensor(
+            pooling_cpu_values(
+                self.cpu_storage().float_values(), self.current_layout, shape,
+                kernel_size, stride, padding, operation
+            ),
+            shape
+        )
+    }
+
+    module func dropout_training(probability:float, seed:int, iteration:int) Tensor {
+        if self.is_gpu() {
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(storage.dropout(self.current_layout, probability, seed, iteration)),
+                Layout(self.shape())
+            )
+        }
+        return Tensor(
+            dropout_cpu_values(
+                self.cpu_storage().float_values(), self.current_layout,
+                probability, seed, iteration
+            ),
+            self.shape()
+        )
+    }
+
     private func require_pair_compatibility(other:Tensor, name:str) {
         if self.dtype() != other.dtype() { panic("Tensor.$(name) requires matching dtypes") }
         if self.is_cpu() != other.is_cpu() { panic("Tensor.$(name) requires matching placements") }

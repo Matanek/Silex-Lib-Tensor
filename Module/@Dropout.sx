@@ -1,0 +1,28 @@
+use STD.Randomizer
+
+extend Tensor {
+    func dropout(probability:float, seed:int, iteration:int = 0, training:bool = true) Tensor {
+        require_neural_float(self, "dropout")
+        if probability < 0.0 || probability >= 1.0 {
+            panic("Tensor.dropout probability must be in [0, 1)")
+        }
+        if seed < 0 || seed > 4294967295 { panic("Tensor.dropout seed must fit uint32") }
+        if iteration < 0 || iteration > 4294967295 { panic("Tensor.dropout iteration must fit uint32") }
+        if !training || probability == 0.0 { return self }
+        return self.dropout_training(probability, seed, iteration)
+    }
+}
+
+func dropout_cpu_values(values:float[], layout:Layout, probability:float, seed:int, iteration:int) float[] {
+    var randomizer = Randomizer(seed + iteration)
+    let scale = 1.0 / (1.0 - probability)
+    var result:float[] = []
+    var logical = 0
+    while logical < layout.count() {
+        let value = values[layout.flat_storage_index(logical)]
+        if randomizer.get_float() < probability { result.append(0.0) }
+        else { result.append(value * scale) }
+        logical++
+    }
+    return result
+}

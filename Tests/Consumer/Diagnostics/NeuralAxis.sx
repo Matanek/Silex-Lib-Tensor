@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([2, 2]).softmax(2); print(result.count()) }

@@ -259,6 +259,112 @@ def build_cases() -> tuple[dict[str, Case], dict[str, str]]:
         "jax": lambda: np.asarray(jnp.matmul(jnp.asarray(matrix_left), jnp.asarray(matrix_right))),
     }, 3e-5, 1e-5))
 
+    neural_values = np.asarray([-100.0, -1.0, 0.0, 1.0, 100.0], dtype=np.float32)
+    nonfinite_values = np.asarray([np.nan, np.inf, -np.inf], dtype=np.float32)
+    neural_logits = np.asarray([
+        [1000.0, 1001.0, 1002.0],
+        [-1000.0, -1001.0, -1002.0],
+    ], dtype=np.float32)
+    for name, torch_operation, tensorflow_operation in (
+        ("relu", torch.relu, tf.nn.relu),
+        ("sigmoid", torch.sigmoid, tf.math.sigmoid),
+        ("tanh", torch.tanh, tf.math.tanh),
+    ):
+        add_case(consensus(f"neural_{name}", "neural", "float32", {
+            "pytorch": lambda operation=torch_operation: operation(torch.from_numpy(neural_values)).numpy(),
+            "tensorflow": lambda operation=tensorflow_operation: operation(tf.constant(neural_values)).numpy(),
+        }, 1e-6, 1e-6))
+        add_case(consensus(f"neural_{name}_nonfinite", "neural", "float32", {
+            "pytorch": lambda operation=torch_operation: operation(torch.from_numpy(nonfinite_values)).numpy(),
+            "tensorflow": lambda operation=tensorflow_operation: operation(tf.constant(nonfinite_values)).numpy(),
+        }, 1e-6, 1e-6))
+
+    add_case(consensus("neural_softmax", "neural", "float32", {
+        "pytorch": lambda: torch.softmax(torch.from_numpy(neural_logits), dim=1).numpy(),
+        "tensorflow": lambda: tf.nn.softmax(tf.constant(neural_logits), axis=1).numpy(),
+    }, 2e-5, 1e-5))
+    add_case(consensus("neural_log_softmax", "neural", "float32", {
+        "pytorch": lambda: torch.log_softmax(torch.from_numpy(neural_logits), dim=1).numpy(),
+        "tensorflow": lambda: tf.nn.log_softmax(tf.constant(neural_logits), axis=1).numpy(),
+    }, 2e-5, 1e-5))
+
+    layer_values = np.asarray([[1.0, 2.0, 3.0], [-4.0, 0.0, 4.0]], dtype=np.float32)
+    add_case(consensus("neural_layer_norm", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.layer_norm(torch.from_numpy(layer_values), (3,), eps=1e-5).numpy(),
+        "tensorflow": lambda: (
+            (tf.constant(layer_values) - tf.reduce_mean(tf.constant(layer_values), axis=1, keepdims=True)) /
+            tf.sqrt(
+                tf.reduce_mean(
+                    tf.square(tf.constant(layer_values) - tf.reduce_mean(tf.constant(layer_values), axis=1, keepdims=True)),
+                    axis=1,
+                    keepdims=True,
+                ) + tf.constant(1e-5, dtype=tf.float32)
+            )
+        ).numpy(),
+    }, 2e-5, 1e-5))
+
+    batched_left = np.arange(1, 13, dtype=np.float32).reshape(2, 2, 3)
+    batched_right = np.asarray([1.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float32).reshape(1, 3, 2)
+    add_case(consensus("neural_batched_matmul", "neural", "float32", {
+        "pytorch": lambda: torch.matmul(torch.from_numpy(batched_left), torch.from_numpy(batched_right)).numpy(),
+        "tensorflow": lambda: tf.matmul(tf.constant(batched_left), tf.constant(batched_right)).numpy(),
+    }, 3e-5, 1e-5))
+
+    convolution_input = np.arange(1, 10, dtype=np.float32).reshape(1, 1, 3, 3)
+    convolution_kernel = np.ones((1, 1, 2, 2), dtype=np.float32)
+    add_case(consensus("neural_conv2d", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.conv2d(
+            torch.from_numpy(convolution_input), torch.from_numpy(convolution_kernel)
+        ).numpy(),
+        "tensorflow": lambda: np.transpose(tf.nn.conv2d(
+            tf.constant(np.transpose(convolution_input, (0, 2, 3, 1))),
+            tf.constant(np.transpose(convolution_kernel, (2, 3, 1, 0))),
+            strides=1,
+            padding="VALID",
+        ).numpy(), (0, 3, 1, 2)),
+    }, 4e-5, 1e-5))
+    add_case(consensus("neural_max_pool2d", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.max_pool2d(torch.from_numpy(convolution_input), 2, 1).numpy(),
+        "tensorflow": lambda: np.transpose(tf.nn.max_pool2d(
+            tf.constant(np.transpose(convolution_input, (0, 2, 3, 1))), 2, 1, "VALID"
+        ).numpy(), (0, 3, 1, 2)),
+    }))
+    add_case(consensus("neural_average_pool2d", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.avg_pool2d(torch.from_numpy(convolution_input), 2, 1).numpy(),
+        "tensorflow": lambda: np.transpose(tf.nn.avg_pool2d(
+            tf.constant(np.transpose(convolution_input, (0, 2, 3, 1))), 2, 1, "VALID"
+        ).numpy(), (0, 3, 1, 2)),
+    }))
+
+    dense_targets = np.asarray([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=np.float32)
+    class_targets = np.asarray([2, 0], dtype=np.int32)
+    mse_predictions = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    mse_targets = np.asarray([0.0, 2.0, 4.0], dtype=np.float32)
+    add_case(consensus("neural_mse", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.mse_loss(
+            torch.from_numpy(mse_predictions), torch.from_numpy(mse_targets)
+        ).numpy(),
+        "tensorflow": lambda: tf.reduce_mean(tf.square(
+            tf.constant(mse_predictions) - tf.constant(mse_targets)
+        )).numpy(),
+    }, 1e-6, 1e-6))
+    add_case(consensus("neural_cross_entropy_dense", "neural", "float32", {
+        "pytorch": lambda: -torch.sum(
+            torch.from_numpy(dense_targets) * torch.log_softmax(torch.from_numpy(neural_logits), dim=1), dim=1
+        ).mean().numpy(),
+        "tensorflow": lambda: tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+            labels=tf.constant(dense_targets), logits=tf.constant(neural_logits)
+        )).numpy(),
+    }, 2e-5, 1e-5))
+    add_case(consensus("neural_cross_entropy_classes", "neural", "float32", {
+        "pytorch": lambda: torch.nn.functional.cross_entropy(
+            torch.from_numpy(neural_logits), torch.from_numpy(class_targets).to(torch.int64)
+        ).numpy(),
+        "tensorflow": lambda: tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.constant(class_targets), logits=tf.constant(neural_logits)
+        )).numpy(),
+    }, 2e-5, 1e-5))
+
     add_case(consensus("permuted_view", "transform", "int32", {
         "numpy": lambda: np.transpose(view_base, (2, 0, 1)),
         "pytorch": lambda: torch.from_numpy(view_base).permute(2, 0, 1).numpy(),
@@ -559,6 +665,65 @@ test "match multi-oracle reductions and linear algebra" {{
     assert(Math.is_nan(Tensor.vector(nan_values).sum().item()))
 }}
 
+test "match PyTorch and TensorFlow neural fixtures" {{
+    var activation_values:float[] = [-100.0, -1.0, 0.0, 1.0, 100.0]
+    let activations = Tensor.vector(activation_values)
+    var expected_relu:float[] = [{values['neural_relu']}]
+    var expected_sigmoid:float[] = [{values['neural_sigmoid']}]
+    var expected_tanh:float[] = [{values['neural_tanh']}]
+    assert(float_values_match(activations.relu().values(), expected_relu, 0.000001, 0.000001))
+    assert(float_values_match(activations.sigmoid().values(), expected_sigmoid, 0.000001, 0.000001))
+    assert(float_values_match(activations.tanh().values(), expected_tanh, 0.000001, 0.000001))
+
+    var nonfinite_values:float[] = [0.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0]
+    let nonfinite = Tensor.vector(nonfinite_values)
+    var expected_relu_nonfinite:float[] = [{values['neural_relu_nonfinite']}]
+    var expected_sigmoid_nonfinite:float[] = [{values['neural_sigmoid_nonfinite']}]
+    var expected_tanh_nonfinite:float[] = [{values['neural_tanh_nonfinite']}]
+    assert(float_values_match(nonfinite.relu().values(), expected_relu_nonfinite, 0.000001, 0.000001))
+    assert(float_values_match(nonfinite.sigmoid().values(), expected_sigmoid_nonfinite, 0.000001, 0.000001))
+    assert(float_values_match(nonfinite.tanh().values(), expected_tanh_nonfinite, 0.000001, 0.000001))
+
+    var logits_values:float[] = [1000.0, 1001.0, 1002.0, -1000.0, -1001.0, -1002.0]
+    let logits = Tensor(logits_values, [2, 3])
+    var expected_softmax:float[] = [{values['neural_softmax']}]
+    var expected_log_softmax:float[] = [{values['neural_log_softmax']}]
+    assert(float_values_match(logits.softmax(1).values(), expected_softmax, 0.00002, 0.00001))
+    assert(float_values_match(logits.log_softmax(1).values(), expected_log_softmax, 0.00002, 0.00001))
+
+    var layer_values:float[] = [1.0, 2.0, 3.0, -4.0, 0.0, 4.0]
+    var expected_layer_norm:float[] = [{values['neural_layer_norm']}]
+    assert(float_values_match(Tensor(layer_values, [2, 3]).layer_norm().values(), expected_layer_norm, 0.00002, 0.00001))
+
+    var batch_left:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    var batch_right:float[] = [1.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+    var expected_batch:float[] = [{values['neural_batched_matmul']}]
+    assert(float_values_match(
+        Tensor(batch_left, [2, 2, 3]).matmul(Tensor(batch_right, [1, 3, 2])).values(),
+        expected_batch, 0.00003, 0.00001
+    ))
+
+    var image_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    let image = Tensor(image_values, [1, 1, 3, 3])
+    var expected_convolution:float[] = [{values['neural_conv2d']}]
+    var expected_max_pool:float[] = [{values['neural_max_pool2d']}]
+    var expected_average_pool:float[] = [{values['neural_average_pool2d']}]
+    assert(float_values_match(image.conv2d(Tensor.ones([1, 1, 2, 2])).values(), expected_convolution, 0.00004, 0.00001))
+    assert(float_values_match(image.max_pool2d(2, 1).values(), expected_max_pool, 0.0, 0.0))
+    assert(float_values_match(image.average_pool2d(2, 1).values(), expected_average_pool, 0.0, 0.0))
+
+    var dense_targets:float[] = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+    var class_targets:int32[] = [2 as int32, 0 as int32]
+    var mse_predictions:float[] = [1.0, 2.0, 3.0]
+    var mse_targets:float[] = [0.0, 2.0, 4.0]
+    var expected_mse:float[] = [{values['neural_mse']}]
+    var expected_dense_loss:float[] = [{values['neural_cross_entropy_dense']}]
+    var expected_class_loss:float[] = [{values['neural_cross_entropy_classes']}]
+    assert(float_values_match(Tensor.vector(mse_predictions).mse_loss(Tensor.vector(mse_targets)).values(), expected_mse, 0.000001, 0.000001))
+    assert(float_values_match(logits.cross_entropy(Tensor(dense_targets, [2, 3]), 1).values(), expected_dense_loss, 0.00002, 0.00001))
+    assert(float_values_match(logits.cross_entropy(Tensor.vector(class_targets), 1).values(), expected_class_loss, 0.00002, 0.00001))
+}}
+
 test "run the float32 oracle fixture on the available GPU" {{
     if !GPU.Device.is_supported() {{ return }}
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
@@ -633,6 +798,10 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "| `negate`, `abs`, `exp`, `log`, `sqrt` | `Elementwise.sx`, `GPUCompute.sx`, `OracleDifferential.sx` | unsigned negate, float-only operations, checked signed minimum |",
         "| `sum`, `mean`, `min`, `max`, axes and retained dimensions | `Reductions.sx`, `GPULinearReduction.sx`, `OracleDifferential.sx` | axes, empty domains, integer mean/overflow, GPU integer compute |",
         "| `dot`, `matmul` | `LinearAlgebra.sx`, `GPULinearReduction.sx`, `OracleDifferential.sx` | ranks, shapes, dtype/placement and multiply-accumulate overflow |",
+        "| `stack`, `concatenate`, `gather`, batched `matmul` | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | axes, shapes, dtype and placement |",
+        "| activations, softmax, layer norm and losses | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | axes, dtype and target shapes |",
+        "| NCHW/OIHW convolution and pooling | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | channels, ranks, stride, padding and kernel shape |",
+        "| seeded initialization and dropout | `Neural.sx`, `NeuralGPU.sx` | bounds, fan sizes, probability, seed and iteration |",
         "| `to`, `cpu`, CPU/GPU placement and resource lifetime | `GPU.sx`, `GPUViews.sx`, `GPUCompute.sx`, `GPUStress.sx`, `OracleDifferential.sx` | extraction on GPU, cross-device use and integer GPU compute |",
         "",
         "The successful suite includes targeted scalar, singleton, zero-sized, broadcast, strided-view, axis, signed-zero, NaN, infinity, integer-extrema, exact-conversion, large/small-amplitude, and bounded seeded pseudo-random cases. `Tests/Consumer/Diagnostics/README.md` indexes division-by-zero, overflow, out-of-range conversion, and structural errors.",
@@ -656,7 +825,7 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "## Deliberate contract decisions",
         "",
         f"- Signed-zero probe: `{placement['signed_zero']}`. Tensor fixes `min(+0,-0)` to `-0` and `max(+0,-0)` to `+0`; this is tested as an explicit contract rather than selected from one convenient oracle.",
-        "- Integer overflow, unsigned underflow, integer division by zero, invalid axes/shapes, incompatible dtype/placement, and out-of-range casts are `expected-error` cases. The 61 executable sources and required diagnostics are indexed in `Tests/Consumer/Diagnostics/README.md`.",
+        "- Integer overflow, unsigned underflow, integer division by zero, invalid axes/shapes, incompatible dtype/placement, out-of-range casts, invalid neural targets, and random-parameter errors are `expected-error` cases. The executable sources and required diagnostics are indexed in `Tests/Consumer/Diagnostics/README.md`.",
         "- Framework integer promotion and wraparound are not imported into Tensor. Tensor retains its dtype and checks representability before returning a result.",
         "",
         "## TensorFlow placement comparison",

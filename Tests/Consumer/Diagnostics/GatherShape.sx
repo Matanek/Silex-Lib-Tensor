@@ -1,0 +1,6 @@
+use Tensor
+func main() {
+    var indices:int32[] = [0 as int32, 1 as int32, 0 as int32]
+    let result = Tensor.ones([2, 3]).gather(1, Tensor.vector(indices))
+    print(result.count())
+}

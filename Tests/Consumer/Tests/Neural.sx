@@ -1,0 +1,174 @@
+use STD.Math
+use STD.Randomizer
+use Tensor
+
+func near(actual:float, expected:float, tolerance:float = 0.0001) {
+    assert(Math.abs(actual - expected) <= tolerance)
+}
+
+func same(actual:float[], expected:float[], tolerance:float = 0.00001) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if Math.abs(actual[index] - expected[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+func shape_is(actual:int[], expected:int[]) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if actual[index] != expected[index] { return false }
+        index++
+    }
+    return true
+}
+
+test "compute neural activations normalization and losses on CPU" {
+    var values:float[] = [-1.0, 0.0, 1.0]
+    let input = Tensor.vector(values)
+    let relu = input.relu().values()
+    let sigmoid = input.sigmoid().values()
+    let hyperbolic = input.tanh().values()
+    var expected_relu:float[] = [0.0, 0.0, 1.0]
+    assert(same(relu, expected_relu))
+    near(sigmoid[0], 0.26894143)
+    near(sigmoid[1], 0.5)
+    near(sigmoid[2], 0.7310586)
+    near(hyperbolic[0], -0.7615942)
+    near(hyperbolic[2], 0.7615942)
+
+    var logits_values:float[] = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0]
+    let logits = Tensor(logits_values, [2, 3])
+    let probabilities = logits.softmax(1)
+    near(probabilities.at([0, 0]), 0.09003057)
+    near(probabilities.at([0, 2]), 0.66524094)
+    near(probabilities.sum([1]).at([0]), 1.0)
+    let restored = logits.log_softmax(1).exp()
+    near(restored.at([1, 0]), probabilities.at([1, 0]))
+
+    var normalized_source:float[] = [1.0, 2.0, 3.0]
+    let normalized = Tensor.vector(normalized_source).layer_norm().values()
+    near(normalized[0], -1.2247356)
+    near(normalized[1], 0.0)
+    near(normalized[2], 1.2247356)
+    var mse_target:float[] = [0.0, 2.0, 4.0]
+    near(Tensor.vector(normalized_source).mse_loss(Tensor.vector(mse_target)).item(), 0.6666667)
+
+    var class_logits_values:float[] = [2.0, 1.0, 0.0]
+    var dense_target_values:float[] = [1.0, 0.0, 0.0]
+    let class_logits = Tensor(class_logits_values, [1, 3])
+    let dense_target = Tensor(dense_target_values, [1, 3])
+    var class_values:int32[] = [0 as int32]
+    let class_target = Tensor.vector(class_values)
+    near(class_logits.cross_entropy(dense_target, 1).item(), 0.407606)
+    near(class_logits.cross_entropy(class_target, 1).item(), 0.407606)
+}
+
+test "compose gather and multiply batched tensors on CPU" {
+    var first_values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var second_values:float[] = [5.0, 6.0]
+    let first = Tensor(first_values, [2, 2])
+    let second = Tensor(second_values, [1, 2])
+    let rows = Tensor.concatenate([first, second], 0)
+    var expected_rows:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert(shape_is(rows.shape(), [3, 2]) && same(rows.values(), expected_rows))
+    let columns = Tensor.concatenate([first, Tensor(second_values, [2, 1])], 1)
+    var expected_columns:float[] = [1.0, 2.0, 5.0, 3.0, 4.0, 6.0]
+    assert(shape_is(columns.shape(), [2, 3]) && same(columns.values(), expected_columns))
+    var stack_first:float[] = [1.0, 2.0]
+    var stack_second:float[] = [3.0, 4.0]
+    let stacked = Tensor.stack([Tensor.vector(stack_first), Tensor.vector(stack_second)], 0)
+    assert(shape_is(stacked.shape(), [2, 2]) && same(stacked.values(), first_values))
+    let stacked_views = Tensor.stack([first.transpose(), first.transpose()], 0)
+    var expected_stacked_views:float[] = [1.0, 3.0, 2.0, 4.0, 1.0, 3.0, 2.0, 4.0]
+    assert(shape_is(stacked_views.shape(), [2, 2, 2]) && same(stacked_views.values(), expected_stacked_views))
+
+    var index_values:int32[] = [2 as int32, 0 as int32]
+    let gathered = Tensor(expected_rows, [2, 3]).gather(1, Tensor.vector(index_values))
+    var expected_gather:float[] = [3.0, 4.0]
+    assert(shape_is(gathered.shape(), [2]) && same(gathered.values(), expected_gather))
+    var integer_left:int32[] = [1 as int32, 2 as int32]
+    var integer_right:int32[] = [3 as int32, 4 as int32]
+    let integers = Tensor.concatenate([Tensor.vector(integer_left), Tensor.vector(integer_right)], 0).int32_values()
+    assert(integers[0] == 1 as int32 && integers[3] == 4 as int32)
+
+    let transposed = first.transpose()
+    let joined_view = Tensor.concatenate([transposed, transposed], 1)
+    var expected_view:float[] = [1.0, 3.0, 1.0, 3.0, 2.0, 4.0, 2.0, 4.0]
+    assert(same(joined_view.values(), expected_view))
+
+    var left_values:float[] = [
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+        7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+    ]
+    var right_values:float[] = [1.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+    let left = Tensor(left_values, [2, 2, 3])
+    let right = Tensor(right_values, [1, 3, 2])
+    let product = left.matmul(right)
+    assert(shape_is(product.shape(), [2, 2, 2]))
+    var expected_product:float[] = [4.0, 5.0, 10.0, 11.0, 16.0, 17.0, 22.0, 23.0]
+    assert(same(product.values(), expected_product))
+}
+
+test "convolve and pool NCHW tensors on CPU" {
+    var input_values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    let input = Tensor(input_values, [1, 1, 3, 3])
+    let kernel = Tensor.ones([1, 1, 2, 2])
+    var bias_values:float[] = [1.0]
+    let convolution = input.conv2d(kernel, Tensor.vector(bias_values))
+    assert(shape_is(convolution.shape(), [1, 1, 2, 2]))
+    var expected_convolution:float[] = [13.0, 17.0, 25.0, 29.0]
+    var expected_maximum:float[] = [5.0, 6.0, 8.0, 9.0]
+    var expected_average:float[] = [3.0, 4.0, 6.0, 7.0]
+    assert(same(convolution.values(), expected_convolution))
+    assert(same(input.max_pool2d(2, 1).values(), expected_maximum))
+    assert(same(input.average_pool2d(2, 1).values(), expected_average))
+    var padded_values:float[] = [1.0, 2.0, 3.0, 4.0]
+    let padded = Tensor(padded_values, [1, 1, 2, 2]).average_pool2d(2, 1, 1)
+    near(padded.at([0, 0, 0, 0]), 0.25)
+    var singleton_values:float[] = [1.0]
+    let padded_maximum = Tensor(singleton_values, [1, 1, 1, 1]).max_pool2d(1, 1, 1)
+    assert(Math.is_infinite(padded_maximum.at([0, 0, 0, 0])))
+    assert(padded_maximum.at([0, 0, 0, 0]) < 0.0)
+}
+
+test "initialize and drop values reproducibly" {
+    var first_source = Randomizer(42)
+    var second_source = Randomizer(42)
+    let first = Tensor.uniform([16], first_source, -1.0, 1.0)
+    let second = Tensor.uniform([16], second_source, -1.0, 1.0)
+    assert(same(first.values(), second.values()))
+    let advanced = Tensor.uniform([16], first_source, -1.0, 1.0)
+    assert(!same(first.values(), advanced.values()))
+    var distinct_source = Randomizer(43)
+    assert(!same(first.values(), Tensor.uniform([16], distinct_source, -1.0, 1.0).values()))
+    for value in first.values() { assert(value >= -1.0 && value < 1.0) }
+    let normal = Tensor.normal([17], second_source)
+    assert(normal.count() == 17)
+    var statistics_source = Randomizer(1234)
+    let samples = Tensor.normal([2048], statistics_source).values()
+    var sample_sum = 0.0
+    var square_sum = 0.0
+    for value in samples { sample_sum += value; square_sum += value * value }
+    let sample_mean = sample_sum / (samples.count() as float)
+    let sample_variance = square_sum / (samples.count() as float) - sample_mean * sample_mean
+    assert(Math.abs(sample_mean) < 0.1 && sample_variance > 0.8 && sample_variance < 1.2)
+
+    var initializer = Randomizer(7)
+    let xavier = Tensor.xavier_uniform([4, 8], initializer)
+    let he = Tensor.he_uniform([4, 8], initializer)
+    assert(shape_is(xavier.shape(), [4, 8]) && shape_is(he.shape(), [4, 8]))
+
+    let source = Tensor.ones([256])
+    let first_mask = source.dropout(0.25, 99, 3)
+    let same_mask = source.dropout(0.25, 99, 3)
+    let next_mask = source.dropout(0.25, 99, 4)
+    assert(same(first_mask.values(), same_mask.values()))
+    assert(!same(first_mask.values(), next_mask.values()))
+    assert(same(source.dropout(0.25, 99, training:false).values(), source.values()))
+    let mean = first_mask.mean().item()
+    assert(mean > 0.75 && mean < 1.25)
+}

@@ -1,0 +1,72 @@
+use STD.Math
+use STD.Randomizer
+
+extend Tensor {
+    static func uniform(
+        shape:int[], randomizer:Randomizer,
+        minimum:float = 0.0, maximum:float = 1.0
+    ) Tensor {
+        let count = shape_product(shape)
+        if !Math.is_finite(minimum) || !Math.is_finite(maximum) || minimum >= maximum {
+            panic("Tensor.uniform requires finite bounds with minimum < maximum")
+        }
+        var values:float[] = []
+        var index = 0
+        while index < count {
+            values.append(randomizer.get_float(minimum, maximum))
+            index++
+        }
+        return Tensor(values, shape)
+    }
+
+    static func normal(
+        shape:int[], randomizer:Randomizer,
+        mean:float = 0.0, standard_deviation:float = 1.0
+    ) Tensor {
+        let count = shape_product(shape)
+        if !Math.is_finite(mean) || !Math.is_finite(standard_deviation) || standard_deviation <= 0.0 {
+            panic("Tensor.normal requires a finite mean and a positive finite standard deviation")
+        }
+        var values:float[] = []
+        while values.count() < count {
+            let first = 1.0 - randomizer.get_float()
+            let second = randomizer.get_float()
+            let radius = Math.sqrt(-2.0 * Math.log(first))
+            let angle = Math.two_pi() * second
+            values.append(mean + standard_deviation * radius * Math.cos(angle))
+            if values.count() < count {
+                values.append(mean + standard_deviation * radius * Math.sin(angle))
+            }
+        }
+        return Tensor(values, shape)
+    }
+
+    static func xavier_uniform(shape:int[], randomizer:Randomizer) Tensor {
+        let (fan_in, fan_out) = initializer_fans(shape, "xavier_uniform")
+        if fan_out > 9223372036854775807 - fan_in {
+            panic("Tensor initializer fan sum overflows int")
+        }
+        let bound = Math.sqrt(6.0 / ((fan_in + fan_out) as float))
+        return Tensor.uniform(shape, randomizer, -bound, bound)
+    }
+
+    static func he_uniform(shape:int[], randomizer:Randomizer) Tensor {
+        let (fan_in, fan_out) = initializer_fans(shape, "he_uniform")
+        let bound = Math.sqrt(6.0 / (fan_in as float))
+        return Tensor.uniform(shape, randomizer, -bound, bound)
+    }
+}
+
+func initializer_fans(shape:int[], operation:str) (int, int) {
+    if shape.count() < 2 { panic("Tensor.$(operation) requires a shape of rank 2 or greater") }
+    var receptive = 1
+    var axis = 2
+    while axis < shape.count() {
+        receptive = checked_product(receptive, shape[axis], "Tensor initializer fan size overflows int")
+        axis++
+    }
+    let fan_in = checked_product(shape[1], receptive, "Tensor initializer fan size overflows int")
+    let fan_out = checked_product(shape[0], receptive, "Tensor initializer fan size overflows int")
+    if fan_in <= 0 || fan_out <= 0 { panic("Tensor.$(operation) requires non-empty input and output fans") }
+    return (fan_in, fan_out)
+}

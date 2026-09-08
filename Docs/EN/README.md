@@ -166,6 +166,83 @@ The floating CPU/GPU comparisons in the tests use an absolute tolerance of
 `1e-5 × term count` and a relative tolerance of `1e-5 × |reference|`, taking
 the larger value.
 
+`matmul` also accepts batches of matrices with rank 2 or greater. Leading
+dimensions follow the usual broadcasting rules, while the last two dimensions
+hold rows, columns, and the shared inner dimension. CPU and GPU paths address
+batches and strided views directly.
+
+## Compose and select
+
+`Tensor.concatenate(tensors, axis)` joins a non-empty list along one axis. All
+other dimensions, dtype, placement, and device must match.
+`Tensor.stack(tensors, axis)` first adds an axis and then joins identical
+shapes. Both operations stay on the current placement and accept all nine
+dtypes.
+
+`source.gather(axis, indices)` selects one value per position outside the
+chosen axis. `indices` is an `int32` Tensor shaped like the source without that
+axis: logits `[batch, classes]` are therefore selected by classes `[batch]`.
+On GPU, this operation is the authorized `int32` addressing exception for a
+`float32` source; it does not enable general integer computation.
+Indices must belong to the selected axis. The CPU path validates them before
+access; to keep the GPU path resident, an out-of-range GPU index produces a
+NaN sentinel in the output instead of causing a hidden readback.
+
+## Eager neural computation
+
+`relu`, `sigmoid`, `tanh`, `softmax(axis)`, and `log_softmax(axis)` operate on
+`float32` tensors. Softmax and log-softmax subtract the axis maximum before the
+exponential. NaNs propagate; an empty or invalid axis follows the same failure
+rules as reductions.
+
+`layer_norm(dimensions, epsilon)` normalizes the trailing dimensions without
+trainable state in this foundational version. `mse_loss(target)` returns the
+scalar MSE. `cross_entropy(target, axis)` accepts either a dense `float32`
+target with the same shape or an `int32` class Tensor whose shape omits the
+class axis. These operations compose ordinary Tensors and remain GPU-resident
+until `cpu()`.
+
+2D convolution has one public layout: NCHW input and OIHW kernel.
+`conv2d(kernel, bias, stride, padding)` accepts a scalar stride and symmetric
+padding. `max_pool2d` and `average_pool2d` use a square window; stride defaults
+to the window size. Average pooling counts padding cells as zero in its
+divisor. Dilation, groups, and transposed convolution are outside 0.1.0.
+
+```sx
+use Tensor
+
+let logits = Tensor.ones([4, 10]).matmul(Tensor.ones([10, 3]))
+let probabilities = logits.softmax(1)
+var labels:int32[] = [0 as int32, 1 as int32, 2 as int32, 0 as int32]
+let classes = probabilities.gather(1, Tensor.vector(labels))
+
+let features = Tensor.ones([1, 3, 16, 16])
+let kernels = Tensor.ones([8, 3, 3, 3])
+let pooled = features.conv2d(kernels, stride:1, padding:1).relu().max_pool2d(2)
+```
+
+## Initialize and apply dropout
+
+The `uniform`, `normal`, `xavier_uniform`, and `he_uniform` constructors take
+an explicit `STD.Randomizer`. The same seed and call sequence reproduce the
+values; a subsequent call advances the source. Initializations are created on
+CPU and transferred explicitly when needed.
+
+```sx
+use STD.Randomizer
+use Tensor
+
+var randomizer = Randomizer(42)
+let weights = Tensor.xavier_uniform([64, 128], randomizer)
+let noise = Tensor.normal([64], randomizer, standard_deviation:0.01)
+```
+
+`dropout(probability, seed, iteration, training)` requires a seed and exposes
+the iteration. The same seed-iteration pair reproduces the mask; another
+iteration refreshes it. In evaluation, `training:false` keeps the Tensor. On
+GPU, a private counter generates the mask in the compute pass: no mask upload
+or global RNG is hidden.
+
 ## Move to the GPU
 
 Create the device with `GFX.GPU`, then place the tensor explicitly:

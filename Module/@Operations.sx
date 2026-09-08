@@ -13,6 +13,9 @@ enum UnaryOperation {
     exponential
     logarithm
     square_root
+    rectified_linear
+    sigmoid
+    hyperbolic_tangent
 }
 
 extend Tensor {
@@ -67,6 +70,9 @@ extend Tensor {
     func exp() Tensor { return self.unary(UnaryOperation.exponential) }
     func log() Tensor { return self.unary(UnaryOperation.logarithm) }
     func sqrt() Tensor { return self.unary(UnaryOperation.square_root) }
+    func relu() Tensor { return self.unary(UnaryOperation.rectified_linear) }
+    func sigmoid() Tensor { return self.unary(UnaryOperation.sigmoid) }
+    func tanh() Tensor { return self.unary(UnaryOperation.hyperbolic_tangent) }
 }
 
 func binary_name(operation:BinaryOperation) str {
@@ -85,6 +91,9 @@ func unary_name(operation:UnaryOperation) str {
         exponential => "exp"
         logarithm => "log"
         square_root => "sqrt"
+        rectified_linear => "relu"
+        sigmoid => "sigmoid"
+        hyperbolic_tangent => "tanh"
     }
 }
 
@@ -93,7 +102,16 @@ func binary_code(operation:BinaryOperation) int {
 }
 
 func unary_code(operation:UnaryOperation) int {
-    return match operation { negate => 4; absolute => 5; exponential => 6; logarithm => 7; square_root => 8 }
+    return match operation {
+        negate => 4
+        absolute => 5
+        exponential => 6
+        logarithm => 7
+        square_root => 8
+        rectified_linear => 9
+        sigmoid => 10
+        hyperbolic_tangent => 11
+    }
 }
 
 func broadcast_shape(left:int[], right:int[], operation:str) int[] {
@@ -286,7 +304,14 @@ func require_unary_dtype(dtype:DType, operation:UnaryOperation) {
     if operation == UnaryOperation.negate && dtype.is_unsigned_integer() {
         panic("Tensor.negate requires float32 or a signed integer dtype")
     }
-    if (operation == UnaryOperation.exponential || operation == UnaryOperation.logarithm || operation == UnaryOperation.square_root) && dtype != DType.float32() {
+    if (
+        operation == UnaryOperation.exponential ||
+        operation == UnaryOperation.logarithm ||
+        operation == UnaryOperation.square_root ||
+        operation == UnaryOperation.rectified_linear ||
+        operation == UnaryOperation.sigmoid ||
+        operation == UnaryOperation.hyperbolic_tangent
+    ) && dtype != DType.float32() {
         panic("Tensor.$(unary_name(operation)) supports only dtype float32; call cast(DType.float32())")
     }
 }
@@ -315,10 +340,19 @@ func unary_float_values(values:float[], layout:Layout, operation:UnaryOperation)
             exponential => Math.exp(value)
             logarithm => Math.log(value)
             square_root => Math.sqrt(value)
+            rectified_linear => rectified(value)
+            sigmoid => 1.0 / (1.0 + Math.exp(-value))
+            hyperbolic_tangent => Math.tanh(value)
         })
         logical++
     }
     return result
+}
+
+func rectified(value:float) float {
+    if Math.is_nan(value) { return value }
+    if value > 0.0 { return value }
+    return 0.0
 }
 
 func unary_integer_values<T>(values:T[], layout:Layout, operation:UnaryOperation, minimum:T, dtype:str) T[] {
