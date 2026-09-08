@@ -1,0 +1,6 @@
+use Tensor
+func main() {
+    let minimum = (-2147483647 as int32) - (1 as int32)
+    let result = Tensor.scalar(minimum).divide(-1 as int32)
+    print(result.int32_item())
+}

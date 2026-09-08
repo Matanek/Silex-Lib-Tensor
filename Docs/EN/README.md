@@ -78,8 +78,46 @@ CPU-only: call `cpu()` explicitly before reading a GPU tensor.
 `contiguous()` preserves a tensor that already covers its canonical storage;
 otherwise, it materializes the logical values into new dense storage without
 changing the dtype. On the GPU this remains a GPU copy and causes no readback.
-A strided view must be made contiguous before a GPU operation that requires a
-canonical layout.
+Elementwise operations in this release address view strides directly;
+`contiguous()` remains available when a consumer explicitly requires canonical
+dense storage.
+
+## Broadcasting and elementwise computation
+
+`add`, `subtract`, `multiply`, and `divide` align dimensions from the right.
+Two dimensions are compatible when they are equal or either is `1`; a zero
+dimension is therefore compatible with `0` or `1`. A scalar with shape `[]`
+follows the same rule:
+
+```sx
+use Tensor
+
+var samples:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+var bias:float[] = [10.0, 20.0, 30.0]
+
+let matrix = Tensor(samples, [2, 3])
+let shifted = matrix.add(Tensor.vector(bias)).multiply(2.0)
+
+assert(shifted.shape()[0] == 2 && shifted.shape()[1] == 3)
+assert(shifted.at([1, 2]) == 72.0)
+```
+
+Both tensors in a binary operation retain the same dtype and placement. On the
+CPU, all four verbs accept all nine dtypes. Integers retain their dtype and
+integer division; overflow, non-representable subtraction, division by zero,
+and a non-representable signed quotient fail before computation. A scalar also
+has an exact type: write `tensor.add(1 as int32)` for an `int32` tensor.
+
+`negate` accepts `float32` and signed integers. `abs` accepts all nine dtypes
+and leaves unsigned integers unchanged. `exp`, `log`, and `sqrt` are restricted
+to `float32`. IEEE behavior remains observable for `float32`: division by zero,
+NaN, and infinities are not converted into Tensor errors.
+
+The GPU executes these nine verbs only for `float32`, including strided views
+and broadcast shapes from rank 0 through 5. Integers may reside on the GPU and
+return bit-exactly to the CPU, but any integer GPU computation fails before
+pipeline creation or submission. Elementwise pipelines are reused throughout
+a resident chain.
 
 ## Move to the GPU
 
@@ -105,10 +143,10 @@ Shape and placement metadata cause no transfer. `cpu()` is the first
 synchronization point in a GPU chain. Value, item, and scalar-index extraction
 is CPU-only.
 
-This release runs only `add(float)` and `multiply(float)` for `float32` on the
-GPU. All nine dtypes transfer without loss, but integer GPU computation is
-rejected before submission. Migration between two devices remains explicit:
-`tensor.cpu().to(other_device)`.
+This release runs the binary and unary elementwise operations described above
+for `float32` on the GPU. All nine dtypes transfer without loss, but integer GPU
+computation is rejected before submission. Migration between two devices
+remains explicit: `tensor.cpu().to(other_device)`.
 
 ## Value semantics
 

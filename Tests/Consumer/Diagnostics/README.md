@@ -6,10 +6,20 @@ Every fixture must fail and mention its intended contract:
 - `Extraction.sx`: matching dtype extractor or explicit cast;
 - `GPUExtraction.sx`: `cpu()` before value extraction;
 - `CastRange.sx`: invalid controlled numeric conversion;
-- `GPUInteger.sx`: GPU scalar arithmetic accepts only `float32`;
+- `GPUInteger.sx` and `GPUIntegerPair.sx`: GPU arithmetic accepts only
+  `float32`, for scalar and tensor operands alike;
+- `BroadcastShape.sx`: the diagnostic names the operation and both incompatible shapes;
+- `IntegerOverflow.sx`, `IntegerMultiplyOverflow.sx`, `IntegerDivideZero.sx`,
+  `SignedDivideOverflow.sx`, `SignedNegateOverflow.sx`, `UnsignedOverflow.sx`,
+  and `UnsignedUnderflow.sx`: checked Silex integer arithmetic remains
+  observable;
+- `UnsignedNegate.sx`: negation requires a floating or signed dtype;
+- `FloatOnlyUnary.sx`: transcendental operations require `float32`;
 - `CrossDevice.sx`: explicit CPU staging between devices;
 - `Placement.sx`: matching placements;
 - `DTypeMismatch.sx`: matching dtypes;
+- `ScalarDTypeMismatch.sx`: a scalar has the exact dtype selected by its Silex
+  type;
 - `CopyTensor.sx`: a value reaching a `noncopyable` class cannot be cloned;
 - `NegativeShape.sx`: shape dimensions are non-negative;
 - `ShapeOverflow.sx`: shape cardinality overflow is rejected before allocation;
@@ -25,5 +35,5 @@ Every fixture must fail and mention its intended contract:
 - `IndexRank.sx`, `IndexBounds.sx`, `NegativeIndex.sx`, and `GPUIndex.sx`:
   scalar indexing supplies every non-negative in-range axis and remains
   CPU-only;
-- `GPUViewCompute.sx`: GPU arithmetic requires an explicit `contiguous()` for
-  a strided view.
+- transposed GPU views are covered as successful stride-aware computation in
+  `Tests/GPUCompute.sx`.

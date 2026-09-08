@@ -1,0 +1,342 @@
+use STD.Math
+use Tensor.DType.DType
+
+enum BinaryOperation {
+    add
+    subtract
+    multiply
+    divide
+}
+
+enum UnaryOperation {
+    negate
+    absolute
+    exponential
+    logarithm
+    square_root
+}
+
+extend Tensor {
+    func add(other:Tensor) Tensor { return self.binary(other, BinaryOperation.add) }
+    func subtract(other:Tensor) Tensor { return self.binary(other, BinaryOperation.subtract) }
+    func multiply(other:Tensor) Tensor { return self.binary(other, BinaryOperation.multiply) }
+    func divide(other:Tensor) Tensor { return self.binary(other, BinaryOperation.divide) }
+
+    func add(other:float) Tensor { return self.float_scalar(other, BinaryOperation.add) }
+    func subtract(other:float) Tensor { return self.float_scalar(other, BinaryOperation.subtract) }
+    func multiply(other:float) Tensor { return self.float_scalar(other, BinaryOperation.multiply) }
+    func divide(other:float) Tensor { return self.float_scalar(other, BinaryOperation.divide) }
+
+    func add(other:int8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:uint8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:int16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:uint16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:int32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:uint32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:int64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+    func add(other:uint64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.add) }
+
+    func subtract(other:int8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:uint8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:int16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:uint16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:int32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:uint32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:int64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+    func subtract(other:uint64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.subtract) }
+
+    func multiply(other:int8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:uint8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:int16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:uint16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:int32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:uint32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:int64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+    func multiply(other:uint64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.multiply) }
+
+    func divide(other:int8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:uint8) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:int16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:uint16) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:int32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:uint32) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:int64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+    func divide(other:uint64) Tensor { return self.integer_scalar(Tensor.scalar(other), BinaryOperation.divide) }
+
+    func negate() Tensor { return self.unary(UnaryOperation.negate) }
+    func abs() Tensor { return self.unary(UnaryOperation.absolute) }
+    func exp() Tensor { return self.unary(UnaryOperation.exponential) }
+    func log() Tensor { return self.unary(UnaryOperation.logarithm) }
+    func sqrt() Tensor { return self.unary(UnaryOperation.square_root) }
+}
+
+func binary_name(operation:BinaryOperation) str {
+    return match operation {
+        add => "add"
+        subtract => "subtract"
+        multiply => "multiply"
+        divide => "divide"
+    }
+}
+
+func unary_name(operation:UnaryOperation) str {
+    return match operation {
+        negate => "negate"
+        absolute => "abs"
+        exponential => "exp"
+        logarithm => "log"
+        square_root => "sqrt"
+    }
+}
+
+func binary_code(operation:BinaryOperation) int {
+    return match operation { add => 0; subtract => 1; multiply => 2; divide => 3 }
+}
+
+func unary_code(operation:UnaryOperation) int {
+    return match operation { negate => 4; absolute => 5; exponential => 6; logarithm => 7; square_root => 8 }
+}
+
+func broadcast_shape(left:int[], right:int[], operation:str) int[] {
+    var rank = right.count()
+    if left.count() > rank { rank = left.count() }
+    var result:int[] = []
+    var axis = 0
+    while axis < rank {
+        let left_axis = axis - (rank - left.count())
+        let right_axis = axis - (rank - right.count())
+        var left_dimension = 1
+        var right_dimension = 1
+        if left_axis >= 0 { left_dimension = left[left_axis] }
+        if right_axis >= 0 { right_dimension = right[right_axis] }
+        if left_dimension == right_dimension { result.append(left_dimension) }
+        elif left_dimension == 1 { result.append(right_dimension) }
+        elif right_dimension == 1 { result.append(left_dimension) }
+        else {
+            panic("Tensor.$(operation) cannot broadcast shapes $(shape_text(left)) and $(shape_text(right))")
+        }
+        axis++
+    }
+    return result
+}
+
+func shape_text(shape:int[]) str {
+    var result = "["
+    var axis = 0
+    while axis < shape.count() {
+        if axis > 0 { result += ", " }
+        result += "$(shape[axis])"
+        axis++
+    }
+    return result + "]"
+}
+
+func binary_cpu_storage(
+    left:CPUStorage,
+    left_layout:Layout,
+    right:CPUStorage,
+    right_layout:Layout,
+    shape:int[],
+    operation:BinaryOperation
+) CPUStorage {
+    let dtype = left.dtype()
+    if dtype == DType.float32() { return CPUStorage(binary_float_values(left.float_values(), left_layout, right.float_values(), right_layout, shape, operation)) }
+    if dtype == DType.int8() { return CPUStorage(binary_signed_values<int8>(left.int8_values(), left_layout, right.int8_values(), right_layout, shape, operation, (-127 as int8) - (1 as int8), 127 as int8, "int8")) }
+    if dtype == DType.uint8() { return CPUStorage(binary_unsigned_values<uint8>(left.uint8_values(), left_layout, right.uint8_values(), right_layout, shape, operation, 255 as uint8, "uint8")) }
+    if dtype == DType.int16() { return CPUStorage(binary_signed_values<int16>(left.int16_values(), left_layout, right.int16_values(), right_layout, shape, operation, (-32767 as int16) - (1 as int16), 32767 as int16, "int16")) }
+    if dtype == DType.uint16() { return CPUStorage(binary_unsigned_values<uint16>(left.uint16_values(), left_layout, right.uint16_values(), right_layout, shape, operation, 65535 as uint16, "uint16")) }
+    if dtype == DType.int32() { return CPUStorage(binary_signed_values<int32>(left.int32_values(), left_layout, right.int32_values(), right_layout, shape, operation, (-2147483647 as int32) - (1 as int32), 2147483647 as int32, "int32")) }
+    if dtype == DType.uint32() {
+        let maximum:uint32 = 0xffff_ffff
+        return CPUStorage(binary_unsigned_values<uint32>(left.uint32_values(), left_layout, right.uint32_values(), right_layout, shape, operation, maximum, "uint32"))
+    }
+    if dtype == DType.int64() { return CPUStorage(binary_signed_values<int64>(left.int64_values(), left_layout, right.int64_values(), right_layout, shape, operation, (-9223372036854775807 as int64) - (1 as int64), 9223372036854775807 as int64, "int64")) }
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    return CPUStorage(binary_unsigned_values<uint64>(left.uint64_values(), left_layout, right.uint64_values(), right_layout, shape, operation, maximum, "uint64"))
+}
+
+func binary_float_values(
+    left:float[],
+    left_layout:Layout,
+    right:float[],
+    right_layout:Layout,
+    shape:int[],
+    operation:BinaryOperation
+) float[] {
+    let count = shape_product(shape)
+    var result:float[] = []
+    var logical = 0
+    while logical < count {
+        let left_value = left[left_layout.broadcast_storage_index(logical, shape)]
+        let right_value = right[right_layout.broadcast_storage_index(logical, shape)]
+        result.append(match operation {
+            add => left_value + right_value
+            subtract => left_value - right_value
+            multiply => left_value * right_value
+            divide => left_value / right_value
+        })
+        logical++
+    }
+    return result
+}
+
+func binary_signed_values<T>(
+    left:T[],
+    left_layout:Layout,
+    right:T[],
+    right_layout:Layout,
+    shape:int[],
+    operation:BinaryOperation,
+    minimum:T,
+    maximum:T,
+    dtype:str
+) T[] {
+    let count = shape_product(shape)
+    var result:T[] = []
+    var logical = 0
+    while logical < count {
+        let left_value = left[left_layout.broadcast_storage_index(logical, shape)]
+        let right_value = right[right_layout.broadcast_storage_index(logical, shape)]
+        result.append(checked_signed(left_value, right_value, operation, minimum, maximum, dtype))
+        logical++
+    }
+    return result
+}
+
+func checked_signed<T>(left:T, right:T, operation:BinaryOperation, minimum:T, maximum:T, dtype:str) T {
+    let zero = 0 as T
+    let one = 1 as T
+    let negative_one = -one
+    if operation == BinaryOperation.add {
+        if (right > zero && left > maximum - right) || (right < zero && left < minimum - right) {
+            integer_failure(operation, dtype, "overflow")
+        }
+        return left + right
+    }
+    if operation == BinaryOperation.subtract {
+        if (right > zero && left < minimum + right) || (right < zero && left > maximum + right) {
+            integer_failure(operation, dtype, "overflow")
+        }
+        return left - right
+    }
+    if operation == BinaryOperation.multiply {
+        if (left == minimum && right == negative_one) || (right == minimum && left == negative_one) {
+            integer_failure(operation, dtype, "overflow")
+        }
+        if left > zero {
+            if (right > zero && left > maximum / right) || (right < zero && right < minimum / left) {
+                integer_failure(operation, dtype, "overflow")
+            }
+        } elif left < zero {
+            if (right > zero && left < minimum / right) || (right < zero && right < maximum / left) {
+                integer_failure(operation, dtype, "overflow")
+            }
+        }
+        return left * right
+    }
+    if right == zero { integer_failure(operation, dtype, "division by zero") }
+    if left == minimum && right == negative_one { integer_failure(operation, dtype, "non-representable quotient") }
+    return left / right
+}
+
+func binary_unsigned_values<T>(
+    left:T[],
+    left_layout:Layout,
+    right:T[],
+    right_layout:Layout,
+    shape:int[],
+    operation:BinaryOperation,
+    maximum:T,
+    dtype:str
+) T[] {
+    let count = shape_product(shape)
+    var result:T[] = []
+    var logical = 0
+    while logical < count {
+        let left_value = left[left_layout.broadcast_storage_index(logical, shape)]
+        let right_value = right[right_layout.broadcast_storage_index(logical, shape)]
+        result.append(checked_unsigned(left_value, right_value, operation, maximum, dtype))
+        logical++
+    }
+    return result
+}
+
+func checked_unsigned<T>(left:T, right:T, operation:BinaryOperation, maximum:T, dtype:str) T {
+    let zero = 0 as T
+    if operation == BinaryOperation.add {
+        if left > maximum - right { integer_failure(operation, dtype, "overflow") }
+        return left + right
+    }
+    if operation == BinaryOperation.subtract {
+        if left < right { integer_failure(operation, dtype, "underflow") }
+        return left - right
+    }
+    if operation == BinaryOperation.multiply {
+        if right != zero && left > maximum / right { integer_failure(operation, dtype, "overflow") }
+        return left * right
+    }
+    if right == zero { integer_failure(operation, dtype, "division by zero") }
+    return left / right
+}
+
+func integer_failure(operation:BinaryOperation, dtype:str, detail:str) {
+    panic("Tensor.$(binary_name(operation)) $(detail) for dtype $(dtype)")
+}
+
+func require_unary_dtype(dtype:DType, operation:UnaryOperation) {
+    if operation == UnaryOperation.negate && dtype.is_unsigned_integer() {
+        panic("Tensor.negate requires float32 or a signed integer dtype")
+    }
+    if (operation == UnaryOperation.exponential || operation == UnaryOperation.logarithm || operation == UnaryOperation.square_root) && dtype != DType.float32() {
+        panic("Tensor.$(unary_name(operation)) supports only dtype float32; call cast(DType.float32())")
+    }
+}
+
+func unary_cpu_storage(storage:CPUStorage, layout:Layout, operation:UnaryOperation) CPUStorage {
+    let dtype = storage.dtype()
+    if dtype == DType.float32() { return CPUStorage(unary_float_values(storage.float_values(), layout, operation)) }
+    if dtype == DType.int8() { return CPUStorage(unary_integer_values<int8>(storage.int8_values(), layout, operation, (-127 as int8) - (1 as int8), "int8")) }
+    if dtype == DType.uint8() { return CPUStorage(unary_unsigned_values<uint8>(storage.uint8_values(), layout)) }
+    if dtype == DType.int16() { return CPUStorage(unary_integer_values<int16>(storage.int16_values(), layout, operation, (-32767 as int16) - (1 as int16), "int16")) }
+    if dtype == DType.uint16() { return CPUStorage(unary_unsigned_values<uint16>(storage.uint16_values(), layout)) }
+    if dtype == DType.int32() { return CPUStorage(unary_integer_values<int32>(storage.int32_values(), layout, operation, (-2147483647 as int32) - (1 as int32), "int32")) }
+    if dtype == DType.uint32() { return CPUStorage(unary_unsigned_values<uint32>(storage.uint32_values(), layout)) }
+    if dtype == DType.int64() { return CPUStorage(unary_integer_values<int64>(storage.int64_values(), layout, operation, (-9223372036854775807 as int64) - (1 as int64), "int64")) }
+    return CPUStorage(unary_unsigned_values<uint64>(storage.uint64_values(), layout))
+}
+
+func unary_float_values(values:float[], layout:Layout, operation:UnaryOperation) float[] {
+    var result:float[] = []
+    var logical = 0
+    while logical < layout.count() {
+        let value = values[layout.flat_storage_index(logical)]
+        result.append(match operation {
+            negate => -value
+            absolute => Math.abs(value)
+            exponential => Math.exp(value)
+            logarithm => Math.log(value)
+            square_root => Math.sqrt(value)
+        })
+        logical++
+    }
+    return result
+}
+
+func unary_integer_values<T>(values:T[], layout:Layout, operation:UnaryOperation, minimum:T, dtype:str) T[] {
+    var result:T[] = []
+    var logical = 0
+    while logical < layout.count() {
+        let value = values[layout.flat_storage_index(logical)]
+        if value == minimum { panic("Tensor.$(unary_name(operation)) overflow for dtype $(dtype)") }
+        var output = value
+        if operation == UnaryOperation.negate { output = -value }
+        elif value < 0 { output = -value }
+        result.append(output)
+        logical++
+    }
+    return result
+}
+
+func unary_unsigned_values<T>(values:T[], layout:Layout) T[] {
+    return gather_values<T>(values, layout)
+}

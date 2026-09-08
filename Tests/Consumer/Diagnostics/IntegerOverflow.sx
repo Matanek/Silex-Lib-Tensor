@@ -1,0 +1,5 @@
+use Tensor
+func main() {
+    let result = Tensor.scalar(127 as int8).add(1 as int8)
+    print(result.int8_item())
+}

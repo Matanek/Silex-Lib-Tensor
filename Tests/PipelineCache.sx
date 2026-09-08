@@ -1,0 +1,17 @@
+use GFX.GPU
+use Tensor
+use Tensor.gpu_pipeline_compilations
+use Tensor.reset_gpu_pipeline_compilations
+
+test "reuse compiled elementwise and binary pipelines in one resident chain" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device()
+    var left_values:float[] = [1.0, 2.0]
+    var right_values:float[] = [3.0, 4.0]
+    let left = Tensor.vector(left_values).to(device)
+    let right = Tensor.vector(right_values).to(device)
+    let result = left.add(1.0).multiply(2.0).abs().add(right).subtract(right)
+    assert(result.cpu().values()[1] == 6.0)
+    assert(gpu_pipeline_compilations() == 2)
+}

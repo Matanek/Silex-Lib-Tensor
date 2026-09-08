@@ -1,0 +1,6 @@
+use Tensor
+func main() {
+    let minimum = (-127 as int8) - (1 as int8)
+    let result = Tensor.scalar(minimum).negate()
+    print(result.int8_item())
+}

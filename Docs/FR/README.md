@@ -81,8 +81,47 @@ accès sont CPU-only : appelez explicitement `cpu()` avant une lecture GPU.
 `contiguous()` conserve un tenseur qui couvre déjà son stockage canonique et
 matérialise sinon les valeurs logiques dans un nouveau stockage dense, sans
 changer le dtype. Sur GPU, cette matérialisation reste une copie GPU et ne
-provoque aucun readback. Une vue stridée doit être rendue contiguë avant une
-opération GPU qui exige une disposition canonique.
+provoque aucun readback. Les opérations élémentaires de cette version adressent
+directement les strides des vues ; `contiguous()` reste disponible lorsqu'un
+consommateur exige explicitement un stockage dense canonique.
+
+## Broadcasting et calcul élémentaire
+
+`add`, `subtract`, `multiply` et `divide` alignent les dimensions depuis la
+droite. Deux dimensions sont compatibles lorsqu'elles sont égales ou que l'une
+vaut `1`; une dimension nulle est donc compatible avec `0` ou `1`. Un scalaire
+de forme `[]` suit exactement la même règle :
+
+```sx
+use Tensor
+
+var samples:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+var bias:float[] = [10.0, 20.0, 30.0]
+
+let matrix = Tensor(samples, [2, 3])
+let shifted = matrix.add(Tensor.vector(bias)).multiply(2.0)
+
+assert(shifted.shape()[0] == 2 && shifted.shape()[1] == 3)
+assert(shifted.at([1, 2]) == 72.0)
+```
+
+Les deux tenseurs d'une opération binaire gardent le même dtype et le même
+placement. Sur CPU, les quatre verbes acceptent les neuf dtypes. Les entiers
+conservent leur dtype et leur division entière ; overflow, soustraction non
+représentable, division par zéro et quotient signé non représentable échouent
+avant le calcul. Un scalaire porte lui aussi son type exact : écrivez par
+exemple `tensor.add(1 as int32)` pour un tenseur `int32`.
+
+`negate` accepte `float32` et les entiers signés. `abs` accepte les neuf dtypes
+et laisse les non-signés inchangés. `exp`, `log` et `sqrt` sont réservés à
+`float32`. Pour `float32`, les règles IEEE restent observables : division par
+zéro, NaN et infinis ne sont pas transformés en erreurs Tensor.
+
+Le GPU exécute ces neuf verbes uniquement pour `float32`, y compris sur les
+vues stridées et les formes broadcastées de rang 0 à 5. Les entiers peuvent
+résider sur le GPU et revenir bit pour bit sur CPU, mais tout calcul entier GPU
+échoue avant création de pipeline ou soumission. Les pipelines élémentaires
+sont réutilisés au fil d'une chaîne résidente.
 
 ## Passer sur GPU
 
@@ -108,10 +147,10 @@ Les métadonnées de forme et de placement ne provoquent aucun transfert.
 `cpu()` est le premier point de synchronisation d'une chaîne GPU. Les valeurs,
 items et accès scalaires sont CPU-only.
 
-Cette version exécute sur GPU seulement `add(float)` et `multiply(float)` pour
-`float32`. Les neuf dtypes se transfèrent sans perte, mais un calcul GPU entier
-est refusé avant soumission. Une migration entre deux devices reste explicite :
-`tensor.cpu().to(other_device)`.
+Cette version exécute sur GPU les opérations élémentaires binaires et unaires
+décrites ci-dessus pour `float32`. Les neuf dtypes se transfèrent sans perte,
+mais un calcul GPU entier est refusé avant soumission. Une migration entre deux
+devices reste explicite : `tensor.cpu().to(other_device)`.
 
 ## Sémantique de valeur
 

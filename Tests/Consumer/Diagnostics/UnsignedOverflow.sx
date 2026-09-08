@@ -1,0 +1,5 @@
+use Tensor
+func main() {
+    let result = Tensor.scalar(255 as uint8).add(1 as uint8)
+    print(result.uint8_item())
+}

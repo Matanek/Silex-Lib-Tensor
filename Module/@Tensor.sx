@@ -134,11 +134,6 @@ public struct Tensor {
         return match self.current_storage { gpu(value) => Tensor.from_storage(Storage.cpu(value.cpu_storage()), self.current_layout); else => self }
     }
 
-    func add(other:float) Tensor { return self.float_scalar(ScalarOperation.add(), other) }
-    func multiply(other:float) Tensor { return self.float_scalar(ScalarOperation.multiply(), other) }
-    func add(other:Tensor) Tensor { return self.float_pair(other, ScalarOperation.add()) }
-    func multiply(other:Tensor) Tensor { return self.float_pair(other, ScalarOperation.multiply()) }
-
     private static func from_storage(storage:Storage, layout:Layout) Tensor { return Tensor(values:storage, shape:layout) }
     private init(values:Storage, shape:Layout) { self.current_storage = values; self.current_layout = shape }
 
@@ -164,53 +159,75 @@ public struct Tensor {
         return Tensor(values, shape)
     }
 
-    private func float_scalar(operation:ScalarOperation, value:float) Tensor {
-        if self.dtype() != DType.float32() {
-            if self.is_gpu() { panic("Tensor GPU scalar arithmetic supports only dtype float32; call cpu().cast(DType.float32()).to(device)") }
-            panic("Tensor scalar arithmetic supports only dtype float32; call cast(DType.float32())")
-        }
+    module func binary(other:Tensor, operation:BinaryOperation) Tensor {
+        self.require_binary_compatibility(other, operation)
+        let shape = broadcast_shape(self.shape(), other.shape(), binary_name(operation))
         if self.is_gpu() {
-            if !self.current_layout.is_canonical(self.storage_count()) { panic("Tensor GPU arithmetic requires canonical contiguous storage; call contiguous()") }
+            self.require_gpu_float_compute(binary_name(operation))
+            var left = self.gpu_storage()
+            var right = other.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(left.binary(right, self.current_layout, other.current_layout, shape, operation)),
+                Layout(shape)
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(binary_cpu_storage(
+                self.cpu_storage(), self.current_layout,
+                other.cpu_storage(), other.current_layout,
+                shape, operation
+            )),
+            Layout(shape)
+        )
+    }
+
+    module func float_scalar(value:float, operation:BinaryOperation) Tensor {
+        if self.is_gpu() {
+            self.require_gpu_float_compute(binary_name(operation))
             var storage = self.gpu_storage()
-            return Tensor.from_storage(Storage.gpu(storage.scalar(operation, value)), self.current_layout)
+            return Tensor.from_storage(
+                Storage.gpu(storage.scalar(self.current_layout, operation, value)),
+                Layout(self.current_layout.shape())
+            )
         }
-        var result:float[] = []
-        for item in self.values() {
-            match operation { add => { result.append(item + value) }; multiply => { result.append(item * value) } }
-        }
-        return Tensor(result, self.current_layout.shape())
+        return self.binary(Tensor.scalar(value), operation)
     }
 
-    private func float_pair(other:Tensor, operation:ScalarOperation) Tensor {
-        self.require_compatible(other)
-        if self.dtype() != DType.float32() { panic("Tensor arithmetic supports only dtype float32 in this release") }
-        if self.is_gpu() { panic("Tensor GPU tensor-to-tensor arithmetic is not available in this release") }
-        let left = self.values()
-        let right = other.values()
-        var result:float[] = []
-        var index = 0
-        while index < left.count() {
-            match operation { add => { result.append(left[index] + right[index]) }; multiply => { result.append(left[index] * right[index]) } }
-            index++
-        }
-        return Tensor(result, self.current_layout.shape())
+    module func integer_scalar(other:Tensor, operation:BinaryOperation) Tensor {
+        if self.is_gpu() { self.require_gpu_float_compute(binary_name(operation)) }
+        return self.binary(other, operation)
     }
 
-    private func require_compatible(other:Tensor) {
-        if self.dtype() != other.dtype() { panic("Tensor operation requires matching dtypes") }
-        if self.is_cpu() != other.is_cpu() { panic("Tensor operation requires matching placements") }
+    module func unary(operation:UnaryOperation) Tensor {
+        if self.is_gpu() {
+            self.require_gpu_float_compute(unary_name(operation))
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(storage.unary(self.current_layout, operation)),
+                Layout(self.current_layout.shape())
+            )
+        }
+        require_unary_dtype(self.dtype(), operation)
+        return Tensor.from_storage(
+            Storage.cpu(unary_cpu_storage(self.cpu_storage(), self.current_layout, operation)),
+            Layout(self.current_layout.shape())
+        )
+    }
+
+    private func require_binary_compatibility(other:Tensor, operation:BinaryOperation) {
+        let name = binary_name(operation)
+        if self.dtype() != other.dtype() { panic("Tensor.$(name) requires matching dtypes") }
+        if self.is_cpu() != other.is_cpu() { panic("Tensor.$(name) requires matching placements") }
         if self.is_gpu() {
             var left = self.gpu_storage()
             var right = other.gpu_storage()
-            if !left.same_device(right) { panic("Tensor operation requires tensors on the same GPU device") }
+            if !left.same_device(right) { panic("Tensor.$(name) requires tensors on the same GPU device") }
         }
-        if self.rank() != other.rank() { panic("Tensor operation requires equal shapes") }
-        let left_shape = self.shape()
-        let right_shape = other.shape()
-        var axis = 0
-        while axis < self.rank() {
-            if left_shape[axis] != right_shape[axis] { panic("Tensor operation requires equal shapes") }
-            axis++
+    }
+
+    private func require_gpu_float_compute(operation:str) {
+        if self.dtype() != DType.float32() {
+            panic("Tensor.$(operation) GPU computation supports only dtype float32; call cpu().cast(DType.float32()).to(device)")
         }
     }
 

@@ -71,6 +71,33 @@ struct Layout {
         return result
     }
 
+    func broadcast_storage_index(flat:int, output_shape:int[]) int {
+        if flat < 0 || flat >= shape_product(output_shape) {
+            panic("Tensor internal broadcast index is outside the output shape")
+        }
+        if self.rank() > output_shape.count() {
+            panic("Tensor internal broadcast rank exceeds the output rank")
+        }
+        var result = self.start
+        var remaining = flat
+        var output_axis = output_shape.count() - 1
+        var input_axis = self.rank() - 1
+        while output_axis >= 0 {
+            let dimension = output_shape[output_axis]
+            var coordinate = 0
+            if dimension > 0 { coordinate = remaining % dimension }
+            if dimension > 0 { remaining /= dimension }
+            if input_axis >= 0 {
+                if self.dimensions[input_axis] != 1 {
+                    result += coordinate * self.stride_values[input_axis]
+                }
+                input_axis--
+            }
+            output_axis--
+        }
+        return result
+    }
+
     func reshaped(requested:int[]) Layout {
         if !self.is_contiguous() {
             panic("Tensor.reshape requires a contiguous tensor; call contiguous().reshape(shape)")

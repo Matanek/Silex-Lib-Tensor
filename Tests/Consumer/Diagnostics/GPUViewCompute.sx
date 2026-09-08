@@ -1,7 +1,0 @@
-use GFX.GPU
-use Tensor
-func main() {
-    var device = GPU.Device()
-    let result = Tensor.ones([2, 3]).to(device).transpose().add(1.0)
-    print(result.count())
-}

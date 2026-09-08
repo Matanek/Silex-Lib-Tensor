@@ -1,0 +1,5 @@
+use Tensor
+func main() {
+    let result = Tensor.scalar(1 as uint32).negate()
+    print(result.uint32_item())
+}

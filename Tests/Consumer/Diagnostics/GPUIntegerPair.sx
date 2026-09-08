@@ -1,0 +1,10 @@
+use GFX.GPU
+use Tensor
+func main() {
+    var device = GPU.Device()
+    var values:int32[] = [1 as int32]
+    let left = Tensor.vector(values).to(device)
+    let right = Tensor.vector(values).to(device)
+    let result = left.add(right)
+    print(result.count())
+}

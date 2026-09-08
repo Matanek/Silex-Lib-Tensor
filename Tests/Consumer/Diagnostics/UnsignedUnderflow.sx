@@ -1,0 +1,5 @@
+use Tensor
+func main() {
+    let result = Tensor.scalar(0 as uint16).subtract(1 as uint16)
+    print(result.uint16_item())
+}

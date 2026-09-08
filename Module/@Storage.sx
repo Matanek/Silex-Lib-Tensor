@@ -112,37 +112,72 @@ enum Storage {
     gpu(GPUStorage)
 }
 
-enum ScalarOperation {
-    add
-    multiply
+noncopyable class GPUKernelCache {
+    private static var compilation_count:int = 0
+    private var current_device:GPU.Device
+    private var elementwise_pipeline:GPU.ComputePipeline? = null
+    private var binary_pipeline:GPU.ComputePipeline? = null
+
+    init(device:GPU.Device) { self.current_device = device }
+
+    func elementwise() GPU.ComputePipeline {
+        if var pipeline = self.elementwise_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Elementwise.hlsl"),
+            "Tensor float32 elementwise"
+        )
+        self.elementwise_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    func binary() GPU.ComputePipeline {
+        if var pipeline = self.binary_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Binary.hlsl"),
+            "Tensor float32 binary"
+        )
+        self.binary_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        return pipeline
+    }
+
+    module static func compilations() int { return GPUKernelCache.compilation_count }
+    module static func reset_compilations() { GPUKernelCache.compilation_count = 0 }
 }
+
+package func gpu_pipeline_compilations() int { return GPUKernelCache.compilations() }
+package func reset_gpu_pipeline_compilations() { GPUKernelCache.reset_compilations() }
 
 noncopyable class GPUStorage {
     private var current_device:GPU.Device
+    private var kernel_cache:GPUKernelCache
     private var current_buffer:GPU.Buffer? = null
     private var upload_buffer:GPU.TransferBuffer? = null
-    private var pipeline:GPU.ComputePipeline? = null
     private var completion:GPU.Fence? = null
     private var parent:GPUStorage? = null
+    private var other_parent:GPUStorage? = null
     private let current_dtype:DType
     private let element_count:int
 
     init(
         device:GPU.Device,
+        cache:GPUKernelCache,
         buffer:GPU.Buffer?,
         upload:GPU.TransferBuffer?,
-        pipeline:GPU.ComputePipeline?,
         completion:GPU.Fence?,
         parent:GPUStorage?,
+        other:GPUStorage?,
         dtype:DType,
         count:int
     ) {
         self.current_device = device
+        self.kernel_cache = cache
         self.current_buffer = buffer
         self.upload_buffer = upload
-        self.pipeline = pipeline
         self.completion = completion
         self.parent = parent
+        self.other_parent = other
         self.current_dtype = dtype
         self.element_count = count
     }
@@ -150,10 +185,10 @@ noncopyable class GPUStorage {
     drop {
         if var fence = self.completion { fence.wait() }
         self.completion = null
-        self.pipeline = null
         self.upload_buffer = null
         self.current_buffer = null
         self.parent = null
+        self.other_parent = null
     }
 
     func dtype() DType { return self.current_dtype }
@@ -247,7 +282,7 @@ noncopyable class GPUStorage {
     }
 
     func contiguous(layout:Layout) GPUStorage {
-        if layout.count() == 0 { return GPUStorage.empty(self.current_device, self.current_dtype) }
+        if layout.count() == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
         let width = self.current_dtype.byte_width()
         let byte_count = checked_byte_count(layout.count(), width)
         var output = self.current_device.buffer(GPU.BufferSettings(
@@ -271,37 +306,90 @@ noncopyable class GPUStorage {
         }
         transfer.finish()
         var completed = commands.submit_and_track()
-        return GPUStorage(self.current_device, output, null, null, completed, self, self.current_dtype, layout.count())
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, layout.count())
     }
 
-    func scalar(operation:ScalarOperation, value:float) GPUStorage {
-        if self.current_dtype != DType.float32() {
-            panic("Tensor GPU scalar arithmetic supports only dtype float32; call cpu().cast(DType.float32()).to(device)")
-        }
-        if self.element_count == 0 { return self }
+    func scalar(layout:Layout, operation:BinaryOperation, value:float) GPUStorage {
+        let count = layout.count()
+        var metadata = elementwise_metadata(binary_code(operation), layout)
+        if count == 0 { return self }
         var output = self.current_device.buffer(GPU.BufferSettings(
-            size:checked_byte_count(self.element_count, 4),
+            size:checked_byte_count(count, 4),
             usage:GPU.BufferUsage.storage(),
             name:"Tensor float32 result"
         ))
-        var pipeline = match operation {
-            add => self.current_device.compute_pipeline(GPU.ComputeProgram.hlsl(file:"Shaders/ScalarAdd.hlsl"), "Tensor float32 scalar add")
-            multiply => self.current_device.compute_pipeline(GPU.ComputeProgram.hlsl(file:"Shaders/ScalarMultiply.hlsl"), "Tensor float32 scalar multiply")
-        }
+        var pipeline = self.kernel_cache.elementwise()
         var commands = self.current_device.commands()
-        commands.compute_uniform(0, value)
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        commands.compute_uniform(1, value)
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
         compute.bind(pipeline)
         compute.storage_buffer(0, self.required_buffer())
-        compute.dispatch(self.element_count)
+        compute.dispatch(count)
         compute.finish()
         var completed = commands.submit_and_track()
-        return GPUStorage(self.current_device, output, null, pipeline, completed, self, self.current_dtype, self.element_count)
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
+    }
+
+    func unary(layout:Layout, operation:UnaryOperation) GPUStorage {
+        let count = layout.count()
+        var metadata = elementwise_metadata(unary_code(operation), layout)
+        if count == 0 { return self }
+        var output = self.current_device.buffer(GPU.BufferSettings(
+            size:checked_byte_count(count, 4),
+            usage:GPU.BufferUsage.storage(),
+            name:"Tensor float32 unary result"
+        ))
+        var pipeline = self.kernel_cache.elementwise()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        commands.compute_uniform(1, 0.0)
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
+    }
+
+    func binary(
+        other:GPUStorage,
+        left_layout:Layout,
+        right_layout:Layout,
+        output_shape:int[],
+        operation:BinaryOperation
+    ) GPUStorage {
+        let count = shape_product(output_shape)
+        var metadata = binary_metadata(binary_code(operation), output_shape, left_layout, right_layout)
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
+        var output = self.current_device.buffer(GPU.BufferSettings(
+            size:checked_byte_count(count, 4),
+            usage:GPU.BufferUsage.storage(),
+            name:"Tensor float32 binary result"
+        ))
+        var pipeline = self.kernel_cache.binary()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        compute.bind(pipeline)
+        compute.storage_buffer(0, self.required_buffer())
+        compute.storage_buffer(1, other.required_buffer())
+        compute.dispatch(count)
+        compute.finish()
+        var completed = commands.submit_and_track()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
     private static func empty(device:GPU.Device, dtype:DType) GPUStorage {
-        return GPUStorage(device, null, null, null, null, null, dtype, 0)
+        return GPUStorage(device, GPUKernelCache(device), null, null, null, null, null, dtype, 0)
+    }
+
+    private static func empty(device:GPU.Device, cache:GPUKernelCache, dtype:DType) GPUStorage {
+        return GPUStorage(device, cache, null, null, null, null, null, dtype, 0)
     }
 
     private static func finish_upload(device:GPU.Device, upload:GPU.TransferBuffer, dtype:DType, count:int) GPUStorage {
@@ -312,13 +400,107 @@ noncopyable class GPUStorage {
         transfer.upload(upload, buffer, byte_count)
         transfer.finish()
         var completed = commands.submit_and_track()
-        return GPUStorage(device, buffer, upload, null, completed, null, dtype, count)
+        return GPUStorage(device, GPUKernelCache(device), buffer, upload, completed, null, null, dtype, count)
     }
 
     private func required_buffer() GPU.Buffer {
         if var buffer = self.current_buffer { return buffer }
         panic("Tensor empty GPU storage has no buffer")
     }
+}
+
+func elementwise_metadata(operation:int, layout:Layout) uint8[] {
+    require_gpu_layout(layout)
+    var words:uint32[] = []
+    words.append(operation as uint32)
+    words.append(layout.count() as uint32)
+    words.append(layout.rank() as uint32)
+    words.append(layout.offset() as uint32)
+    append_padded_shape(words, layout.shape())
+    append_padded_strides(words, layout.strides(), layout.shape(), layout.rank())
+    while words.count() < 16 { words.append(0 as uint32) }
+    return uint32_bytes(words)
+}
+
+func binary_metadata(
+    operation:int,
+    output_shape:int[],
+    left:Layout,
+    right:Layout
+) uint8[] {
+    if output_shape.count() > 5 { panic("Tensor GPU broadcasting supports ranks up to 5") }
+    require_gpu_layout(left)
+    require_gpu_layout(right)
+    let count = shape_product(output_shape)
+    require_gpu_uint32(count, "element count")
+    var words:uint32[] = []
+    words.append(operation as uint32)
+    words.append(count as uint32)
+    words.append(output_shape.count() as uint32)
+    words.append(left.offset() as uint32)
+    words.append(right.offset() as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    words.append(0 as uint32)
+    append_padded_shape(words, output_shape)
+    while words.count() < 16 { words.append(0 as uint32) }
+    append_padded_broadcast_strides(words, left, output_shape.count())
+    while words.count() < 24 { words.append(0 as uint32) }
+    append_padded_broadcast_strides(words, right, output_shape.count())
+    while words.count() < 32 { words.append(0 as uint32) }
+    return uint32_bytes(words)
+}
+
+func require_gpu_layout(layout:Layout) {
+    if layout.rank() > 5 { panic("Tensor GPU elementwise computation supports ranks up to 5") }
+    require_gpu_uint32(layout.count(), "element count")
+    require_gpu_uint32(layout.offset(), "layout offset")
+    for dimension in layout.shape() { require_gpu_uint32(dimension, "shape dimension") }
+    for stride in layout.strides() { require_gpu_uint32(stride, "layout stride") }
+}
+
+func require_gpu_uint32(value:int, subject:str) {
+    if value < 0 || value > 4294967295 { panic("Tensor GPU $(subject) exceeds uint32") }
+}
+
+func append_padded_shape(words:&uint32[], shape:int[]) {
+    for value in shape { words.append(value as uint32) }
+    var axis = shape.count()
+    while axis < 8 { words.append(1 as uint32); axis++ }
+}
+
+func append_padded_strides(words:&uint32[], strides:int[], shape:int[], rank:int) {
+    var axis = 0
+    while axis < rank {
+        if shape[axis] == 1 { words.append(0 as uint32) }
+        else { words.append(strides[axis] as uint32) }
+        axis++
+    }
+    while axis < 8 { words.append(0 as uint32); axis++ }
+}
+
+func append_padded_broadcast_strides(words:&uint32[], layout:Layout, output_rank:int) {
+    let shape = layout.shape()
+    let strides = layout.strides()
+    let missing = output_rank - layout.rank()
+    var axis = 0
+    while axis < output_rank {
+        let input_axis = axis - missing
+        if input_axis < 0 || shape[input_axis] == 1 { words.append(0 as uint32) }
+        else { words.append(strides[input_axis] as uint32) }
+        axis++
+    }
+}
+
+func uint32_bytes(words:uint32[]) uint8[] {
+    var bytes:uint8[] = []
+    for word in words {
+        bytes.append((word & 255) as uint8)
+        bytes.append(((word >> 8) & 255) as uint8)
+        bytes.append(((word >> 16) & 255) as uint8)
+        bytes.append(((word >> 24) & 255) as uint8)
+    }
+    return bytes
 }
 
 func gather_values<T>(values:T[], layout:Layout) T[] {
