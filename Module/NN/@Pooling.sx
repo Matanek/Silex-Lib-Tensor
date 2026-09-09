@@ -1,0 +1,41 @@
+use Tensor
+
+public nocopy class MaxPool2D:Layer {
+    private let kernel_size:int
+    private let stride:int
+    private let padding:int
+
+    init(kernel_size:int, stride:int? = null, padding:int = 0) {
+        self.kernel_size = kernel_size
+        self.stride = nn_pool_stride(kernel_size, stride, padding, "MaxPool2D")
+        self.padding = padding
+    }
+
+    override func forward(input:Tensor) Tensor {
+        return input.max_pool2d(self.kernel_size, self.stride, self.padding)
+    }
+}
+public nocopy class AveragePool2D:Layer {
+    private let kernel_size:int
+    private let stride:int
+    private let padding:int
+
+    init(kernel_size:int, stride:int? = null, padding:int = 0) {
+        self.kernel_size = kernel_size
+        self.stride = nn_pool_stride(kernel_size, stride, padding, "AveragePool2D")
+        self.padding = padding
+    }
+
+    override func forward(input:Tensor) Tensor {
+        return input.average_pool2d(self.kernel_size, self.stride, self.padding)
+    }
+}
+
+func nn_pool_stride(kernel_size:int, requested:int?, padding:int, operation:str) int {
+    var stride = kernel_size
+    if let value = requested { stride = value }
+    if kernel_size <= 0 || stride <= 0 || padding < 0 {
+        panic("Tensor.NN.$(operation) requires positive kernel and stride with non-negative padding")
+    }
+    return stride
+}

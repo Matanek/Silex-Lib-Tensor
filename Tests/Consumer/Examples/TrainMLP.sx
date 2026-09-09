@@ -1,0 +1,28 @@
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func main() {
+    var inputs:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    var labels:int32[] = [0, 1, 1, 0]
+    let input = Tensor(inputs, [4, 2])
+    let target = Tensor(labels, [4])
+    var layers:NN.Layer[] = [
+        NN.Dense("hidden", 2, 8, 101),
+        NN.Activation.tanh(),
+        NN.Dense("classifier", 8, 2, 102)
+    ]
+    var model = NN.Sequential(layers)
+    var parameters = model.parameters()
+    var optimizer = Optim.Adam(parameters, learning_rate:0.04)
+
+    var iteration = 0
+    while iteration < 60 {
+        optimizer.zero_grad()
+        model.forward(input).cross_entropy(target, 1).backward()
+        optimizer.step()
+        iteration++
+    }
+    let loss = model.forward(input).detach().cross_entropy(target, 1).item()
+    print("final loss: $(loss)")
+}

@@ -1,0 +1,307 @@
+use STD.File
+use STD.Math
+use STD.Text
+use STD.Text.UTF8
+use Tensor
+
+struct CheckpointEntry {
+    let name:str
+    let shape:int[]
+    let values:float[]
+}
+
+public static class Checkpoint {
+    func save(model:Layer, path:str) {
+        var parameters = model.parameters()
+        require_checkpoint_names(parameters)
+        var document = "SILEX_TENSOR_CHECKPOINT\t1\n$(parameters.count())\n"
+        for parameter in parameters {
+            let value = parameter.value().detach().cpu()
+            let shape = checkpoint_ints(value.shape())
+            let values = checkpoint_floats(value.values(), parameter.name())
+            document += "$(checkpoint_name(parameter.name()))\tfloat32\t$(value.rank())\t$(shape)\t$(value.count())\t$(values)\n"
+        }
+        match File.write_all(path, document) {
+            success => {}
+            failure(error) => { panic("Tensor.NN.Checkpoint.save failed: $(error.detail)") }
+        }
+    }
+
+    func load(model:Layer, path:str, maximum_bytes:int = 16 * 1024 * 1024) {
+        if maximum_bytes <= 0 {
+            panic("Tensor.NN.Checkpoint.load requires positive maximum_bytes")
+        }
+        var content = ""
+        match File.read_text(path, maximum_bytes) {
+            success(value) => { content = value }
+            failure(error) => { panic("Tensor.NN.Checkpoint.load failed: $(error.detail)") }
+        }
+        let entries = parse_checkpoint(content)
+        var parameters = model.parameters()
+        require_checkpoint_names(parameters)
+        var replacements:Tensor[] = []
+        var parameter_index = 0
+        while parameter_index < parameters.count() {
+            var parameter = parameters[parameter_index]
+            if !parameter.value().is_cpu() {
+                panic("Tensor.NN.Checkpoint.load requires model.cpu before loading")
+            }
+            var found = -1
+            var entry_index = 0
+            while entry_index < entries.count() {
+                if entries[entry_index].name == parameter.name() { found = entry_index }
+                entry_index++
+            }
+            if found < 0 {
+                panic("Tensor.NN.Checkpoint.load is missing parameter '$(parameter.name())'")
+            }
+            if !checkpoint_shapes_equal(entries[found].shape, parameter.value().shape()) {
+                panic("Tensor.NN.Checkpoint.load shape mismatch for parameter '$(parameter.name())'")
+            }
+            replacements.append(Tensor(entries[found].values, entries[found].shape))
+            parameter_index++
+        }
+
+        var entry_index = 0
+        while entry_index < entries.count() {
+            var found = false
+            parameter_index = 0
+            while parameter_index < parameters.count() {
+                if parameters[parameter_index].name() == entries[entry_index].name { found = true }
+                parameter_index++
+            }
+            if !found {
+                panic("Tensor.NN.Checkpoint.load contains additional parameter '$(entries[entry_index].name)'")
+            }
+            entry_index++
+        }
+
+        parameter_index = 0
+        while parameter_index < parameters.count() {
+            parameters[parameter_index].apply(replacements[parameter_index])
+            parameter_index++
+        }
+    }
+}
+
+func require_checkpoint_names(parameters:Parameter[]) {
+    var index = 0
+    while index < parameters.count() {
+        var previous = 0
+        while previous < index {
+            if parameters[previous].name() == parameters[index].name() {
+                panic("Tensor.NN.Checkpoint requires unique parameter names")
+            }
+            previous++
+        }
+        index++
+    }
+}
+
+func checkpoint_name(name:str) str {
+    let bytes = UTF8.bytes(name)
+    let digits = "0123456789abcdef"
+    var result = ""
+    for byte in bytes {
+        let high = (byte as int) / 16
+        let low = (byte as int) % 16
+        result += Text.slice(digits, high, high + 1)
+        result += Text.slice(digits, low, low + 1)
+    }
+    return result
+}
+
+func checkpoint_ints(values:int[]) str {
+    if values.is_empty() { return "-" }
+    var result = ""
+    var index = 0
+    while index < values.count() {
+        if index > 0 { result += "," }
+        result += "$(values[index])"
+        index++
+    }
+    return result
+}
+
+func checkpoint_floats(values:float[], name:str) str {
+    var result = ""
+    var index = 0
+    while index < values.count() {
+        if !Math.is_finite(values[index]) {
+            panic("Tensor.NN.Checkpoint.save rejects non-finite parameter '$(name)'")
+        }
+        if index > 0 { result += "," }
+        result += "$(values[index])"
+        index++
+    }
+    return result
+}
+
+func parse_checkpoint(content:str) CheckpointEntry[] {
+    let lines = Text.split(Text.trim_end(content), "\n")
+    if lines.count() < 2 || lines[0] != "SILEX_TENSOR_CHECKPOINT\t1" {
+        panic("Tensor.NN.Checkpoint.load requires schema version 1")
+    }
+    let count = checkpoint_non_negative_int(lines[1], "parameter count")
+    if lines.count() != count + 2 {
+        panic("Tensor.NN.Checkpoint.load parameter count does not match the document")
+    }
+    var entries:CheckpointEntry[] = []
+    var index = 0
+    while index < count {
+        let fields = Text.split(lines[index + 2], "\t")
+        if fields.count() != 6 {
+            panic("Tensor.NN.Checkpoint.load requires six fields per parameter")
+        }
+        let name = checkpoint_decoded_name(fields[0])
+        if fields[1] != "float32" {
+            panic("Tensor.NN.Checkpoint.load supports dtype float32 only")
+        }
+        let rank = checkpoint_non_negative_int(fields[2], "rank")
+        let shape = checkpoint_shape(fields[3], rank)
+        let value_count = checkpoint_non_negative_int(fields[4], "value count")
+        let values = checkpoint_values(fields[5], value_count)
+        var previous = 0
+        while previous < entries.count() {
+            if entries[previous].name == name {
+                panic("Tensor.NN.Checkpoint.load rejects duplicate parameter names")
+            }
+            previous++
+        }
+        entries.append(CheckpointEntry(name:name, shape:shape, values:values))
+        index++
+    }
+    return entries
+}
+
+func checkpoint_decoded_name(value:str) str {
+    let encoded = UTF8.bytes(value)
+    if encoded.is_empty() || encoded.count() % 2 != 0 {
+        panic("Tensor.NN.Checkpoint.load contains an invalid parameter name")
+    }
+    var decoded:uint8[] = []
+    var index = 0
+    while index < encoded.count() {
+        let high = checkpoint_hex(encoded[index])
+        let low = checkpoint_hex(encoded[index + 1])
+        if high < 0 || low < 0 {
+            panic("Tensor.NN.Checkpoint.load contains an invalid parameter name")
+        }
+        decoded.append((high * 16 + low) as uint8)
+        index += 2
+    }
+    let view = @decoded[0:decoded.count()]
+    match UTF8.decode(view) {
+        success(name) => { return name }
+        failure(error) => { panic("Tensor.NN.Checkpoint.load contains an invalid UTF-8 parameter name") }
+    }
+}
+
+func checkpoint_hex(value:uint8) int {
+    if value >= 48 && value <= 57 { return (value - 48) as int }
+    if value >= 97 && value <= 102 { return (value - 97 + 10) as int }
+    return -1
+}
+
+func checkpoint_shape(value:str, rank:int) int[] {
+    if rank == 0 {
+        if value != "-" { panic("Tensor.NN.Checkpoint.load rank and shape disagree") }
+        return []
+    }
+    let fields = Text.split(value, ",")
+    if fields.count() != rank { panic("Tensor.NN.Checkpoint.load rank and shape disagree") }
+    var shape:int[] = []
+    for field in fields {
+        let dimension = checkpoint_non_negative_int(field, "shape dimension")
+        shape.append(dimension)
+    }
+    return shape
+}
+
+func checkpoint_values(value:str, count:int) float[] {
+    if count == 0 {
+        if value != "" { panic("Tensor.NN.Checkpoint.load value count disagrees") }
+        return []
+    }
+    let fields = Text.split(value, ",")
+    if fields.count() != count { panic("Tensor.NN.Checkpoint.load value count disagrees") }
+    var values:float[] = []
+    for field in fields {
+        if parsed = checkpoint_float(field) { values.append(parsed) }
+        else { panic("Tensor.NN.Checkpoint.load contains an invalid float32 value") }
+    }
+    return values
+}
+
+func checkpoint_non_negative_int(value:str, role:str) int {
+    let bytes = UTF8.bytes(value)
+    if bytes.is_empty() { panic("Tensor.NN.Checkpoint.load contains an invalid $(role)") }
+    var result = 0
+    for byte in bytes {
+        if byte < 48 || byte > 57 {
+            panic("Tensor.NN.Checkpoint.load contains an invalid $(role)")
+        }
+        let digit = (byte - 48) as int
+        if result > (9223372036854775807 - digit) / 10 {
+            panic("Tensor.NN.Checkpoint.load $(role) overflows int")
+        }
+        result = result * 10 + digit
+    }
+    return result
+}
+
+func checkpoint_float(text:str) float? {
+    let values = UTF8.bytes(text)
+    if values.is_empty() { return null }
+    var index = 0
+    var negative = false
+    if values[index] == 45 { negative = true; index++ }
+    var result:float = 0.0
+    var digits = 0
+    while index < values.count() && values[index] >= 48 && values[index] <= 57 {
+        result = result * 10.0 + (values[index] - 48) as float
+        index++; digits++
+    }
+    if index < values.count() && values[index] == 46 {
+        index++
+        var place:float = 0.1
+        while index < values.count() && values[index] >= 48 && values[index] <= 57 {
+            result += (values[index] - 48) as float * place
+            place *= 0.1
+            index++; digits++
+        }
+    }
+    if digits == 0 { return null }
+    var exponent = 0
+    var exponent_negative = false
+    if index < values.count() && (values[index] == 101 || values[index] == 69) {
+        index++
+        if index < values.count() && values[index] == 45 { exponent_negative = true; index++ }
+        elif index < values.count() && values[index] == 43 { index++ }
+        let start = index
+        while index < values.count() && values[index] >= 48 && values[index] <= 57 {
+            exponent = exponent * 10 + (values[index] - 48) as int
+            if exponent > 400 { return null }
+            index++
+        }
+        if start == index { return null }
+    }
+    if index != values.count() { return null }
+    var factor:float = 1.0
+    var power = 0
+    while power < exponent { factor *= 10.0; power++ }
+    if exponent_negative { result /= factor } else { result *= factor }
+    if negative { result = -result }
+    if !Math.is_finite(result) { return null }
+    return result
+}
+
+func checkpoint_shapes_equal(left:int[], right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}

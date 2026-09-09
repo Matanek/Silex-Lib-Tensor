@@ -1,0 +1,7 @@
+use Tensor.NN
+
+func main() {
+    var layers:NN.Layer[] = [NN.Dense("dense", 2, 1, 7)]
+    var model = NN.Sequential(layers)
+    NN.Checkpoint.load(model, "Fixtures/CheckpointDType.sxtc")
+}

@@ -1,0 +1,37 @@
+use GFX.GPU
+use STD.Math
+use STD.Randomizer
+use Tensor
+
+public nocopy class Dense:Layer {
+    private let input_features:int
+    private let output_features:int
+    private var weight:Parameter
+    private var bias:Parameter
+
+    init(name:str, input_features:int, output_features:int, seed:int) {
+        if input_features <= 0 || output_features <= 0 {
+            panic("Tensor.NN.Dense requires positive input and output feature counts")
+        }
+        var randomizer = Randomizer(seed)
+        let bound = Math.sqrt(6.0 / ((input_features + output_features) as float))
+        self.input_features = input_features
+        self.output_features = output_features
+        self.weight = Parameter(
+            name + ".weight",
+            Tensor.uniform([input_features, output_features], randomizer, -bound, bound)
+        )
+        self.bias = Parameter(name + ".bias", Tensor.zeros([output_features]))
+    }
+
+    override func forward(input:Tensor) Tensor {
+        if input.rank() < 2 || input.shape()[input.rank() - 1] != self.input_features {
+            panic("Tensor.NN.Dense.forward requires the last input dimension to match input_features")
+        }
+        return input.matmul(self.weight.value()).add(self.bias.value())
+    }
+
+    override func parameters() Parameter[] { return [self.weight, self.bias] }
+    override func to(device:GPU.Device) { self.weight.to(device); self.bias.to(device) }
+    override func cpu() { self.weight.cpu(); self.bias.cpu() }
+}

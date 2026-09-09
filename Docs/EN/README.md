@@ -332,6 +332,49 @@ parameter may call `to(device)` or `cpu()` after `zero_grad()` while its
 optimizer has not created state yet. Once state exists, the next step rejects
 a placement change atomically instead of silently migrating part of a model.
 
+## Compose and train a network
+
+`Tensor.NN.Layer` is the common layer contract. `Sequential` executes layers
+in order and recursively collects their named parameters. The 0.1.0 layers are
+`Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`, `Dropout`,
+`LayerNorm`, and `SimpleRNN`. Activations remain Tensor operations;
+`Activation.relu()`, `sigmoid()`, and `tanh()` only adapt them for composition.
+
+```sx
+var layers:NN.Layer[] = [
+    NN.Dense("hidden", 2, 8, 101),
+    NN.Activation.tanh(),
+    NN.Dense("classifier", 8, 2, 102)
+]
+var model = NN.Sequential(layers)
+var parameters = model.parameters()
+var optimizer = Optim.Adam(parameters, learning_rate:0.04)
+
+optimizer.zero_grad()
+let loss = model.forward(input).cross_entropy(target, 1)
+loss.backward()
+optimizer.step()
+```
+
+`Dense` stores weights as `[inputs, outputs]`. `Conv2D` expects NCHW and stores
+OIHW kernels. `SimpleRNN` accepts `[batch, time, features]`, unfolds a
+unidirectional tanh recurrence, and returns the final state. `train()` and
+`eval()` propagate through `Sequential`; only `Dropout` changes behavior.
+`model.to(device)` and `model.cpu()` move every parameter after `zero_grad()`
+under the optimizer placement rules.
+
+`NN.Checkpoint.save(model, path)` writes a deterministic schema-1 text document
+with UTF-8 names, dtype, shapes, and values. Saving a GPU model necessarily
+performs the explicit readback into the file. `NN.Checkpoint.load(model, path)`
+validates the document and complete parameter set before the first mutation.
+The model must be on the CPU while loading; explicitly call `model.to(device)`
+afterwards when needed. A checkpoint contains no code, autograd graph, or
+optimizer state.
+
+Custom composition may remain an application type or function assembling the
+public Tensor operations. Version 0.1.0 does not provide BatchNorm, grouped or
+transposed convolution, LSTM/GRU, embeddings, or attention.
+
 ## Move to the GPU
 
 Create the device with `GFX.GPU`, then place the tensor explicitly:

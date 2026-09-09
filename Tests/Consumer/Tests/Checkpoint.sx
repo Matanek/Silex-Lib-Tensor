@@ -1,0 +1,59 @@
+use STD.File
+use STD.FileSystem
+use STD.Math
+use Tensor
+use Tensor.NN
+
+func checkpoint_values_match(left:float[], right:float[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if Math.abs(left[index] - right[index]) > 0.000001 { return false }
+        index++
+    }
+    return true
+}
+func checkpoint_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Dense("hidden", 2, 3, seed),
+        NN.Activation.tanh(),
+        NN.Dense("output", 3, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+test "save deterministic parameters and restore a fresh model" {
+    let first_path = "/private/tmp/tensor-part11-checkpoint-a.sxtc"
+    let second_path = "/private/tmp/tensor-part11-checkpoint-b.sxtc"
+    let ignored_first = FileSystem.remove_file(first_path)
+    let ignored_second = FileSystem.remove_file(second_path)
+    var source = checkpoint_model(31)
+    var restored = checkpoint_model(97)
+    var input_values:float[] = [1.0, -2.0, 0.5, 0.25]
+    let input = Tensor(input_values, [2, 2])
+    let expected = source.forward(input).detach().values()
+
+    NN.Checkpoint.save(source, first_path)
+    NN.Checkpoint.save(source, second_path)
+    match File.read_text(first_path, 1_000_000) {
+        success(first) => {
+            match File.read_text(second_path, 1_000_000) {
+                success(second) => { assert(first == second) }
+                failure(error) => { panic(error.detail) }
+            }
+        }
+        failure(error) => { panic(error.detail) }
+    }
+
+    NN.Checkpoint.load(restored, first_path)
+    let actual = restored.forward(input).detach().values()
+    assert(checkpoint_values_match(actual, expected))
+    match FileSystem.remove_file(first_path) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+    match FileSystem.remove_file(second_path) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+}

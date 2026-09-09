@@ -1,0 +1,23 @@
+use GFX.GPU
+use Tensor
+
+enum ActivationKind { relu; sigmoid; tanh }
+
+public nocopy class Activation:Layer {
+    private let kind:ActivationKind
+
+    private init(kind:ActivationKind) { self.kind = kind }
+
+    static func relu() Activation { return Activation(ActivationKind.relu) }
+    static func sigmoid() Activation { return Activation(ActivationKind.sigmoid) }
+    static func tanh() Activation { return Activation(ActivationKind.tanh) }
+
+    override func forward(input:Tensor) Tensor {
+        return match self.kind {
+            relu => input.relu()
+            sigmoid => input.sigmoid()
+            tanh => input.tanh()
+        }
+    }
+
+}

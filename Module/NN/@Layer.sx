@@ -1,0 +1,23 @@
+use GFX.GPU
+use Tensor
+
+public nocopy class Layer {
+    // The current language infers receiver mutation from method bodies and has
+    // no explicit mutating contract for a virtual no-op. Keep this private
+    // marker until such a contract can be declared directly; it lets stateful
+    // layers override forward/train/eval and parameterized layers override
+    // placement without exposing that compiler detail in the public API.
+    private var mutable_contract:bool
+
+    package init() { self.mutable_contract = false }
+
+    func forward(input:Tensor) Tensor {
+        self.mutable_contract = self.mutable_contract
+        panic("Tensor.NN.Layer.forward must be implemented by a concrete layer")
+    }
+    func parameters() Parameter[] { return [] }
+    func train() { self.mutable_contract = self.mutable_contract }
+    func eval() { self.mutable_contract = self.mutable_contract }
+    func to(device:GPU.Device) { self.mutable_contract = self.mutable_contract }
+    func cpu() { self.mutable_contract = self.mutable_contract }
+}

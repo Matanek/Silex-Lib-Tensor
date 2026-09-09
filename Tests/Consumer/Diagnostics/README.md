@@ -72,5 +72,10 @@ Every fixture must fail and mention its intended contract:
   non-finite global norm before changing any gradient;
 - `OptimizerStatePlacement.sx`: moving a parameter after Adam initialized its
   state fails before an update instead of partially migrating that state;
+- `DenseDimensions.sx`: a dense layer validates the final input dimension;
+- `CheckpointSchema.sx`, `CheckpointMissing.sx`,
+  `CheckpointAdditional.sx`, `CheckpointDType.sx`, and `CheckpointShape.sx`:
+  checkpoint schema and the complete named parameter contract are validated
+  before any model value is replaced;
 - transposed GPU views are covered as successful stride-aware computation in
   `Tests/GPUCompute.sx`.

@@ -1,0 +1,34 @@
+use STD.Math
+use Tensor
+
+public nocopy class Dropout:Layer {
+    private let probability:float
+    private let seed:int
+    private var training:bool
+    private var iteration:int
+
+    init(probability:float, seed:int) {
+        if !Math.is_finite(probability) || probability < 0.0 || probability >= 1.0 {
+            panic("Tensor.NN.Dropout requires 0 <= probability < 1")
+        }
+        if seed < 0 || seed > 4294967295 {
+            panic("Tensor.NN.Dropout seed must fit uint32")
+        }
+        self.probability = probability
+        self.seed = seed
+        self.training = true
+        self.iteration = 0
+    }
+
+    override func forward(input:Tensor) Tensor {
+        let output = input.dropout(
+            self.probability, self.seed,
+            iteration:self.iteration, training:self.training
+        )
+        if self.training { self.iteration++ }
+        return output
+    }
+
+    override func train() { self.training = true }
+    override func eval() { self.training = false }
+}

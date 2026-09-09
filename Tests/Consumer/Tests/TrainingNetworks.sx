@@ -1,0 +1,202 @@
+use STD.FileSystem
+use STD.Math
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func network_accuracy(logits:Tensor, targets:int32[], classes:int) float {
+    let values = logits.detach().values()
+    var correct = 0
+    var row = 0
+    while row < targets.count() {
+        var predicted = 0
+        var column = 1
+        while column < classes {
+            if values[row * classes + column] > values[row * classes + predicted] {
+                predicted = column
+            }
+            column++
+        }
+        if predicted == targets[row] as int { correct++ }
+        row++
+    }
+    return (correct as float) / (targets.count() as float)
+}
+
+func network_values_match(left:float[], right:float[], tolerance:float = 0.00001) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if Math.abs(left[index] - right[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+func remove_network_checkpoint(path:str) {
+    match FileSystem.remove_file(path) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+func mlp_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Dense("hidden", 2, 8, seed),
+        NN.Activation.tanh(),
+        NN.Dense("classifier", 8, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+func cnn_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Conv2D("features", 1, 4, 2, seed),
+        NN.Activation.relu(),
+        NN.MaxPool2D(2, stride:1),
+        NN.Flatten(),
+        NN.Dense("classifier", 16, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+func rnn_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.SimpleRNN("memory", 1, 6, seed),
+        NN.Dense("classifier", 6, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+test "repeat one seeded training trajectory" {
+    var input_values:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    var target_values:int32[] = [0, 1, 1, 0]
+    let input = Tensor(input_values, [4, 2])
+    let target = Tensor(target_values, [4])
+    var first = mlp_model(71)
+    var second = mlp_model(71)
+    var first_parameters = first.parameters()
+    var second_parameters = second.parameters()
+    var first_optimizer = Optim.Adam(first_parameters, learning_rate:0.03)
+    var second_optimizer = Optim.Adam(second_parameters, learning_rate:0.03)
+    var iteration = 0
+    while iteration < 16 {
+        first_optimizer.zero_grad()
+        second_optimizer.zero_grad()
+        let first_loss = first.forward(input).cross_entropy(target, 1)
+        let second_loss = second.forward(input).cross_entropy(target, 1)
+        assert(first_loss.item() == second_loss.item())
+        first_loss.backward()
+        second_loss.backward()
+        first_optimizer.step()
+        second_optimizer.step()
+        iteration++
+    }
+    var index = 0
+    while index < first_parameters.count() {
+        assert(network_values_match(
+            first_parameters[index].value().detach().values(),
+            second_parameters[index].value().detach().values(),
+            0.0
+        ))
+        index++
+    }
+}
+
+test "train checkpoint and restore a deterministic MLP" {
+    let path = "/private/tmp/tensor-part11-mlp.sxtc"
+    let ignored = FileSystem.remove_file(path)
+    var input_values:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    var target_values:int32[] = [0, 1, 1, 0]
+    let input = Tensor(input_values, [4, 2])
+    let target = Tensor(target_values, [4])
+    var model = mlp_model(101)
+    var parameters = model.parameters()
+    var optimizer = Optim.Adam(parameters, learning_rate:0.04)
+    let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
+    var iteration = 0
+    while iteration < 160 {
+        optimizer.zero_grad()
+        model.forward(input).cross_entropy(target, 1).backward()
+        optimizer.step()
+        iteration++
+    }
+    let logits = model.forward(input).detach()
+    let final_loss = logits.cross_entropy(target, 1).item()
+    assert(final_loss < initial_loss * 0.2)
+    assert(network_accuracy(logits, target_values, 2) == 1.0)
+    NN.Checkpoint.save(model, path)
+    var restored = mlp_model(777)
+    NN.Checkpoint.load(restored, path)
+    assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
+    remove_network_checkpoint(path)
+}
+
+test "train checkpoint and restore a deterministic CNN" {
+    let path = "/private/tmp/tensor-part11-cnn.sxtc"
+    let ignored = FileSystem.remove_file(path)
+    var input_values:float[] = [
+        1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,
+        1.0, 1.0, 1.0, 1.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  1.0, 1.0, 1.0, 1.0
+    ]
+    var target_values:int32[] = [0, 0, 1, 1]
+    let input = Tensor(input_values, [4, 1, 4, 4])
+    let target = Tensor(target_values, [4])
+    var model = cnn_model(211)
+    var parameters = model.parameters()
+    var optimizer = Optim.Adam(parameters, learning_rate:0.03)
+    let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
+    var iteration = 0
+    while iteration < 120 {
+        optimizer.zero_grad()
+        model.forward(input).cross_entropy(target, 1).backward()
+        optimizer.step()
+        iteration++
+    }
+    let logits = model.forward(input).detach()
+    let final_loss = logits.cross_entropy(target, 1).item()
+    assert(final_loss < initial_loss * 0.25)
+    assert(network_accuracy(logits, target_values, 2) == 1.0)
+    NN.Checkpoint.save(model, path)
+    var restored = cnn_model(888)
+    NN.Checkpoint.load(restored, path)
+    assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
+    remove_network_checkpoint(path)
+}
+
+test "train clip checkpoint and restore a deterministic recurrent classifier" {
+    let path = "/private/tmp/tensor-part11-rnn.sxtc"
+    let ignored = FileSystem.remove_file(path)
+    var input_values:float[] = [
+        -1.0, 0.0, 1.0,
+        -0.5, 0.0, 0.5,
+        1.0, 0.0, -1.0,
+        0.5, 0.0, -0.5
+    ]
+    var target_values:int32[] = [0, 0, 1, 1]
+    let input = Tensor(input_values, [4, 3, 1])
+    let target = Tensor(target_values, [4])
+    var model = rnn_model(307)
+    var parameters = model.parameters()
+    var optimizer = Optim.Adam(parameters, learning_rate:0.025)
+    let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
+    var iteration = 0
+    while iteration < 160 {
+        optimizer.zero_grad()
+        model.forward(input).cross_entropy(target, 1).backward()
+        let norm = optimizer.clip_grad_norm(1.0)
+        optimizer.step()
+        iteration++
+    }
+    let logits = model.forward(input).detach()
+    let final_loss = logits.cross_entropy(target, 1).item()
+    assert(final_loss < initial_loss * 0.25)
+    assert(network_accuracy(logits, target_values, 2) == 1.0)
+    NN.Checkpoint.save(model, path)
+    var restored = rnn_model(999)
+    NN.Checkpoint.load(restored, path)
+    assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
+    remove_network_checkpoint(path)
+}

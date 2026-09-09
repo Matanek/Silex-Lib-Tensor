@@ -1,0 +1,46 @@
+use GFX.GPU
+use STD.Math
+use Tensor
+
+public nocopy class LayerNorm:Layer {
+    private let normalized_shape:int[]
+    private let epsilon:float
+    private var scale:Parameter
+    private var offset:Parameter
+
+    init(name:str, normalized_shape:int[], epsilon:float = 0.00001) {
+        if normalized_shape.is_empty() {
+            panic("Tensor.NN.LayerNorm requires a non-empty normalized shape")
+        }
+        for dimension in normalized_shape {
+            if dimension <= 0 { panic("Tensor.NN.LayerNorm normalized dimensions must be positive") }
+        }
+        if !Math.is_finite(epsilon) || epsilon <= 0.0 {
+            panic("Tensor.NN.LayerNorm requires finite epsilon > 0")
+        }
+        self.normalized_shape = normalized_shape
+        self.epsilon = epsilon
+        self.scale = Parameter(name + ".weight", Tensor.ones(normalized_shape))
+        self.offset = Parameter(name + ".bias", Tensor.zeros(normalized_shape))
+    }
+
+    override func forward(input:Tensor) Tensor {
+        if input.rank() < self.normalized_shape.count() {
+            panic("Tensor.NN.LayerNorm.forward requires its normalized trailing shape")
+        }
+        var axis = 0
+        while axis < self.normalized_shape.count() {
+            let input_axis = input.rank() - self.normalized_shape.count() + axis
+            if input.shape()[input_axis] != self.normalized_shape[axis] {
+                panic("Tensor.NN.LayerNorm.forward requires its normalized trailing shape")
+            }
+            axis++
+        }
+        return input.layer_norm(self.normalized_shape.count(), self.epsilon)
+            .multiply(self.scale.value()).add(self.offset.value())
+    }
+
+    override func parameters() Parameter[] { return [self.scale, self.offset] }
+    override func to(device:GPU.Device) { self.scale.to(device); self.offset.to(device) }
+    override func cpu() { self.scale.cpu(); self.offset.cpu() }
+}

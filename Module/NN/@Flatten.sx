@@ -1,0 +1,19 @@
+use Tensor
+
+public nocopy class Flatten:Layer {
+    init():super() {}
+
+    override func forward(input:Tensor) Tensor {
+        if input.rank() < 2 { panic("Tensor.NN.Flatten.forward requires a batch axis") }
+        var features = 1
+        var axis = 1
+        while axis < input.rank() {
+            if input.shape()[axis] != 0 && features > 9223372036854775807 / input.shape()[axis] {
+                panic("Tensor.NN.Flatten.forward feature count overflows int")
+            }
+            features *= input.shape()[axis]
+            axis++
+        }
+        return input.contiguous().reshape([input.shape()[0], features])
+    }
+}

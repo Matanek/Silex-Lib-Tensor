@@ -1,0 +1,80 @@
+use GFX.GPU
+use STD.Math
+use STD.Randomizer
+use Tensor
+
+public nocopy class SimpleRNN:Layer {
+    private let input_features:int
+    private let hidden_features:int
+    private var input_weight:Parameter
+    private var recurrent_weight:Parameter
+    private var bias:Parameter
+
+    init(name:str, input_features:int, hidden_features:int, seed:int) {
+        if input_features <= 0 || hidden_features <= 0 {
+            panic("Tensor.NN.SimpleRNN requires positive input and hidden feature counts")
+        }
+        var randomizer = Randomizer(seed)
+        self.input_features = input_features
+        self.hidden_features = hidden_features
+        self.input_weight = Parameter(
+            name + ".input_weight",
+            nn_xavier([input_features, hidden_features], input_features, hidden_features, randomizer)
+        )
+        self.recurrent_weight = Parameter(
+            name + ".recurrent_weight",
+            nn_xavier([hidden_features, hidden_features], hidden_features, hidden_features, randomizer)
+        )
+        self.bias = Parameter(name + ".bias", Tensor.zeros([hidden_features]))
+    }
+
+    override func forward(input:Tensor) Tensor { return self.forward(input, null) }
+
+    func forward(input:Tensor, initial_state:Tensor?) Tensor {
+        if input.rank() != 3 || input.shape()[2] != self.input_features {
+            panic("Tensor.NN.SimpleRNN.forward requires [batch, time, input_features]")
+        }
+        var state = input.autograd_constant_shape(
+            [input.shape()[0], self.hidden_features], 0.0
+        )
+        if let requested = initial_state {
+            if requested.dtype() != input.dtype() ||
+                requested.rank() != 2 ||
+                requested.shape()[0] != input.shape()[0] ||
+                requested.shape()[1] != self.hidden_features ||
+                !requested.same_optimizer_placement(input) {
+                panic("Tensor.NN.SimpleRNN.forward initial state must match batch, hidden size, dtype and placement")
+            }
+            state = requested
+        }
+        var step = 0
+        while step < input.shape()[1] {
+            let current = input.select(1, step)
+            state = current.matmul(self.input_weight.value())
+                .add(state.matmul(self.recurrent_weight.value()))
+                .add(self.bias.value()).tanh()
+            step++
+        }
+        return state
+    }
+
+    override func parameters() Parameter[] {
+        return [self.input_weight, self.recurrent_weight, self.bias]
+    }
+    override func to(device:GPU.Device) {
+        self.input_weight.to(device)
+        self.recurrent_weight.to(device)
+        self.bias.to(device)
+    }
+    override func cpu() {
+        self.input_weight.cpu()
+        self.recurrent_weight.cpu()
+        self.bias.cpu()
+    }
+}
+func nn_xavier(
+    shape:int[], input_features:int, output_features:int, randomizer:Randomizer
+) Tensor {
+    let bound = Math.sqrt(6.0 / ((input_features + output_features) as float))
+    return Tensor.uniform(shape, randomizer, -bound, bound)
+}

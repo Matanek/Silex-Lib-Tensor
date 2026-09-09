@@ -1,0 +1,125 @@
+use GFX.GPU
+use STD.FileSystem
+use STD.Math
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func cnn_gpu_match(left:float[], right:float[], tolerance:float = 0.008) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if Math.abs(left[index] - right[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+func cnn_gpu_gradient(parameter:NN.Parameter) Tensor {
+    if let gradient = parameter.gradient() { return gradient }
+    panic("expected a CNN gradient")
+}
+
+func cnn_gpu_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Conv2D("features", 1, 4, 2, seed),
+        NN.Activation.relu(),
+        NN.MaxPool2D(2, stride:1),
+        NN.Flatten(),
+        NN.Dense("classifier", 16, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+func cnn_gpu_accuracy(logits:Tensor, targets:int32[]) float {
+    let values = logits.detach().cpu().values()
+    var correct = 0
+    var row = 0
+    while row < targets.count() {
+        var predicted = 0
+        if values[row * 2 + 1] > values[row * 2] { predicted = 1 }
+        if predicted == targets[row] as int { correct++ }
+        row++
+    }
+    return (correct as float) / (targets.count() as float)
+}
+
+test "train compare and restore the CNN on GPU" {
+    if !GPU.Device.is_supported() { return }
+    let path = "/private/tmp/tensor-part11-gpu-cnn.sxtc"
+    let ignored = FileSystem.remove_file(path)
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input_values:float[] = [
+        1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,
+        1.0, 1.0, 1.0, 1.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0,  1.0, 1.0, 1.0, 1.0
+    ]
+    var target_values:int32[] = [0, 0, 1, 1]
+    let cpu_input = Tensor(input_values, [4, 1, 4, 4])
+    let cpu_target = Tensor(target_values, [4])
+    let gpu_input = cpu_input.to(device)
+    let gpu_target = cpu_target.to(device)
+    var cpu = cnn_gpu_model(211)
+    var gpu = cnn_gpu_model(211)
+    gpu.to(device)
+    var cpu_parameters = cpu.parameters()
+    var gpu_parameters = gpu.parameters()
+    var cpu_optimizer = Optim.Adam(cpu_parameters, learning_rate:0.05)
+    var gpu_optimizer = Optim.Adam(gpu_parameters, learning_rate:0.05)
+    let initial = gpu.forward(gpu_input).detach().cross_entropy(gpu_target, 1).cpu().item()
+    var iteration = 0
+    while iteration < 16 {
+        cpu_optimizer.zero_grad()
+        gpu_optimizer.zero_grad()
+        device.reset_command_stats()
+        let cpu_loss = cpu.forward(cpu_input).cross_entropy(cpu_target, 1)
+        let gpu_loss = gpu.forward(gpu_input).cross_entropy(gpu_target, 1)
+        cpu_loss.backward()
+        gpu_loss.backward()
+        let backward_stats = device.command_stats()
+        assert(backward_stats.uploads == 0 && backward_stats.downloads == 0)
+        let checkpoint = iteration == 0 || iteration == 8 || iteration == 15
+        if checkpoint {
+            assert(Math.abs(cpu_loss.detach().item() - gpu_loss.detach().cpu().item()) < 0.008)
+            var index = 0
+            while index < cpu_parameters.count() {
+                assert(cnn_gpu_match(
+                    cnn_gpu_gradient(cpu_parameters[index]).detach().values(),
+                    cnn_gpu_gradient(gpu_parameters[index]).detach().cpu().values()
+                ))
+                index++
+            }
+        }
+        device.reset_command_stats()
+        cpu_optimizer.step()
+        gpu_optimizer.step()
+        let step_stats = device.command_stats()
+        assert(step_stats.uploads == 0 && step_stats.downloads == 0)
+        if checkpoint {
+            var index = 0
+            while index < cpu_parameters.count() {
+                assert(cnn_gpu_match(
+                    cpu_parameters[index].value().detach().values(),
+                    gpu_parameters[index].value().detach().cpu().values()
+                ))
+                index++
+            }
+        }
+        iteration++
+    }
+    let logits = gpu.forward(gpu_input).detach()
+    let loss = logits.cross_entropy(gpu_target, 1).cpu().item()
+    assert(loss < initial * 0.5)
+    assert(cnn_gpu_accuracy(logits, target_values) == 1.0)
+    NN.Checkpoint.save(gpu, path)
+    var restored = cnn_gpu_model(902)
+    NN.Checkpoint.load(restored, path)
+    restored.to(device)
+    assert(cnn_gpu_match(
+        restored.forward(gpu_input).detach().cpu().values(), logits.cpu().values()
+    ))
+    match FileSystem.remove_file(path) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+}

@@ -341,6 +341,50 @@ l'optimiseur n'a encore créé aucun état. Après initialisation de cet état, 
 changement de placement est refusé atomiquement à l'étape suivante plutôt que
 de migrer silencieusement une partie du modèle.
 
+## Composer et entraîner un réseau
+
+`Tensor.NN.Layer` est le contrat commun des couches et `Sequential` les exécute
+dans l'ordre tout en collectant récursivement leurs paramètres nommés. Les
+couches 0.1.0 sont `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`,
+`Dropout`, `LayerNorm` et `SimpleRNN`. Les activations restent des opérations
+Tensor ; `Activation.relu()`, `sigmoid()` et `tanh()` servent uniquement à les
+placer dans une composition.
+
+```sx
+var layers:NN.Layer[] = [
+    NN.Dense("hidden", 2, 8, 101),
+    NN.Activation.tanh(),
+    NN.Dense("classifier", 8, 2, 102)
+]
+var model = NN.Sequential(layers)
+var parameters = model.parameters()
+var optimizer = Optim.Adam(parameters, learning_rate:0.04)
+
+optimizer.zero_grad()
+let loss = model.forward(input).cross_entropy(target, 1)
+loss.backward()
+optimizer.step()
+```
+
+Les poids de `Dense` suivent `[entrées, sorties]`. `Conv2D` attend NCHW et
+stocke ses noyaux OIHW. `SimpleRNN` accepte `[batch, temps, features]`, déroule
+une récurrence tanh unidirectionnelle et retourne l'état final. `train()` et
+`eval()` se propagent dans `Sequential` ; seul `Dropout` change alors son
+comportement. `model.to(device)` et `model.cpu()` déplacent tous les paramètres
+après `zero_grad()` selon les règles de l'optimiseur.
+
+`NN.Checkpoint.save(model, path)` écrit un document texte déterministe de
+schéma 1 avec noms UTF-8, dtype, formes et valeurs. La sauvegarde d'un modèle
+GPU effectue nécessairement le readback explicite vers le fichier.
+`NN.Checkpoint.load(model, path)` valide le document et l'ensemble complet des
+paramètres avant la première mutation. Le modèle doit être sur CPU pendant la
+lecture ; appelez ensuite explicitement `model.to(device)` si nécessaire. Le
+checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.
+
+La composition personnalisée peut rester un type ou une fonction applicative
+qui assemble les opérations Tensor publiques. La version 0.1.0 ne fournit pas
+BatchNorm, convolution groupée ou transposée, LSTM/GRU, embedding ni attention.
+
 ## Passer sur GPU
 
 Créez le device avec `GFX.GPU`, puis placez explicitement le tenseur :

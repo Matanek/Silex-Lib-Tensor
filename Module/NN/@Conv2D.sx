@@ -1,0 +1,49 @@
+use GFX.GPU
+use STD.Randomizer
+use Tensor
+
+public nocopy class Conv2D:Layer {
+    private let input_channels:int
+    private let stride:int
+    private let padding:int
+    private var weight:Parameter
+    private var bias:Parameter
+
+    init(
+        name:str, input_channels:int, output_channels:int,
+        kernel_size:int, seed:int, stride:int = 1, padding:int = 0
+    ) {
+        if input_channels <= 0 || output_channels <= 0 || kernel_size <= 0 {
+            panic("Tensor.NN.Conv2D requires positive channel and kernel sizes")
+        }
+        if stride <= 0 || padding < 0 {
+            panic("Tensor.NN.Conv2D requires positive stride and non-negative padding")
+        }
+        var randomizer = Randomizer(seed)
+        self.input_channels = input_channels
+        self.stride = stride
+        self.padding = padding
+        self.weight = Parameter(
+            name + ".weight",
+            Tensor.he_uniform(
+                [output_channels, input_channels, kernel_size, kernel_size],
+                randomizer
+            )
+        )
+        self.bias = Parameter(name + ".bias", Tensor.zeros([output_channels]))
+    }
+
+    override func forward(input:Tensor) Tensor {
+        if input.rank() != 4 || input.shape()[1] != self.input_channels {
+            panic("Tensor.NN.Conv2D.forward requires NCHW input with input_channels")
+        }
+        return input.conv2d(
+            self.weight.value(), self.bias.value(),
+            stride:self.stride, padding:self.padding
+        )
+    }
+
+    override func parameters() Parameter[] { return [self.weight, self.bias] }
+    override func to(device:GPU.Device) { self.weight.to(device); self.bias.to(device) }
+    override func cpu() { self.weight.cpu(); self.bias.cpu() }
+}
