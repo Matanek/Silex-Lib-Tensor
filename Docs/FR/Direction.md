@@ -1,4 +1,4 @@
-# Direction de Tensor 0.1.0
+# Direction de Tensor 0.2.0
 
 Tensor propose un calcul multidimensionnel explicite pour Silex. Une même
 valeur immuable se déplace entre CPU et GPU, tandis que l'entraînement eager
@@ -23,7 +23,7 @@ fonctionnelles prévisibles. Tensor ne fournit toutefois ni `jit`, ni `vmap`, ni
 transformation fonctionnelle générale de gradient : l'autodifférentiation reste
 eager et attachée aux opérations exécutées.
 
-## Ce que garantit la version 0.1.0
+## Ce que garantit la version 0.2.0
 
 - neuf dtypes denses sur CPU, avec vues, broadcasting, réductions et algèbre
   linéaire contrôlée ;
@@ -39,7 +39,7 @@ ne l'étendent pas automatiquement lorsque leur propre API évolue.
 
 ## Limites volontaires
 
-La version 0.1.0 n'inclut pas le calcul entier GPU, les tenseurs clairsemés, la
+La version 0.2.0 n'inclut pas le calcul entier GPU, les tenseurs clairsemés, la
 quantification, les graphes différés, la distribution multi-device, les
 dérivées supérieures, AdamW, BatchNorm, les convolutions groupées ou
 transposées, LSTM/GRU, embeddings et attention.

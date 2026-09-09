@@ -1,4 +1,4 @@
-# Tensor 0.1.0 direction
+# Tensor 0.2.0 direction
 
 Tensor provides explicit multidimensional computation for Silex. One immutable
 value moves between CPU and GPU, while eager training uses named mutable
@@ -22,7 +22,7 @@ functional transformations. Tensor nevertheless provides neither `jit`,
 `vmap`, nor a general functional gradient transformation: autodifferentiation
 remains eager and attached to executed operations.
 
-## What version 0.1.0 guarantees
+## What version 0.2.0 guarantees
 
 - nine dense CPU dtypes with views, broadcasting, reductions, and checked
   linear algebra;
@@ -38,7 +38,7 @@ not extend it automatically when their own APIs evolve.
 
 ## Deliberate limits
 
-Version 0.1.0 does not include integer GPU computation, sparse tensors,
+Version 0.2.0 does not include integer GPU computation, sparse tensors,
 quantization, deferred graphs, multi-device distribution, higher-order
 derivatives, AdamW, BatchNorm, grouped or transposed convolutions, LSTM/GRU,
 embeddings, or attention.

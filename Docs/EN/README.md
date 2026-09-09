@@ -219,7 +219,7 @@ until `cpu()`.
 `conv2d(kernel, bias, stride, padding)` accepts a scalar stride and symmetric
 padding. `max_pool2d` and `average_pool2d` use a square window; stride defaults
 to the window size. Average pooling counts padding cells as zero in its
-divisor. Dilation, groups, and transposed convolution are outside 0.1.0.
+divisor. Dilation, groups, and transposed convolution are outside 0.2.0.
 
 ```sx
 use Tensor
@@ -345,7 +345,7 @@ a placement change atomically instead of silently migrating part of a model.
 ## Compose and train a network
 
 `Tensor.Neural.Layer` is the common layer contract. `Sequential` executes layers
-in order and recursively collects their named parameters. The 0.1.0 layers are
+in order and recursively collects their named parameters. The 0.2.0 layers are
 `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`, `Dropout`,
 `LayerNorm`, and `SimpleRNN`. Activations remain Tensor operations;
 `Activation.relu()`, `sigmoid()`, and `tanh()` only adapt them for composition.
@@ -382,7 +382,7 @@ afterwards when needed. A checkpoint contains no code, autograd graph, or
 optimizer state.
 
 Custom composition may remain an application type or function assembling the
-public Tensor operations. Version 0.1.0 does not provide BatchNorm, grouped or
+public Tensor operations. Version 0.2.0 does not provide BatchNorm, grouped or
 transposed convolution, LSTM/GRU, embeddings, or attention.
 
 ## Move to the GPU
@@ -488,5 +488,5 @@ PyTorch, TensorFlow, and JAX versions in a disposable Python environment,
 requires at least two oracles to agree on every common numeric result, and then
 requires review of the resulting diff. The
 [generator guide](../../Tools/Oracle/README.md) records the exact commands,
-seed, and license rules. Updating a framework never changes the Tensor 0.1.0
+seed, and license rules. Updating a framework never changes the Tensor 0.2.0
 contract automatically.

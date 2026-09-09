@@ -1,4 +1,4 @@
-# Référence de compatibilité Tensor 0.1.0
+# Référence de compatibilité Tensor 0.2.0
 
 Cette page permet de choisir rapidement un dtype, un placement et une famille
 d'opérations. Le [guide Tensor](README.md) détaille les formes, vues, axes et
@@ -72,5 +72,5 @@ checkpoints incompatibles. Sur GPU, `gather` conserve son chemin résident : un
 indice hors limites produit un NaN sentinelle au lieu d'un readback caché.
 
 Les limites de modèles et de checkpoints sont résumées dans la
-[direction 0.1.0](Direction.md). Les parcours complets figurent dans les
+[direction 0.2.0](Direction.md). Les parcours complets figurent dans les
 [recettes d'entraînement](Recipes/Training.md).

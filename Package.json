@@ -1,6 +1,6 @@
 {
   "name": "Tensor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": {
     "en": "Immutable multidimensional tensors, eager autodifferentiation, and CPU/GPU numerical operations for Silex.",
     "fr": "Tenseurs multidimensionnels immuables, autodifférentiation eager et opérations numériques CPU/GPU pour Silex."

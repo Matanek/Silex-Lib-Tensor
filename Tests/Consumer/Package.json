@@ -3,6 +3,6 @@
   "dependencies": {
     "GFX.GPU": "^0.4.0",
     "STD": "^0.22.0",
-    "Tensor": "^0.1.0"
+    "Tensor": "^0.2.0"
   }
 }

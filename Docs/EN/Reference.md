@@ -1,4 +1,4 @@
-# Tensor 0.1.0 compatibility reference
+# Tensor 0.2.0 compatibility reference
 
 Use this page to choose a dtype, placement, and operation family. The
 [Tensor guide](README.md) details shapes, views, axes, and each operation's
@@ -72,5 +72,5 @@ checkpoints. GPU `gather` preserves its resident path: an out-of-range index
 produces a NaN sentinel instead of a hidden readback.
 
 Model and checkpoint limits are summarized in the
-[0.1.0 direction](Direction.md). Complete workflows are available in the
+[0.2.0 direction](Direction.md). Complete workflows are available in the
 [training recipes](Recipes/Training.md).

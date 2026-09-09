@@ -225,7 +225,7 @@ OIHW. `conv2d(kernel, bias, stride, padding)` accepte un stride scalaire et un
 padding symétrique. `max_pool2d` et `average_pool2d` emploient une fenêtre
 carrée ; le stride vaut la taille de fenêtre par défaut. Le pooling moyen
 compte les cellules de padding comme des zéros dans son diviseur. Dilation,
-groupes et convolution transposée ne font pas partie de 0.1.0.
+groupes et convolution transposée ne font pas partie de 0.2.0.
 
 ```sx
 use Tensor
@@ -355,7 +355,7 @@ de migrer silencieusement une partie du modèle.
 
 `Tensor.Neural.Layer` est le contrat commun des couches et `Sequential` les exécute
 dans l'ordre tout en collectant récursivement leurs paramètres nommés. Les
-couches 0.1.0 sont `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`,
+couches 0.2.0 sont `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`,
 `Dropout`, `LayerNorm` et `SimpleRNN`. Les activations restent des opérations
 Tensor ; `Activation.relu()`, `sigmoid()` et `tanh()` servent uniquement à les
 placer dans une composition.
@@ -392,7 +392,7 @@ lecture ; appelez ensuite explicitement `model.to(device)` si nécessaire. Le
 checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.
 
 La composition personnalisée peut rester un type ou une fonction applicative
-qui assemble les opérations Tensor publiques. La version 0.1.0 ne fournit pas
+qui assemble les opérations Tensor publiques. La version 0.2.0 ne fournit pas
 BatchNorm, convolution groupée ou transposée, LSTM/GRU, embedding ni attention.
 
 ## Passer sur GPU
@@ -501,4 +501,4 @@ Python jetable, exige l'accord d'au moins deux oracles par résultat numérique
 commun, puis vérifie le diff avant acceptation. Le
 [guide du générateur](../../Tools/Oracle/README.md) donne les commandes exactes,
 la seed et les règles de licence. Une mise à jour de framework ne modifie jamais
-automatiquement le contrat Tensor 0.1.0.
+automatiquement le contrat Tensor 0.2.0.
