@@ -1,0 +1,58 @@
+use GFX.GPU
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func verify_cpu_dtypes() {
+    var f32:float[] = [1.0, 2.0]
+    var i8:int8[] = [-1 as int8, 2 as int8]
+    var u8:uint8[] = [1 as uint8, 2 as uint8]
+    var i16:int16[] = [-1 as int16, 2 as int16]
+    var u16:uint16[] = [1 as uint16, 2 as uint16]
+    var i32:int32[] = [-1 as int32, 2 as int32]
+    var u32:uint32[] = [1 as uint32, 2 as uint32]
+    var i64:int64[] = [-1 as int64, 2 as int64]
+    var u64:uint64[] = [1 as uint64, 2 as uint64]
+    assert(Tensor.vector(f32).values()[1] == 2.0)
+    assert(Tensor.vector(i8).int8_values()[0] == -1 as int8)
+    assert(Tensor.vector(u8).uint8_values()[1] == 2 as uint8)
+    assert(Tensor.vector(i16).int16_values()[0] == -1 as int16)
+    assert(Tensor.vector(u16).uint16_values()[1] == 2 as uint16)
+    assert(Tensor.vector(i32).int32_values()[0] == -1 as int32)
+    assert(Tensor.vector(u32).uint32_values()[1] == 2 as uint32)
+    assert(Tensor.vector(i64).int64_values()[0] == -1 as int64)
+    assert(Tensor.vector(u64).uint64_values()[1] == 2 as uint64)
+}
+
+func verify_neural_step() {
+    var inputs:float[] = [0.0, 0.0, 1.0, 1.0]
+    var labels:int32[] = [0, 1]
+    let input = Tensor(inputs, [2, 2])
+    let target = Tensor(labels, [2])
+    var layers:NN.Layer[] = [NN.Dense("classifier", 2, 2, 13)]
+    var model = NN.Sequential(layers)
+    var optimizer = Optim.SGD(model.parameters(), learning_rate:0.01)
+    optimizer.zero_grad()
+    model.forward(input).cross_entropy(target, 1).backward()
+    optimizer.step()
+}
+
+func verify_gpu() {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var integers:int32[] = [-2, 0, 7]
+    let restored = Tensor.vector(integers).to(device).cpu().int32_values()
+    assert(restored[0] == -2 && restored[2] == 7)
+    var floats:float[] = [1.0, 2.0, 3.0]
+    let resident = Tensor.vector(floats).to(device).add(2.0).multiply(3.0)
+    assert(resident.is_gpu())
+    let values = resident.cpu().values()
+    assert(values[0] == 9.0 && values[2] == 15.0)
+}
+
+func main() {
+    verify_cpu_dtypes()
+    verify_neural_step()
+    verify_gpu()
+    print("Tensor portable qualification: ok")
+}

@@ -19,6 +19,9 @@ silex install Tensor
 
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
+- [French API reference](Docs/FR/Reference.md) · [English](Docs/EN/Reference.md)
+- [French design direction](Docs/FR/Direction.md) · [English](Docs/EN/Direction.md)
+- [French training recipes](Docs/FR/Recipes/Training.md) · [English](Docs/EN/Recipes/Training.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 

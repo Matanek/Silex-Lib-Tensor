@@ -1,0 +1,35 @@
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func main() {
+    var inputs:float[] = [
+        -1.0, 0.0, 1.0,
+        -0.5, 0.0, 0.5,
+        1.0, 0.0, -1.0,
+        0.5, 0.0, -0.5
+    ]
+    var labels:int32[] = [0, 0, 1, 1]
+    let input = Tensor(inputs, [4, 3, 1])
+    let target = Tensor(labels, [4])
+    var layers:NN.Layer[] = [
+        NN.SimpleRNN("memory", 1, 6, 307),
+        NN.Dense("classifier", 6, 2, 308)
+    ]
+    var model = NN.Sequential(layers)
+    var optimizer = Optim.Adam(model.parameters(), learning_rate:0.025)
+    let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
+
+    var iteration = 0
+    while iteration < 160 {
+        optimizer.zero_grad()
+        model.forward(input).cross_entropy(target, 1).backward()
+        let norm = optimizer.clip_grad_norm(1.0)
+        optimizer.step()
+        iteration++
+    }
+
+    let final_loss = model.forward(input).detach().cross_entropy(target, 1).item()
+    assert(final_loss < initial_loss * 0.25)
+    print("RNN training and gradient clipping: ok")
+}

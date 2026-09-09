@@ -1,28 +1,57 @@
+use STD.FileSystem
+use STD.Math
 use Tensor
 use Tensor.NN
 use Tensor.Optim
 
+func mlp_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Dense("hidden", 2, 8, seed),
+        NN.Activation.tanh(),
+        NN.Dense("classifier", 8, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+func values_match(left:float[], right:float[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if Math.abs(left[index] - right[index]) > 0.00001 { return false }
+        index++
+    }
+    return true
+}
+
 func main() {
+    let checkpoint = "/private/tmp/tensor-example-mlp.sxtc"
+    let ignored = FileSystem.remove_file(checkpoint)
     var inputs:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
     var labels:int32[] = [0, 1, 1, 0]
     let input = Tensor(inputs, [4, 2])
     let target = Tensor(labels, [4])
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 8, 101),
-        NN.Activation.tanh(),
-        NN.Dense("classifier", 8, 2, 102)
-    ]
-    var model = NN.Sequential(layers)
-    var parameters = model.parameters()
-    var optimizer = Optim.Adam(parameters, learning_rate:0.04)
+    var model = mlp_model(101)
+    var optimizer = Optim.Adam(model.parameters(), learning_rate:0.04)
+    let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
 
     var iteration = 0
-    while iteration < 60 {
+    while iteration < 160 {
         optimizer.zero_grad()
         model.forward(input).cross_entropy(target, 1).backward()
         optimizer.step()
         iteration++
     }
-    let loss = model.forward(input).detach().cross_entropy(target, 1).item()
-    print("final loss: $(loss)")
+
+    let trained = model.forward(input).detach()
+    let final_loss = trained.cross_entropy(target, 1).item()
+    assert(final_loss < initial_loss * 0.2)
+    NN.Checkpoint.save(model, checkpoint)
+    var restored = mlp_model(777)
+    NN.Checkpoint.load(restored, checkpoint)
+    assert(values_match(restored.forward(input).detach().values(), trained.values()))
+    match FileSystem.remove_file(checkpoint) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+    print("MLP training and checkpoint: ok")
 }

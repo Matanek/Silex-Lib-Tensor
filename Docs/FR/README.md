@@ -4,6 +4,16 @@
 même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 32 et 64 bits, sur CPU comme sur GPU.
 
+## Parcours de lecture
+
+- Commencez ici pour construire, transformer, calculer, dériver et entraîner.
+- Consultez la [référence de compatibilité](Reference.md) pour les dtypes,
+  placements, opérations, erreurs et tolérances.
+- Utilisez les [recettes MLP, CNN et RNN](Recipes/Training.md) pour une boucle
+  d'entraînement complète et les checkpoints.
+- Lisez la [direction de l'API](Direction.md) pour ses influences PyTorch,
+  TensorFlow et JAX, ses garanties et ses omissions délibérées.
+
 ## Créer et inspecter
 
 `scalar`, `vector`, `matrix` et le constructeur forme-valeurs déduisent le

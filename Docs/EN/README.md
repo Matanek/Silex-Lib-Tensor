@@ -4,6 +4,16 @@
 same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 64-bit integers on both CPU and GPU.
 
+## Reading paths
+
+- Start here to construct, transform, compute, differentiate, and train.
+- Consult the [compatibility reference](Reference.md) for dtypes, placements,
+  operations, errors, and tolerances.
+- Use the [MLP, CNN, and RNN recipes](Recipes/Training.md) for a complete
+  training loop and checkpoints.
+- Read the [API direction](Direction.md) for its PyTorch, TensorFlow, and JAX
+  influences, guarantees, and deliberate omissions.
+
 ## Create and inspect
 
 `scalar`, `vector`, `matrix`, and the shape-values constructor infer the dtype
