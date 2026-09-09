@@ -64,5 +64,13 @@ Every fixture must fail and mention its intended contract:
 - `AutogradTransfer.sx` and `AutogradCast.sx`: placement and dtype changes are
   outside a tracked graph and require `detach()` first;
 - `AutogradUntracked.sx`: backward requires provenance from a tracked leaf;
+- `ParameterName.sx`: trainable parameters require a stable non-empty name;
+- `OptimizerDuplicateName.sx`: one optimizer rejects duplicate parameter names;
+- `SGDLearningRate.sx` and `AdamBeta.sx`: optimizer hyperparameters are finite
+  and remain inside their documented domains;
+- `GradientClipNonFinite.sx`: the rejecting clipping policy diagnoses a
+  non-finite global norm before changing any gradient;
+- `OptimizerStatePlacement.sx`: moving a parameter after Adam initialized its
+  state fails before an update instead of partially migrating that state;
 - transposed GPU views are covered as successful stride-aware computation in
   `Tests/GPUCompute.sx`.

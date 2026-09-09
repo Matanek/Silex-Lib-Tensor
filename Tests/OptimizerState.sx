@@ -1,0 +1,63 @@
+use STD.Math
+use Tensor
+use Tensor.NN.Parameter
+use Tensor.Optim.Adam
+use Tensor.Optim.SGD
+
+func state_same(actual:float[], expected:float[], tolerance:float = 0.0001) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if Math.abs(actual[index] - expected[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+func required_state(value:Tensor?, name:str) Tensor {
+    if let tensor = value { return tensor }
+    panic("expected optimizer state '$(name)'")
+}
+
+test "retain PyTorch-compatible SGD momentum state" {
+    var values:float[] = [1.0, -2.0]
+    var gradient_values:float[] = [0.3, -0.2]
+    var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values))]
+    var optimizer = SGD(parameters, 0.1, momentum:0.9, weight_decay:0.01)
+    let gradient = Tensor.vector(gradient_values)
+    parameters[0].value().multiply(gradient).sum().backward()
+    optimizer.step()
+    var first_expected:float[] = [0.31, -0.22]
+    assert(state_same(required_state(optimizer.momentum_state("weight"), "momentum").values(), first_expected))
+    optimizer.zero_grad()
+    parameters[0].value().multiply(gradient).sum().backward()
+    optimizer.step()
+    var second_expected:float[] = [0.58869, -0.41778]
+    assert(state_same(required_state(optimizer.momentum_state("weight"), "momentum").values(), second_expected))
+}
+
+test "retain PyTorch-compatible Adam moments and per-parameter step" {
+    var values:float[] = [1.0, -2.0]
+    var first_gradient:float[] = [0.3, -0.2]
+    var second_gradient:float[] = [-0.1, 0.4]
+    var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values))]
+    var optimizer = Adam(
+        parameters, learning_rate:0.01, beta1:0.8, beta2:0.9,
+        epsilon:0.00000001, weight_decay:0.05
+    )
+    parameters[0].value().multiply(Tensor.vector(first_gradient)).sum().backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    parameters[0].value().multiply(Tensor.vector(second_gradient)).sum().backward()
+    optimizer.step()
+    var first_expected:float[] = [0.0459, 0.0121]
+    var second_expected:float[] = [0.011280025, 0.017130025]
+    assert(state_same(required_state(optimizer.first_moment_state("weight"), "first moment").values(), first_expected))
+    assert(state_same(required_state(optimizer.second_moment_state("weight"), "second moment").values(), second_expected))
+    assert(optimizer.state_step("weight") == 2)
+    optimizer.zero_grad()
+    optimizer.step()
+    assert(optimizer.state_step("weight") == 2)
+    assert(state_same(required_state(optimizer.first_moment_state("weight"), "first moment").values(), first_expected))
+    assert(state_same(required_state(optimizer.second_moment_state("weight"), "second moment").values(), second_expected))
+}

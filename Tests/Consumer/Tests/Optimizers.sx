@@ -1,0 +1,120 @@
+use STD.Math
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func optimizer_same(actual:float[], expected:float[], tolerance:float = 0.0001) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if Math.abs(actual[index] - expected[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+func required_gradient(parameter:NN.Parameter) Tensor {
+    if let gradient = parameter.gradient() { return gradient }
+    panic("expected a parameter gradient")
+}
+
+test "train named parameters through zero_grad backward and SGD step" {
+    var weight_values:float[] = [1.0, -2.0]
+    var unused_values:float[] = [4.0]
+    var parameters:NN.Parameter[] = [
+        NN.Parameter("weights", Tensor.vector(weight_values)),
+        NN.Parameter("unused", Tensor.vector(unused_values))
+    ]
+    var optimizer = Optim.SGD(parameters, learning_rate:0.1)
+
+    parameters[0].value().multiply(parameters[0].value()).sum().backward()
+    optimizer.step()
+    var first_expected:float[] = [0.8, -1.6]
+    var unused_expected:float[] = [4.0]
+    assert(optimizer_same(parameters[0].value().detach().values(), first_expected))
+    assert(optimizer_same(parameters[1].value().detach().values(), unused_expected))
+    assert(required_gradient(parameters[0]).count() == 2)
+
+    optimizer.zero_grad()
+    assert(parameters[0].gradient() == null && parameters[1].gradient() == null)
+    parameters[0].value().sum().backward()
+    optimizer.step()
+    var second_expected:float[] = [0.7, -1.7]
+    assert(optimizer_same(parameters[0].value().detach().values(), second_expected))
+}
+
+test "match coupled weight decay and momentum across SGD steps" {
+    var values:float[] = [1.0, -2.0]
+    var gradient_values:float[] = [0.3, -0.2]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.SGD(
+        parameters, learning_rate:0.1, momentum:0.9, weight_decay:0.01
+    )
+    let gradient = Tensor.vector(gradient_values)
+    parameters[0].value().multiply(gradient).sum().backward()
+    optimizer.step()
+    var first_expected:float[] = [0.969, -1.978]
+    assert(optimizer_same(parameters[0].value().detach().values(), first_expected))
+
+    optimizer.zero_grad()
+    parameters[0].value().multiply(gradient).sum().backward()
+    optimizer.step()
+    var second_expected:float[] = [0.910131, -1.936222]
+    assert(optimizer_same(parameters[0].value().detach().values(), second_expected))
+}
+
+test "match bias-corrected Adam state across multiple steps" {
+    var values:float[] = [1.0, -2.0]
+    var first_gradient:float[] = [0.3, -0.2]
+    var second_gradient:float[] = [-0.1, 0.4]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.Adam(
+        parameters, learning_rate:0.01, beta1:0.8, beta2:0.9,
+        epsilon:0.00000001, weight_decay:0.05
+    )
+    parameters[0].value().multiply(Tensor.vector(first_gradient)).sum().backward()
+    optimizer.step()
+    var first_expected:float[] = [0.99, -1.99]
+    assert(optimizer_same(parameters[0].value().detach().values(), first_expected))
+
+    optimizer.zero_grad()
+    parameters[0].value().multiply(Tensor.vector(second_gradient)).sum().backward()
+    optimizer.step()
+    var second_expected:float[] = [0.984767, -1.991119]
+    assert(optimizer_same(parameters[0].value().detach().values(), second_expected, 0.0002))
+}
+
+test "clip one global norm and preserve missing gradients" {
+    var first_values:float[] = [1.0, 1.0]
+    var second_values:float[] = [1.0]
+    var missing_values:float[] = [7.0]
+    var first_gradient:float[] = [3.0, 4.0]
+    var second_gradient:float[] = [12.0]
+    var parameters:NN.Parameter[] = [
+        NN.Parameter("first", Tensor.vector(first_values)),
+        NN.Parameter("second", Tensor.vector(second_values)),
+        NN.Parameter("missing", Tensor.vector(missing_values))
+    ]
+    parameters[0].value().multiply(Tensor.vector(first_gradient)).sum().backward()
+    parameters[1].value().multiply(Tensor.vector(second_gradient)).sum().backward()
+    var optimizer = Optim.SGD(parameters, learning_rate:0.1)
+    let norm = optimizer.clip_grad_norm(6.5)
+    assert(Math.abs(norm.item() - 13.0) < 0.0001)
+    var expected_first:float[] = [1.5, 2.0]
+    var expected_second:float[] = [6.0]
+    assert(optimizer_same(required_gradient(parameters[0]).values(), expected_first, 0.0001))
+    assert(optimizer_same(required_gradient(parameters[1]).values(), expected_second, 0.0001))
+    assert(parameters[2].gradient() == null)
+
+    let unchanged = optimizer.clip_grad_norm(20.0)
+    assert(unchanged.item() < 6.5001)
+    assert(optimizer_same(required_gradient(parameters[0]).values(), expected_first, 0.0001))
+}
+
+test "return a resident zero norm when every gradient is absent" {
+    var values:float[] = [1.0]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.Adam(parameters)
+    let norm = optimizer.clip_grad_norm(1.0)
+    assert(norm.item() == 0.0 && parameters[0].gradient() == null)
+}

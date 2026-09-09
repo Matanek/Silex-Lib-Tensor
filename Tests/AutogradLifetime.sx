@@ -1,6 +1,8 @@
 use Tensor
 use Tensor.Autograd.Variable
 use Tensor.autograd_retained_edge_count
+use Tensor.NN.Parameter
+use Tensor.Optim.SGD
 
 func temporary_diamond(input:Tensor) Tensor {
     let branch = input.multiply(3.0)
@@ -19,4 +21,22 @@ test "release graph edges after backward while the result remains alive" {
         let gradient_values = gradient.values()
         assert(gradient_values[0] == 6.0 && gradient_values[2] == 6.0)
     } else { panic("expected the temporary branch gradient") }
+}
+
+test "release every training graph across repeated optimizer steps" {
+    let baseline = autograd_retained_edge_count()
+    var values:float[] = [1.0, -2.0, 3.0]
+    var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values))]
+    var optimizer = SGD(parameters, 0.01, momentum:0.9)
+    var iteration = 0
+    while iteration < 32 {
+        optimizer.zero_grad()
+        let loss = parameters[0].value().multiply(parameters[0].value()).sum()
+        assert(autograd_retained_edge_count() > baseline)
+        loss.backward()
+        assert(autograd_retained_edge_count() == baseline)
+        optimizer.step()
+        assert(autograd_retained_edge_count() == baseline)
+        iteration++
+    }
 }

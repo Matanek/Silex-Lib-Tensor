@@ -284,6 +284,54 @@ inside a tracked graph; detach the value first. On GPU, forward computation,
 gradients, and accumulation remain resident. To observe a result, use for
 example `gradient.detach().cpu()`; that `cpu()` remains the explicit readback.
 
+## Train named parameters
+
+`Tensor.NN.Parameter` associates a stable name with a tracked `float32` value
+and its optional gradient. The Tensor remains immutable: an optimizer step
+replaces the parameter value with a new detached leaf.
+
+```sx
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+var initial:float[] = [1.0, -2.0]
+var parameters:NN.Parameter[] = [
+    NN.Parameter("linear.weight", Tensor.vector(initial))
+]
+var optimizer = Optim.Adam(parameters, learning_rate:0.01)
+
+optimizer.zero_grad()
+parameters[0].value().multiply(parameters[0].value()).sum().backward()
+let norm = optimizer.clip_grad_norm(1.0)
+optimizer.step()
+```
+
+`SGD` accepts `learning_rate`, `momentum`, and `weight_decay`. Its momentum
+uses the PyTorch convention: the first buffer receives the gradient after L2
+weight decay, then later steps compute `momentum * buffer + gradient`.
+`Adam` accepts `learning_rate`, `beta1`, `beta2`, `epsilon`, and
+`weight_decay`; it retains one step and two moments per parameter, applies bias
+correction, and uses coupled L2 weight decay. This operation is Adam, not
+AdamW.
+
+`zero_grad()` removes accumulators without recreating values. `step()` skips a
+parameter whose gradient is absent and leaves that parameter's optimizer state
+unchanged. Duplicate names, invalid hyperparameters, and incompatible
+gradients fail before any parameter in the collection is changed.
+
+`clip_grad_norm(maximum_norm, nonfinite)` computes one L2 norm over every
+available gradient and applies `min(1, maximum_norm / (norm + 1e-6))`, matching
+the PyTorch reference. The default `NonFiniteGradientPolicy.propagate` keeps
+NaNs or infinities on the current placement. The `reject` policy diagnoses the
+norm before mutation; on the GPU, that explicit choice reads the scalar and
+therefore synchronizes the host.
+
+Values, gradients, momentum, and moments stay on the same CPU or GPU device. A
+parameter may call `to(device)` or `cpu()` after `zero_grad()` while its
+optimizer has not created state yet. Once state exists, the next step rejects
+a placement change atomically instead of silently migrating part of a model.
+
 ## Move to the GPU
 
 Create the device with `GFX.GPU`, then place the tensor explicitly:

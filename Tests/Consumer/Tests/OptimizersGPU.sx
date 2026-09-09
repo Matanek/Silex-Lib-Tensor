@@ -1,0 +1,75 @@
+use GFX.GPU
+use STD.Math
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func gpu_optimizer_same(actual:float[], expected:float[], tolerance:float = 0.0003) bool {
+    if actual.count() != expected.count() { return false }
+    var index = 0
+    while index < actual.count() {
+        if Math.abs(actual[index] - expected[index]) > tolerance { return false }
+        index++
+    }
+    return true
+}
+
+test "keep clipping and Adam updates resident while matching CPU" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, -2.0]
+    var first_gradient:float[] = [3.0, 4.0]
+    var second_gradient:float[] = [-1.0, 2.0]
+    let cpu_first = Tensor.vector(first_gradient)
+    let cpu_second = Tensor.vector(second_gradient)
+    let gpu_first = cpu_first.to(device)
+    let gpu_second = cpu_second.to(device)
+    var cpu_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var gpu_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values).to(device))]
+    var cpu_optimizer = Optim.Adam(cpu_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9)
+    var gpu_optimizer = Optim.Adam(gpu_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9)
+
+    cpu_parameters[0].value().multiply(cpu_first).sum().backward()
+    gpu_parameters[0].value().multiply(gpu_first).sum().backward()
+    device.reset_command_stats()
+    let cpu_norm = cpu_optimizer.clip_grad_norm(2.5)
+    let gpu_norm = gpu_optimizer.clip_grad_norm(2.5)
+    cpu_optimizer.step()
+    gpu_optimizer.step()
+    let first_stats = device.command_stats()
+    assert(gpu_norm.is_gpu())
+    assert(first_stats.uploads == 0 && first_stats.downloads == 0)
+    assert(Math.abs(cpu_norm.item() - 5.0) < 0.0001)
+
+    cpu_optimizer.zero_grad()
+    gpu_optimizer.zero_grad()
+    cpu_parameters[0].value().multiply(cpu_second).sum().backward()
+    gpu_parameters[0].value().multiply(gpu_second).sum().backward()
+    device.reset_command_stats()
+    cpu_optimizer.step()
+    gpu_optimizer.step()
+    let second_stats = device.command_stats()
+    assert(second_stats.uploads == 0 && second_stats.downloads == 0)
+    assert(gpu_optimizer_same(
+        gpu_parameters[0].value().detach().cpu().values(),
+        cpu_parameters[0].value().detach().values()
+    ))
+}
+
+test "move parameters after optimizer construction but before state initialization" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [2.0]
+    var gradient_values:float[] = [3.0]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.SGD(parameters, learning_rate:0.1, momentum:0.9)
+    parameters[0].to(device)
+    let gradient = Tensor.vector(gradient_values).to(device)
+    parameters[0].value().multiply(gradient).sum().backward()
+    device.reset_command_stats()
+    optimizer.step()
+    let stats = device.command_stats()
+    assert(stats.uploads == 0 && stats.downloads == 0)
+    var expected:float[] = [1.7]
+    assert(gpu_optimizer_same(parameters[0].value().detach().cpu().values(), expected))
+}

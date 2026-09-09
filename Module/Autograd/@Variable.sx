@@ -19,4 +19,12 @@ public nocopy class Variable {
     func gradient() Tensor? { return self.gradient_slot.gradient() }
 
     func zero_grad() { self.gradient_slot.zero(self.current_value.detach()) }
+
+    package func replace(value:Tensor) {
+        self.current_value = value.detach().autograd_leaf(self.gradient_slot)
+    }
+
+    package func clear_gradient() { self.gradient_slot.clear() }
+
+    package func replace_gradient(gradient:Tensor) { self.gradient_slot.replace(gradient) }
 }

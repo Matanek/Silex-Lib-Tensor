@@ -1,0 +1,10 @@
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func main() {
+    var values:float[] = [1.0]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.Adam(parameters, beta1:1.0)
+    optimizer.step()
+}

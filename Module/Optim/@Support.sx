@@ -1,0 +1,75 @@
+use STD.Math
+use Tensor
+use Tensor.DType
+use Tensor.NN.Parameter
+
+func optimizer_parameters(parameters:Parameter[], operation:str) Parameter[] {
+    if parameters.is_empty() { panic("Tensor.Optim.$(operation) requires at least one parameter") }
+    var result:Parameter[] = []
+    var index = 0
+    while index < parameters.count() {
+        var parameter = parameters[index]
+        var previous = 0
+        while previous < index {
+            if parameters[previous].name() == parameter.name() {
+                panic("Tensor.Optim.$(operation) requires unique parameter names; duplicate '$(parameter.name())'")
+            }
+            previous++
+        }
+        result.append(parameter)
+        index++
+    }
+    return result
+}
+
+func require_positive(value:float, name:str, operation:str) {
+    if !Math.is_finite(value) || value <= 0.0 {
+        panic("Tensor.Optim.$(operation) requires finite $(name) > 0")
+    }
+}
+
+func require_non_negative(value:float, name:str, operation:str) {
+    if !Math.is_finite(value) || value < 0.0 {
+        panic("Tensor.Optim.$(operation) requires finite $(name) >= 0")
+    }
+}
+
+func require_unit_interval(value:float, name:str, operation:str) {
+    if !Math.is_finite(value) || value < 0.0 || value >= 1.0 {
+        panic("Tensor.Optim.$(operation) requires finite 0 <= $(name) < 1")
+    }
+}
+
+func optimizer_shapes_equal(left:int[], right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var axis = 0
+    while axis < left.count() {
+        if left[axis] != right[axis] { return false }
+        axis++
+    }
+    return true
+}
+
+func require_optimizer_tensor(parameter:Parameter, tensor:Tensor, role:str, operation:str) {
+    if tensor.dtype() != DType.float32() {
+        panic("Tensor.Optim.$(operation) requires float32 $(role) for parameter '$(parameter.name())'")
+    }
+    if !optimizer_shapes_equal(tensor.shape(), parameter.value().shape()) {
+        panic("Tensor.Optim.$(operation) requires $(role) matching parameter '$(parameter.name())' shape")
+    }
+    if !tensor.same_optimizer_placement(parameter.value()) {
+        panic("Tensor.Optim.$(operation) requires $(role) on parameter '$(parameter.name())' placement")
+    }
+}
+
+func optimizer_gradient(parameter:Parameter, operation:str) Tensor? {
+    if let gradient = parameter.gradient() {
+        require_optimizer_tensor(parameter, gradient, "gradient", operation)
+        return gradient.detach()
+    }
+    return null
+}
+
+func optimizer_zero_grad(parameters:Parameter[]) {
+    for parameter in parameters { parameter.zero_grad() }
+}

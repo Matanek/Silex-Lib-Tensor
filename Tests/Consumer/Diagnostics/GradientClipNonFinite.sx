@@ -1,0 +1,14 @@
+use STD.Math
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func main() {
+    var values:float[] = [1.0]
+    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var optimizer = Optim.Adam(parameters)
+    let infinite = Math.exp(1000.0)
+    parameters[0].value().multiply(infinite).sum().backward()
+    let norm = optimizer.clip_grad_norm(1.0, Optim.NonFiniteGradientPolicy.reject)
+    print(norm.item())
+}

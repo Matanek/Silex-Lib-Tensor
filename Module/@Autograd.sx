@@ -43,6 +43,10 @@ package nocopy class GradientSlot {
             self.current_gradient = reference.autograd_constant(0.0)
         }
     }
+
+    func clear() { self.current_gradient = null }
+
+    func replace(gradient:Tensor) { self.current_gradient = gradient.autograd_detached() }
 }
 
 package nocopy class AutogradNode {
@@ -111,11 +115,11 @@ extend Tensor {
         return self.autograd_recorded(AutogradNode(AutogradRule.leaf(slot)))
     }
 
-    module func autograd_constant(value:float) Tensor {
+    package func autograd_constant(value:float) Tensor {
         return self.autograd_constant_shape(self.shape(), value)
     }
 
-    module func autograd_constant_shape(shape:int[], value:float) Tensor {
+    package func autograd_constant_shape(shape:int[], value:float) Tensor {
         require_neural_float(self, "autograd constant")
         if self.is_gpu() {
             var storage = self.autograd_gpu_storage()
@@ -125,6 +129,13 @@ extend Tensor {
             )
         }
         return Tensor.full(shape, value)
+    }
+
+    package func same_optimizer_placement(other:Tensor) bool {
+        if self.is_cpu() || other.is_cpu() { return self.is_cpu() == other.is_cpu() }
+        var left = self.autograd_gpu_storage()
+        var right = other.autograd_gpu_storage()
+        return left.same_device(right)
     }
 
     module func autograd_equal(other:Tensor) Tensor {

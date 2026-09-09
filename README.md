@@ -6,7 +6,9 @@ placement, lossless transfers, shared shape views, typed indexing, broadcasting,
 checked numerical computation, seeded initialization, and eager neural
 primitives for dense, convolutional, and recurrent models. Its eager
 reverse-mode autodifferentiation keeps immutable Tensor values and GPU-resident
-gradients behind explicit `Tensor.Autograd.Variable` leaves.
+gradients behind explicit `Tensor.Autograd.Variable` leaves. Named
+`Tensor.NN.Parameter` values and `Tensor.Optim` SGD/Adam optimizers complete an
+explicit eager training step without hidden transfers.
 
 ```text
 silex install Tensor

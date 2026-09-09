@@ -3,6 +3,8 @@ use Tensor
 use Tensor.Autograd.Variable
 use Tensor.gpu_pipeline_compilations
 use Tensor.reset_gpu_pipeline_compilations
+use Tensor.NN.Parameter
+use Tensor.Optim.SGD
 
 func cached_gradient(variable:Variable) Tensor {
     if let gradient = variable.gradient() { return gradient }
@@ -91,4 +93,27 @@ test "reuse backward pipelines and release each consumed graph" {
     let gradient = cached_gradient(source).detach().cpu().values()
     assert(gradient[0] == 32.0 && gradient[1] == 0.0 && gradient[2] == 0.0)
     assert(gradient[3] == 0.0 && gradient[4] == 16.0 && gradient[5] == 16.0)
+}
+
+test "reuse optimizer pipelines across repeated GPU training steps" {
+    if !GPU.Device.is_supported() { return }
+    reset_gpu_pipeline_compilations()
+    var device = GPU.Device()
+    var values:float[] = [1.0, -2.0]
+    var gradient_values:float[] = [0.25, -0.5]
+    let gradient = Tensor.vector(gradient_values).to(device)
+    var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values).to(device))]
+    var optimizer = SGD(parameters, 0.01, momentum:0.9)
+    var warm_compilations = 0
+    var iteration = 0
+    while iteration < 12 {
+        optimizer.zero_grad()
+        parameters[0].value().multiply(gradient).sum().backward()
+        optimizer.step()
+        if iteration == 0 { warm_compilations = gpu_pipeline_compilations() }
+        assert(gpu_pipeline_compilations() == warm_compilations)
+        iteration++
+    }
+    assert(warm_compilations > 0)
+    assert(parameters[0].value().is_gpu())
 }

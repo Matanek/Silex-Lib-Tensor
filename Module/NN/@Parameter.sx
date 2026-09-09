@@ -1,0 +1,61 @@
+use GFX.GPU
+use Tensor
+use Tensor.Autograd.Variable
+
+public nocopy class Parameter {
+    private let parameter_name:str
+    private var variable:Variable
+
+    init(name:str, value:Tensor) {
+        if name == "" { panic("Tensor.NN.Parameter requires a non-empty name") }
+        self.parameter_name = name
+        self.variable = Variable(value)
+    }
+
+    func name() str { return self.parameter_name }
+
+    func value() Tensor { return self.variable.value() }
+
+    func gradient() Tensor? { return self.variable.gradient() }
+
+    func zero_grad() { self.variable.clear_gradient() }
+
+    func to(device:GPU.Device) {
+        if self.gradient() != null {
+            panic("Tensor.NN.Parameter.to requires zero_grad before changing placement")
+        }
+        self.variable.replace(self.value().detach().to(device))
+    }
+
+    func cpu() {
+        if self.gradient() != null {
+            panic("Tensor.NN.Parameter.cpu requires zero_grad before changing placement")
+        }
+        self.variable.replace(self.value().detach().cpu())
+    }
+
+    package func apply(value:Tensor) {
+        if value.dtype() != self.value().dtype() {
+            panic("Tensor optimizer cannot change a parameter dtype")
+        }
+        if !same_parameter_shape(value.shape(), self.value().shape()) {
+            panic("Tensor optimizer cannot change a parameter shape")
+        }
+        if !value.same_optimizer_placement(self.value()) {
+            panic("Tensor optimizer cannot change a parameter placement")
+        }
+        self.variable.replace(value)
+    }
+
+    package func replace_gradient(gradient:Tensor) { self.variable.replace_gradient(gradient) }
+}
+
+func same_parameter_shape(left:int[], right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var axis = 0
+    while axis < left.count() {
+        if left[axis] != right[axis] { return false }
+        axis++
+    }
+    return true
+}

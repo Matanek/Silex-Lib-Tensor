@@ -1,0 +1,8 @@
+use Tensor
+use Tensor.NN
+
+func main() {
+    var values:float[] = [1.0]
+    var parameter = NN.Parameter("", Tensor.vector(values))
+    print(parameter.name())
+}

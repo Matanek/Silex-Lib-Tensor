@@ -1,0 +1,23 @@
+use GFX.GPU
+use Tensor
+use Tensor.NN
+use Tensor.Optim
+
+func main() {
+    var device = GPU.Device()
+    var first_values:float[] = [1.0]
+    var second_values:float[] = [2.0]
+    var parameters:NN.Parameter[] = [
+        NN.Parameter("first", Tensor.vector(first_values)),
+        NN.Parameter("second", Tensor.vector(second_values))
+    ]
+    var optimizer = Optim.Adam(parameters)
+    parameters[0].value().sum().backward()
+    parameters[1].value().sum().backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    parameters[1].to(device)
+    parameters[0].value().sum().backward()
+    parameters[1].value().sum().backward()
+    optimizer.step()
+}

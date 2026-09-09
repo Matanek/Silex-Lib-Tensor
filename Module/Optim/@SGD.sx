@@ -1,0 +1,137 @@
+use STD.Math
+use Tensor
+use Tensor.NN.Parameter
+
+class SGDState {
+    var initialized:bool
+    var momentum_buffer:Tensor
+
+    init() {
+        self.initialized = false
+        self.momentum_buffer = Tensor.scalar(0.0)
+    }
+}
+
+public nocopy class SGD {
+    private var parameters:Parameter[]
+    private var states:SGDState[]
+    private let learning_rate:float
+    private let momentum:float
+    private let weight_decay:float
+
+    init(
+        parameters:Parameter[], learning_rate:float,
+        momentum:float = 0.0, weight_decay:float = 0.0
+    ) {
+        require_positive(learning_rate, "learning_rate", "SGD")
+        require_non_negative(momentum, "momentum", "SGD")
+        require_non_negative(weight_decay, "weight_decay", "SGD")
+        self.parameters = optimizer_parameters(parameters, "SGD")
+        self.states = []
+        for parameter in self.parameters { self.states.append(SGDState()) }
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.weight_decay = weight_decay
+    }
+
+    func zero_grad() { optimizer_zero_grad(self.parameters) }
+
+    func clip_grad_norm(
+        maximum_norm:float,
+        nonfinite:NonFiniteGradientPolicy = NonFiniteGradientPolicy.propagate
+    ) Tensor {
+        require_non_negative(maximum_norm, "maximum_norm", "clip_grad_norm")
+        let reference = self.parameters[0].value().detach()
+        var index = 0
+        while index < self.parameters.count() {
+            if !self.parameters[index].value().same_optimizer_placement(reference) {
+                panic("Tensor.Optim.clip_grad_norm requires all parameters on one placement")
+            }
+            let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm")
+            index++
+        }
+        var squared_norm = reference.autograd_constant_shape([], 0.0)
+        index = 0
+        while index < self.parameters.count() {
+            if let gradient = self.parameters[index].gradient() {
+                if !gradient.is_empty() {
+                    squared_norm = squared_norm.add(gradient.multiply(gradient).sum())
+                }
+            }
+            index++
+        }
+        let norm = squared_norm.sqrt().detach()
+        if nonfinite == NonFiniteGradientPolicy.reject {
+            let observed = norm.cpu().item()
+            if !Math.is_finite(observed) {
+                panic("Tensor.Optim.clip_grad_norm rejected a non-finite global gradient norm")
+            }
+        }
+        let one = reference.autograd_constant_shape([], 1.0)
+        let maximum = reference.autograd_constant_shape([], maximum_norm)
+        let ratio = maximum.divide(norm.add(0.000001))
+        let factor = one.subtract(one.subtract(ratio).relu())
+        index = 0
+        while index < self.parameters.count() {
+            if let gradient = self.parameters[index].gradient() {
+                self.parameters[index].replace_gradient(gradient.multiply(factor).detach())
+            }
+            index++
+        }
+        return norm
+    }
+
+    func step() {
+        var index = 0
+        while index < self.parameters.count() {
+            var parameter = self.parameters[index]
+            if self.states[index].initialized {
+                require_optimizer_tensor(
+                    parameter, self.states[index].momentum_buffer,
+                    "momentum state", "SGD.step"
+                )
+            }
+            let gradient = optimizer_gradient(parameter, "SGD.step")
+            index++
+        }
+
+        index = 0
+        while index < self.parameters.count() {
+            var parameter = self.parameters[index]
+            var state = self.states[index]
+            if let incoming = parameter.gradient() {
+                var gradient = incoming
+                if self.weight_decay != 0.0 {
+                    gradient = gradient.add(parameter.value().detach().multiply(self.weight_decay))
+                }
+                var direction = gradient
+                if self.momentum != 0.0 {
+                    if state.initialized {
+                        direction = state.momentum_buffer.multiply(self.momentum).add(gradient)
+                    }
+                }
+                let next_value = parameter.value().detach().subtract(
+                    direction.multiply(self.learning_rate)
+                ).detach()
+                parameter.apply(next_value)
+                if self.momentum != 0.0 {
+                    state.momentum_buffer = direction.detach()
+                    state.initialized = true
+                }
+            }
+            index++
+        }
+    }
+
+    package func momentum_state(name:str) Tensor? {
+        var index = 0
+        while index < self.parameters.count() {
+            if self.parameters[index].name() == name {
+                if self.states[index].initialized { return self.states[index].momentum_buffer }
+                return null
+            }
+            index++
+        }
+        panic("Tensor.Optim.SGD has no parameter named '$(name)'")
+    }
+}

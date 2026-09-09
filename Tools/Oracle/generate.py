@@ -117,6 +117,26 @@ def consensus(
     )
 
 
+def reference(
+    name: str,
+    family: str,
+    dtype: str,
+    oracle: str,
+    producer: Callable[[], object],
+    absolute_tolerance: float = 0.0,
+    relative_tolerance: float = 0.0,
+) -> Case:
+    return Case(
+        name,
+        family,
+        dtype,
+        normalize(producer()),
+        (oracle,),
+        absolute_tolerance,
+        relative_tolerance,
+    )
+
+
 def build_cases() -> tuple[dict[str, Case], dict[str, str]]:
     import jax
     import jax.numpy as jnp
@@ -544,6 +564,48 @@ def build_cases() -> tuple[dict[str, Case], dict[str, str]]:
         "tensorflow": tensorflow_recurrent_gradient,
     }, 1e-4, 4e-5))
 
+    def pytorch_sgd_state() -> object:
+        parameter = torch.tensor([1.0, -2.0], dtype=torch.float32, requires_grad=True)
+        optimizer = torch.optim.SGD(
+            [parameter], lr=0.1, momentum=0.9, weight_decay=0.01
+        )
+        for gradient in ([0.3, -0.2], [0.3, -0.2]):
+            parameter.grad = torch.tensor(gradient, dtype=torch.float32)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+        state = optimizer.state[parameter]
+        return torch.cat((parameter.detach(), state["momentum_buffer"]))
+
+    def pytorch_adam_state() -> object:
+        parameter = torch.tensor([1.0, -2.0], dtype=torch.float32, requires_grad=True)
+        optimizer = torch.optim.Adam(
+            [parameter], lr=0.01, betas=(0.8, 0.9), eps=1e-8, weight_decay=0.05
+        )
+        for gradient in ([0.3, -0.2], [-0.1, 0.4]):
+            parameter.grad = torch.tensor(gradient, dtype=torch.float32)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+        state = optimizer.state[parameter]
+        return torch.cat((
+            parameter.detach(), state["exp_avg"], state["exp_avg_sq"],
+            state["step"].reshape(1),
+        ))
+
+    def pytorch_clipped_gradients() -> object:
+        first = torch.tensor([1.0, 1.0], dtype=torch.float32, requires_grad=True)
+        second = torch.tensor([1.0], dtype=torch.float32, requires_grad=True)
+        first.grad = torch.tensor([3.0, 4.0], dtype=torch.float32)
+        second.grad = torch.tensor([12.0], dtype=torch.float32)
+        norm = torch.nn.utils.clip_grad_norm_([first, second], 6.5)
+        return torch.cat((norm.reshape(1), first.grad, second.grad))
+
+    add_case(reference("optimizer_sgd_state", "optimizer", "float32", "pytorch",
+                       pytorch_sgd_state, 2e-6, 2e-6))
+    add_case(reference("optimizer_adam_state", "optimizer", "float32", "pytorch",
+                       pytorch_adam_state, 3e-6, 3e-6))
+    add_case(reference("optimizer_clip_global_norm", "optimizer", "float32", "pytorch",
+                       pytorch_clipped_gradients, 2e-6, 2e-6))
+
     add_case(consensus("permuted_view", "transform", "int32", {
         "numpy": lambda: np.transpose(view_base, (2, 0, 1)),
         "pytorch": lambda: torch.from_numpy(view_base).permute(2, 0, 1).numpy(),
@@ -630,6 +692,8 @@ use STD.Math
 use Tensor
 use Tensor.Autograd
 use Tensor.DType
+use Tensor.NN
+use Tensor.Optim
 
 local func exact_values<T>(actual:T[], expected:T[]) bool {{
     if actual.count() != expected.count() {{ return false }}
@@ -670,6 +734,11 @@ local func float_values_match(actual:float[], expected:float[], absolute:float, 
 local func required_gradient(variable:Autograd.Variable) Tensor {{
     if let gradient = variable.gradient() {{ return gradient }}
     panic("expected a connected oracle gradient")
+}}
+
+local func required_parameter_gradient(parameter:NN.Parameter) Tensor {{
+    if let gradient = parameter.gradient() {{ return gradient }}
+    panic("expected a connected parameter gradient")
 }}
 
 test "oracle comparison harness rejects deliberate mutations" {{
@@ -978,6 +1047,54 @@ test "match PyTorch and TensorFlow eager gradients" {{
     assert(float_values_match(required_gradient(recurrent_weights).values(), expected_recurrent, 0.0001, 0.00004))
 }}
 
+test "match PyTorch optimizer values state and global clipping" {{
+    var initial:float[] = [1.0, -2.0]
+    var repeated_gradient:float[] = [0.3, -0.2]
+    var sgd_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(initial))]
+    var sgd = Optim.SGD(sgd_parameters, 0.1, momentum:0.9, weight_decay:0.01)
+    let fixed = Tensor.vector(repeated_gradient)
+    sgd_parameters[0].value().multiply(fixed).sum().backward()
+    sgd.step()
+    sgd.zero_grad()
+    sgd_parameters[0].value().multiply(fixed).sum().backward()
+    sgd.step()
+    var expected_sgd:float[] = [{values['optimizer_sgd_state']}]
+    var expected_sgd_value:float[] = [expected_sgd[0], expected_sgd[1]]
+    assert(float_values_match(sgd_parameters[0].value().detach().values(), expected_sgd_value, 0.000002, 0.000002))
+
+    var first_gradient:float[] = [0.3, -0.2]
+    var second_gradient:float[] = [-0.1, 0.4]
+    var adam_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(initial))]
+    var adam = Optim.Adam(adam_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9, weight_decay:0.05)
+    adam_parameters[0].value().multiply(Tensor.vector(first_gradient)).sum().backward()
+    adam.step()
+    adam.zero_grad()
+    adam_parameters[0].value().multiply(Tensor.vector(second_gradient)).sum().backward()
+    adam.step()
+    var expected_adam:float[] = [{values['optimizer_adam_state']}]
+    var expected_adam_value:float[] = [expected_adam[0], expected_adam[1]]
+    assert(float_values_match(adam_parameters[0].value().detach().values(), expected_adam_value, 0.000003, 0.000003))
+
+    var first_values:float[] = [1.0, 1.0]
+    var second_values:float[] = [1.0]
+    var clip_first:float[] = [3.0, 4.0]
+    var clip_second:float[] = [12.0]
+    var clipped:NN.Parameter[] = [
+        NN.Parameter("first", Tensor.vector(first_values)),
+        NN.Parameter("second", Tensor.vector(second_values))
+    ]
+    var clipper = Optim.SGD(clipped, 0.1)
+    clipped[0].value().multiply(Tensor.vector(clip_first)).sum().backward()
+    clipped[1].value().multiply(Tensor.vector(clip_second)).sum().backward()
+    let norm = clipper.clip_grad_norm(6.5)
+    var expected_clip:float[] = [{values['optimizer_clip_global_norm']}]
+    var expected_first:float[] = [expected_clip[1], expected_clip[2]]
+    var expected_second:float[] = [expected_clip[3]]
+    assert(float_value_matches(norm.item(), expected_clip[0], 0.000002, 0.000002))
+    assert(float_values_match(required_parameter_gradient(clipped[0]).values(), expected_first, 0.000002, 0.000002))
+    assert(float_values_match(required_parameter_gradient(clipped[1]).values(), expected_second, 0.000002, 0.000002))
+}}
+
 test "run the float32 oracle fixture on the available GPU" {{
     if !GPU.Device.is_supported() {{ return }}
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
@@ -1057,6 +1174,7 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "| NCHW/OIHW convolution and pooling | `Neural.sx`, `NeuralGPU.sx`, `OracleDifferential.sx` | channels, ranks, stride, padding and kernel shape |",
         "| seeded initialization and dropout | `Neural.sx`, `NeuralGPU.sx` | bounds, fan sizes, probability, seed and iteration |",
         "| eager reverse-mode autodifferentiation | `Autograd.sx`, `AutogradGPU.sx`, `OracleDifferential.sx` | dtype, seed, consumed graph, transfer and disconnected graph |",
+        "| named parameters, SGD, Adam and global gradient clipping | `Optimizers.sx`, `OptimizerState.sx`, `OptimizersGPU.sx`, `OracleDifferential.sx` | duplicate names, hyperparameters, non-finite gradients and initialized-state placement |",
         "| `to`, `cpu`, CPU/GPU placement and resource lifetime | `GPU.sx`, `GPUViews.sx`, `GPUCompute.sx`, `GPUStress.sx`, `OracleDifferential.sx` | extraction on GPU, cross-device use and integer GPU compute |",
         "",
         "The successful suite includes targeted scalar, singleton, zero-sized, broadcast, strided-view, axis, signed-zero, NaN, infinity, integer-extrema, exact-conversion, large/small-amplitude, and bounded seeded pseudo-random cases. `Tests/Consumer/Diagnostics/README.md` indexes division-by-zero, overflow, out-of-range conversion, and structural errors.",
