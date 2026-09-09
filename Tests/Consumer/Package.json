@@ -1,7 +1,7 @@
 {
   "sources": "Tests",
   "dependencies": {
-    "GFX.GPU": "^0.3.0",
+    "GFX.GPU": "^0.4.0",
     "STD": "^0.21.0",
     "Tensor": "^0.1.0"
   }
