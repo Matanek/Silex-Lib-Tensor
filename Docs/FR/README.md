@@ -426,42 +426,49 @@ devices reste explicite : `tensor.cpu().to(other_device)`.
 
 ## Choisir CPU ou GPU
 
-La [campagne Release publique](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
-du 8 septembre 2026 a mesuré Tensor sur un Apple M3 Pro de 18 Gio, sous macOS
-26.6.2 et Metal. Ces seuils décrivent uniquement cette machine et les commits
-Tensor `bdcd062`, GFX.GPU `bb23787` et Silex `1c310ce` ; ils ne prédisent pas un
-autre CPU, GPU, driver ou backend.
+Les campagnes Release [numérique](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute/Baselines/2026-09-09-macos-arm64-part13)
+et [neuronale](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute/Baselines/2026-09-09-macos-arm64-part13-neural)
+du 9 septembre 2026 ont mesuré Tensor sur un Apple M3 Pro de 18 Gio, sous
+macOS 26.6.2 et Metal. Ces seuils décrivent uniquement cette machine et les
+commits Tensor `cd91b10`, GFX.GPU `db65dc3` et Silex `1e19192` ; ils ne
+prédisent pas un autre CPU, GPU, driver ou backend.
 
 Pour un calcul déjà résident, le GPU chaud dépasse le CPU à partir de 65 536
-éléments pour l'addition et la somme globale dans la grille mesurée. Le
-`matmul` carré dépasse le CPU dès le côté 32, mais son premier passage inclut la
-création du pipeline. La chaîne `add -> multiply -> matmul -> sum -> add` reste
-plus lente au côté 32, transferts compris ; son croisement observé est le côté
-128. À ce point, la médiane vaut 91,889 ms sur CPU, 11,892 ms en calcul GPU
-chaud et 18,268 ms avec les deux uploads et le download final, soit 5,03× sur
-le parcours complet. Le rapport conserve les plages complètes et les régimes
-CPU très dispersés sans retirer d'échantillon ; les facteurs d'accélération ne
-doivent donc pas être généralisés.
+éléments pour l'addition. La somme globale ne dépasse pas le CPU dans la grille
+mesurée ; son implémentation GPU actuelle reste un chemin de portabilité, pas
+une recommandation de performance. Le `matmul` carré dépasse le CPU dès le
+côté 32. La chaîne `add -> multiply -> matmul -> sum -> add` devient plus
+rapide dès le côté 32 en résidence et au côté 128 transferts compris. À 128,
+la médiane vaut 195,731 ms sur CPU, 9,883 ms en calcul GPU chaud et 13,177 ms
+avec les deux uploads et le download final, soit 14,85× sur le parcours
+complet. Les plages et dispersions complètes restent dans le rapport.
 
 Pour 262 144 octets, les débits médians observés incluent conversion typée,
 allocation, soumission et attente :
 
 | Dtype | Upload Mio/s | Download Mio/s |
 | --- | ---: | ---: |
-| `float32` | 30,99 | 73,13 |
-| `int8` | 22,50 | 23,73 |
-| `uint8` | 19,97 | 22,67 |
-| `int16` | 25,70 | 39,99 |
-| `uint16` | 26,48 | 41,68 |
-| `int32` | 36,17 | 62,68 |
-| `uint32` | 28,84 | 69,71 |
-| `int64` | 41,36 | 89,63 |
-| `uint64` | 39,39 | 93,89 |
+| `float32` | 171,28 | 533,96 |
+| `int8` | 106,40 | 168,99 |
+| `uint8` | 120,45 | 166,76 |
+| `int16` | 160,52 | 303,10 |
+| `uint16` | 172,63 | 301,06 |
+| `int32` | 177,99 | 497,41 |
+| `uint32` | 215,07 | 505,25 |
+| `int64` | 184,07 | 729,29 |
+| `uint64` | 249,00 | 735,29 |
 
 Gardez donc les petites opérations isolées sur CPU. Le GPU devient intéressant
 lorsque les entrées restent résidentes sur plusieurs opérations ou que le
 calcul amortit explicitement l'upload et le download. Ces mesures de transfert
 ne revendiquent aucune accélération du calcul entier sur GPU.
+
+Pour l'entraînement, le forward GPU chaud du MLP devient plus rapide à partir
+du batch 16 dans la grille mesurée : 4,078 ms sur CPU contre 3,280 ms sur GPU,
+puis 15,995 ms contre 3,815 ms au batch 64. Aucun pas d'entraînement complet
+MLP, CNN ou RNN mesuré n'est plus rapide sur GPU dans cette campagne. Le coût
+des nombreux dispatches domine encore ces petits modèles ; choisissez donc le
+placement depuis le parcours complet, pas depuis un seul noyau favorable.
 
 ## Sémantique de valeur
 

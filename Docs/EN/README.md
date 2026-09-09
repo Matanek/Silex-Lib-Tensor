@@ -416,41 +416,49 @@ remains explicit: `tensor.cpu().to(other_device)`.
 
 ## Choose CPU or GPU
 
-The September 8, 2026 [public Release campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
-measured Tensor on an 18 GiB Apple M3 Pro under macOS 26.6.2 and Metal. These
-thresholds describe only that machine and Tensor `bdcd062`, GFX.GPU `bb23787`,
-and Silex `1c310ce`; they do not predict another CPU, GPU, driver, or backend.
+The September 9, 2026 Release [numeric](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute/Baselines/2026-09-09-macos-arm64-part13)
+and [neural](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute/Baselines/2026-09-09-macos-arm64-part13-neural)
+campaigns measured Tensor on an 18 GiB Apple M3 Pro under macOS 26.6.2 and
+Metal. These thresholds describe only that machine and Tensor `cd91b10`,
+GFX.GPU `db65dc3`, and Silex `1e19192`; they do not predict another CPU, GPU,
+driver, or backend.
 
 For already-resident compute, hot GPU execution overtakes the CPU at 65,536
-elements for addition and global sum on the measured grid. Square `matmul`
-overtakes the CPU at side 32, although its first pass includes pipeline
-creation. The `add -> multiply -> matmul -> sum -> add` chain remains slower at
-side 32 when transfers are included; its observed crossover is side 128. At
-that point, the median is 91.889 ms on the CPU, 11.892 ms for hot GPU compute,
-and 18.268 ms including both uploads and the final download, a 5.03× end-to-end
-speedup. The report retains full ranges and widely dispersed CPU scheduling
-regimes without removing samples; these speedup factors must not be
-generalized.
+elements for addition. Global sum does not overtake the CPU on the measured
+grid; its current GPU implementation is a portability path, not a performance
+recommendation. Square `matmul` overtakes the CPU at side 32. The
+`add -> multiply -> matmul -> sum -> add` chain becomes faster at side 32 while
+resident and at side 128 with transfers included. At 128, the median is
+195.731 ms on the CPU, 9.883 ms for hot GPU compute, and 13.177 ms including
+both uploads and the final download, a 14.85× end-to-end speedup. Full ranges
+and dispersion remain available in the report.
 
 For 262,144 bytes, the observed median throughput includes typed conversion,
 allocation, submission, and completion wait:
 
 | Dtype | Upload MiB/s | Download MiB/s |
 | --- | ---: | ---: |
-| `float32` | 30.99 | 73.13 |
-| `int8` | 22.50 | 23.73 |
-| `uint8` | 19.97 | 22.67 |
-| `int16` | 25.70 | 39.99 |
-| `uint16` | 26.48 | 41.68 |
-| `int32` | 36.17 | 62.68 |
-| `uint32` | 28.84 | 69.71 |
-| `int64` | 41.36 | 89.63 |
-| `uint64` | 39.39 | 93.89 |
+| `float32` | 171.28 | 533.96 |
+| `int8` | 106.40 | 168.99 |
+| `uint8` | 120.45 | 166.76 |
+| `int16` | 160.52 | 303.10 |
+| `uint16` | 172.63 | 301.06 |
+| `int32` | 177.99 | 497.41 |
+| `uint32` | 215.07 | 505.25 |
+| `int64` | 184.07 | 729.29 |
+| `uint64` | 249.00 | 735.29 |
 
 Keep small isolated operations on the CPU. The GPU becomes useful when inputs
 remain resident across several operations or compute explicitly amortizes
 upload and download. These transfer measurements make no integer GPU compute
 acceleration claim.
+
+For training, hot GPU forward execution becomes faster for the MLP from batch
+16 on the measured grid: 4.078 ms on the CPU versus 3.280 ms on the GPU, then
+15.995 ms versus 3.815 ms at batch 64. No complete measured MLP, CNN, or RNN
+training step is faster on the GPU in this campaign. Dispatch cost still
+dominates these small models, so choose placement from the complete path, not
+from one favorable kernel.
 
 ## Value semantics
 
