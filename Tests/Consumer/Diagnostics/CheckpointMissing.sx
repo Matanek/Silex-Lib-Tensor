@@ -1,7 +1,7 @@
-use Tensor.NN
+use Tensor.Neural
 
 func main() {
-    var layers:NN.Layer[] = [NN.Dense("dense", 2, 1, 7)]
-    var model = NN.Sequential(layers)
-    NN.Checkpoint.load(model, "Fixtures/CheckpointMissing.sxtc")
+    var layers:Neural.Layer[] = [Neural.Dense("dense", 2, 1, 7)]
+    var model = Neural.Sequential(layers)
+    Neural.Checkpoint.load(model, "Fixtures/CheckpointMissing.sxtc")
 }

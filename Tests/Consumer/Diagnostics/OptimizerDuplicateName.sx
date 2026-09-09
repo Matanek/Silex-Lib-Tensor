@@ -1,12 +1,12 @@
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func main() {
     var values:float[] = [1.0]
-    var parameters:NN.Parameter[] = [
-        NN.Parameter("weight", Tensor.vector(values)),
-        NN.Parameter("weight", Tensor.vector(values))
+    var parameters:Neural.Parameter[] = [
+        Neural.Parameter("weight", Tensor.vector(values)),
+        Neural.Parameter("weight", Tensor.vector(values))
     ]
     var optimizer = Optim.SGD(parameters, learning_rate:0.1)
     optimizer.step()

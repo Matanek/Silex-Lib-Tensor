@@ -12,7 +12,7 @@ public nocopy class SimpleRNN:Layer {
 
     init(name:str, input_features:int, hidden_features:int, seed:int) {
         if input_features <= 0 || hidden_features <= 0 {
-            panic("Tensor.NN.SimpleRNN requires positive input and hidden feature counts")
+            panic("Tensor.Neural.SimpleRNN requires positive input and hidden feature counts")
         }
         var randomizer = Randomizer(seed)
         self.input_features = input_features
@@ -32,7 +32,7 @@ public nocopy class SimpleRNN:Layer {
 
     func forward(input:Tensor, initial_state:Tensor?) Tensor {
         if input.rank() != 3 || input.shape()[2] != self.input_features {
-            panic("Tensor.NN.SimpleRNN.forward requires [batch, time, input_features]")
+            panic("Tensor.Neural.SimpleRNN.forward requires [batch, time, input_features]")
         }
         var state = input.autograd_constant_shape(
             [input.shape()[0], self.hidden_features], 0.0
@@ -43,7 +43,7 @@ public nocopy class SimpleRNN:Layer {
                 requested.shape()[0] != input.shape()[0] ||
                 requested.shape()[1] != self.hidden_features ||
                 !requested.same_optimizer_placement(input) {
-                panic("Tensor.NN.SimpleRNN.forward initial state must match batch, hidden size, dtype and placement")
+                panic("Tensor.Neural.SimpleRNN.forward initial state must match batch, hidden size, dtype and placement")
             }
             state = requested
         }

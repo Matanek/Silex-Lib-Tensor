@@ -1,6 +1,6 @@
 use GFX.GPU
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func verify_cpu_dtypes() {
@@ -29,8 +29,8 @@ func verify_neural_step() {
     var labels:int32[] = [0, 1]
     let input = Tensor(inputs, [2, 2])
     let target = Tensor(labels, [2])
-    var layers:NN.Layer[] = [NN.Dense("classifier", 2, 2, 13)]
-    var model = NN.Sequential(layers)
+    var layers:Neural.Layer[] = [Neural.Dense("classifier", 2, 2, 13)]
+    var model = Neural.Sequential(layers)
     var optimizer = Optim.SGD(model.parameters(), learning_rate:0.01)
     optimizer.zero_grad()
     model.forward(input).cross_entropy(target, 1).backward()

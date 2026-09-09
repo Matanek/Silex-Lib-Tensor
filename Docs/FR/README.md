@@ -304,18 +304,18 @@ résidents. Pour observer un résultat, employez par exemple
 
 ## Entraîner des paramètres nommés
 
-`Tensor.NN.Parameter` associe un nom stable à une valeur `float32` suivie et à
+`Tensor.Neural.Parameter` associe un nom stable à une valeur `float32` suivie et à
 son gradient éventuel. Le Tensor reste immuable : une étape d'optimisation
 remplace la valeur du paramètre par une nouvelle feuille détachée.
 
 ```sx
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 var initial:float[] = [1.0, -2.0]
-var parameters:NN.Parameter[] = [
-    NN.Parameter("linear.weight", Tensor.vector(initial))
+var parameters:Neural.Parameter[] = [
+    Neural.Parameter("linear.weight", Tensor.vector(initial))
 ]
 var optimizer = Optim.Adam(parameters, learning_rate:0.01)
 
@@ -353,7 +353,7 @@ de migrer silencieusement une partie du modèle.
 
 ## Composer et entraîner un réseau
 
-`Tensor.NN.Layer` est le contrat commun des couches et `Sequential` les exécute
+`Tensor.Neural.Layer` est le contrat commun des couches et `Sequential` les exécute
 dans l'ordre tout en collectant récursivement leurs paramètres nommés. Les
 couches 0.1.0 sont `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`,
 `Dropout`, `LayerNorm` et `SimpleRNN`. Les activations restent des opérations
@@ -361,12 +361,12 @@ Tensor ; `Activation.relu()`, `sigmoid()` et `tanh()` servent uniquement à les
 placer dans une composition.
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Dense("hidden", 2, 8, 101),
-    NN.Activation.tanh(),
-    NN.Dense("classifier", 8, 2, 102)
+var layers:Neural.Layer[] = [
+    Neural.Dense("hidden", 2, 8, 101),
+    Neural.Activation.tanh(),
+    Neural.Dense("classifier", 8, 2, 102)
 ]
-var model = NN.Sequential(layers)
+var model = Neural.Sequential(layers)
 var parameters = model.parameters()
 var optimizer = Optim.Adam(parameters, learning_rate:0.04)
 
@@ -383,10 +383,10 @@ une récurrence tanh unidirectionnelle et retourne l'état final. `train()` et
 comportement. `model.to(device)` et `model.cpu()` déplacent tous les paramètres
 après `zero_grad()` selon les règles de l'optimiseur.
 
-`NN.Checkpoint.save(model, path)` écrit un document texte déterministe de
+`Neural.Checkpoint.save(model, path)` écrit un document texte déterministe de
 schéma 1 avec noms UTF-8, dtype, formes et valeurs. La sauvegarde d'un modèle
 GPU effectue nécessairement le readback explicite vers le fichier.
-`NN.Checkpoint.load(model, path)` valide le document et l'ensemble complet des
+`Neural.Checkpoint.load(model, path)` valide le document et l'ensemble complet des
 paramètres avant la première mutation. Le modèle doit être sur CPU pendant la
 lecture ; appelez ensuite explicitement `model.to(device)` si nécessaire. Le
 checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.

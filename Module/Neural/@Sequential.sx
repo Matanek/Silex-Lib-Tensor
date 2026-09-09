@@ -5,7 +5,7 @@ public nocopy class Sequential:Layer {
     private var layers:Layer[]
 
     init(layers:Layer[]) {
-        if layers.is_empty() { panic("Tensor.NN.Sequential requires at least one layer") }
+        if layers.is_empty() { panic("Tensor.Neural.Sequential requires at least one layer") }
         self.layers = layers
         var parameters = self.parameters()
         var index = 0
@@ -13,7 +13,7 @@ public nocopy class Sequential:Layer {
             var previous = 0
             while previous < index {
                 if parameters[previous].name() == parameters[index].name() {
-                    panic("Tensor.NN.Sequential requires unique parameter names; duplicate '$(parameters[index].name())'")
+                    panic("Tensor.Neural.Sequential requires unique parameter names; duplicate '$(parameters[index].name())'")
                 }
                 previous++
             }

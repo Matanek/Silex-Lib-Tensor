@@ -35,7 +35,7 @@ func nn_pool_stride(kernel_size:int, requested:int?, padding:int, operation:str)
     var stride = kernel_size
     if let value = requested { stride = value }
     if kernel_size <= 0 || stride <= 0 || padding < 0 {
-        panic("Tensor.NN.$(operation) requires positive kernel and stride with non-negative padding")
+        panic("Tensor.Neural.$(operation) requires positive kernel and stride with non-negative padding")
     }
     return stride
 }

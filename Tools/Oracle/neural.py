@@ -328,7 +328,7 @@ def render_neural_fixture(cases: dict[str, NeuralCase], specs: dict[str, ModelSp
 
 use Tensor
 use STD.Math
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 use Tensor.Autograd
 
@@ -345,12 +345,12 @@ func neural_values_match(actual:float[], expected:float[], absolute:float = 0.00
     return true
 }}
 
-func neural_gradient(parameter:NN.Parameter) float[] {{
+func neural_gradient(parameter:Neural.Parameter) float[] {{
     if let gradient = parameter.gradient() {{ return gradient.detach().values() }}
     panic("expected generated neural gradient")
 }}
 
-func neural_parameters_match(parameters:NN.Parameter[], expected:float[]) bool {{
+func neural_parameters_match(parameters:Neural.Parameter[], expected:float[]) bool {{
     var offset = 0
     for parameter in parameters {{
         let observed = parameter.value().detach().values()
@@ -362,7 +362,7 @@ func neural_parameters_match(parameters:NN.Parameter[], expected:float[]) bool {
     return offset == expected.count()
 }}
 
-func neural_gradients_match(parameters:NN.Parameter[], expected:float[]) bool {{
+func neural_gradients_match(parameters:Neural.Parameter[], expected:float[]) bool {{
     var offset = 0
     for parameter in parameters {{
         let observed = neural_gradient(parameter)
@@ -374,8 +374,8 @@ func neural_gradients_match(parameters:NN.Parameter[], expected:float[]) bool {{
     return offset == expected.count()
 }}
 
-func neural_sgd_matches(model:NN.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
-    NN.Checkpoint.load(model, path)
+func neural_sgd_matches(model:Neural.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
+    Neural.Checkpoint.load(model, path)
     var parameters = model.parameters()
     var optimizer = Optim.SGD(parameters, 0.05)
     model.forward(input).cross_entropy(target, 1).backward()
@@ -383,8 +383,8 @@ func neural_sgd_matches(model:NN.Layer, path:str, input:Tensor, target:Tensor, e
     return neural_parameters_match(parameters, expected)
 }}
 
-func neural_adam_matches(model:NN.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
-    NN.Checkpoint.load(model, path)
+func neural_adam_matches(model:Neural.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
+    Neural.Checkpoint.load(model, path)
     var parameters = model.parameters()
     var optimizer = Optim.Adam(parameters, learning_rate:0.01, beta1:0.8, beta2:0.9, epsilon:0.00000001)
     model.forward(input).cross_entropy(target, 1).backward()
@@ -392,8 +392,8 @@ func neural_adam_matches(model:NN.Layer, path:str, input:Tensor, target:Tensor, 
     return neural_parameters_match(parameters, expected)
 }}
 
-func neural_trajectory_matches(model:NN.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
-    NN.Checkpoint.load(model, path)
+func neural_trajectory_matches(model:Neural.Layer, path:str, input:Tensor, target:Tensor, expected:float[]) bool {{
+    Neural.Checkpoint.load(model, path)
     var parameters = model.parameters()
     var optimizer = Optim.SGD(parameters, 0.05)
     var observed:float[] = [model.forward(input).detach().cross_entropy(target, 1).item()]
@@ -410,22 +410,22 @@ func neural_trajectory_matches(model:NN.Layer, path:str, input:Tensor, target:Te
     return neural_values_match(observed, expected)
 }}
 
-func neural_mlp_model() NN.Sequential {{
-    var layers:NN.Layer[] = [NN.Dense("hidden", 2, 3, 1), NN.Activation.tanh(), NN.Dense("classifier", 3, 2, 2)]
-    return NN.Sequential(layers)
+func neural_mlp_model() Neural.Sequential {{
+    var layers:Neural.Layer[] = [Neural.Dense("hidden", 2, 3, 1), Neural.Activation.tanh(), Neural.Dense("classifier", 3, 2, 2)]
+    return Neural.Sequential(layers)
 }}
 
-func neural_cnn_model() NN.Sequential {{
-    var layers:NN.Layer[] = [
-        NN.Conv2D("features", 1, 2, 2, 3), NN.Activation.relu(),
-        NN.MaxPool2D(2, stride:1), NN.Flatten(), NN.Dense("classifier", 8, 2, 4)
+func neural_cnn_model() Neural.Sequential {{
+    var layers:Neural.Layer[] = [
+        Neural.Conv2D("features", 1, 2, 2, 3), Neural.Activation.relu(),
+        Neural.MaxPool2D(2, stride:1), Neural.Flatten(), Neural.Dense("classifier", 8, 2, 4)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }}
 
-func neural_rnn_model() NN.Sequential {{
-    var layers:NN.Layer[] = [NN.SimpleRNN("memory", 1, 2, 5), NN.Dense("classifier", 2, 2, 6)]
-    return NN.Sequential(layers)
+func neural_rnn_model() Neural.Sequential {{
+    var layers:Neural.Layer[] = [Neural.SimpleRNN("memory", 1, 2, 5), Neural.Dense("classifier", 2, 2, 6)]
+    return Neural.Sequential(layers)
 }}
 
 test "match PyTorch and TensorFlow MLP layers gradients optimizers and trajectory" {{
@@ -434,7 +434,7 @@ test "match PyTorch and TensorFlow MLP layers gradients optimizers and trajector
     var target_values:int32[] = [0, 1, 1, 0]
     let input = Tensor(input_values, [4, 2])
     let target = Tensor(target_values, [4])
-    var model = neural_mlp_model(); NN.Checkpoint.load(model, path)
+    var model = neural_mlp_model(); Neural.Checkpoint.load(model, path)
     var weight0:float[] = [{render_values(tuple(float(v) for v in specs['mlp'].parameters[0][1].reshape(-1)))}]
     var bias0:float[] = [{render_values(tuple(float(v) for v in specs['mlp'].parameters[1][1].reshape(-1)))}]
     var weight1:float[] = [{render_values(tuple(float(v) for v in specs['mlp'].parameters[2][1].reshape(-1)))}]
@@ -460,7 +460,7 @@ test "match PyTorch and TensorFlow CNN layers gradients optimizers and trajector
     var target_values:int32[] = [0, 1]
     let input = Tensor(input_values, [2, 1, 4, 4])
     let target = Tensor(target_values, [2])
-    var model = neural_cnn_model(); NN.Checkpoint.load(model, path)
+    var model = neural_cnn_model(); Neural.Checkpoint.load(model, path)
     var kernel:float[] = [{render_values(tuple(float(v) for v in specs['cnn'].parameters[0][1].reshape(-1)))}]
     var convolution_bias:float[] = [{render_values(tuple(float(v) for v in specs['cnn'].parameters[1][1].reshape(-1)))}]
     var head_weight:float[] = [{render_values(tuple(float(v) for v in specs['cnn'].parameters[2][1].reshape(-1)))}]
@@ -490,7 +490,7 @@ test "match PyTorch and TensorFlow RNN layers gradients optimizers and trajector
     var target_values:int32[] = [0, 1]
     let input = Tensor(input_values, [2, 3, 1])
     let target = Tensor(target_values, [2])
-    var model = neural_rnn_model(); NN.Checkpoint.load(model, path)
+    var model = neural_rnn_model(); Neural.Checkpoint.load(model, path)
     var input_weight:float[] = [{render_values(tuple(float(v) for v in specs['rnn'].parameters[0][1].reshape(-1)))}]
     var recurrent_weight:float[] = [{render_values(tuple(float(v) for v in specs['rnn'].parameters[1][1].reshape(-1)))}]
     var recurrent_bias:float[] = [{render_values(tuple(float(v) for v in specs['rnn'].parameters[2][1].reshape(-1)))}]

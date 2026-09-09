@@ -1,6 +1,6 @@
 use STD.Math
 use Tensor
-use Tensor.NN.Parameter
+use Tensor.Neural.Parameter
 use Tensor.Optim.Adam
 use Tensor.Optim.SGD
 

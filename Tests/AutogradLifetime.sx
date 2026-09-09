@@ -2,7 +2,7 @@ use Tensor
 use Tensor.autograd_performance_statistics
 use Tensor.Autograd.Variable
 use Tensor.autograd_retained_edge_count
-use Tensor.NN.Parameter
+use Tensor.Neural.Parameter
 use Tensor.Optim.SGD
 
 func temporary_diamond(input:Tensor) Tensor {

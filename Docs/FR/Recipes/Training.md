@@ -17,7 +17,7 @@ loss.backward()
 optimizer.step()
 ```
 
-`Tensor` reste une valeur immuable. `NN.Parameter` possède la feuille
+`Tensor` reste une valeur immuable. `Neural.Parameter` possède la feuille
 entraînable ; `optimizer.step()` lui affecte une nouvelle valeur détachée.
 Lire `loss.item()` dans chaque itération est correct sur CPU, mais synchronise
 un modèle GPU. Espacez cette observation lorsque la boucle doit rester
@@ -30,12 +30,12 @@ problème XOR, enregistre ses paramètres puis recharge un modèle neuf. Son
 architecture est :
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Dense("hidden", 2, 8, 101),
-    NN.Activation.tanh(),
-    NN.Dense("classifier", 8, 2, 102)
+var layers:Neural.Layer[] = [
+    Neural.Dense("hidden", 2, 8, 101),
+    Neural.Activation.tanh(),
+    Neural.Dense("classifier", 8, 2, 102)
 ]
-var model = NN.Sequential(layers)
+var model = Neural.Sequential(layers)
 ```
 
 Les noms de couches déterminent les noms stables du checkpoint. Réutiliser un
@@ -47,12 +47,12 @@ Le [CNN exécutable](../../../Tests/Consumer/Examples/TrainCNN.sx) classe quatre
 motifs `4 × 4`. Tensor expose NCHW pour les entrées et OIHW pour les noyaux :
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Conv2D("features", 1, 4, 2, 211),
-    NN.Activation.relu(),
-    NN.MaxPool2D(2, stride:1),
-    NN.Flatten(),
-    NN.Dense("classifier", 16, 2, 212)
+var layers:Neural.Layer[] = [
+    Neural.Conv2D("features", 1, 4, 2, 211),
+    Neural.Activation.relu(),
+    Neural.MaxPool2D(2, stride:1),
+    Neural.Flatten(),
+    Neural.Dense("classifier", 16, 2, 212)
 ]
 ```
 
@@ -66,9 +66,9 @@ Le [RNN exécutable](../../../Tests/Consumer/Examples/TrainRNN.sx) reçoit
 unidirectionnelle et rend uniquement l'état final :
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.SimpleRNN("memory", 1, 6, 307),
-    NN.Dense("classifier", 6, 2, 308)
+var layers:Neural.Layer[] = [
+    Neural.SimpleRNN("memory", 1, 6, 307),
+    Neural.Dense("classifier", 6, 2, 308)
 ]
 ```
 
@@ -104,9 +104,9 @@ sont vérifiés par les tests `TrainingMLPGPU.sx`, `TrainingCNNGPU.sx` et
 ## Sauvegarder les paramètres
 
 ```sx
-NN.Checkpoint.save(model, path)
+Neural.Checkpoint.save(model, path)
 var restored = make_model(999)
-NN.Checkpoint.load(restored, path)
+Neural.Checkpoint.load(restored, path)
 ```
 
 Chargez sur CPU un modèle de même architecture et de mêmes noms, puis appelez

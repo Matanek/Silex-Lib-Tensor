@@ -8,7 +8,7 @@ use STD.Math
 use Tensor
 use Tensor.Autograd
 use Tensor.DType
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 local func exact_values<T>(actual:T[], expected:T[]) bool {
@@ -52,7 +52,7 @@ local func required_gradient(variable:Autograd.Variable) Tensor {
     panic("expected a connected oracle gradient")
 }
 
-local func required_parameter_gradient(parameter:NN.Parameter) Tensor {
+local func required_parameter_gradient(parameter:Neural.Parameter) Tensor {
     if let gradient = parameter.gradient() { return gradient }
     panic("expected a connected parameter gradient")
 }
@@ -366,7 +366,7 @@ test "match PyTorch and TensorFlow eager gradients" {
 test "match PyTorch optimizer values state and global clipping" {
     var initial:float[] = [1.0, -2.0]
     var repeated_gradient:float[] = [0.3, -0.2]
-    var sgd_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(initial))]
+    var sgd_parameters:Neural.Parameter[] = [Neural.Parameter("weight", Tensor.vector(initial))]
     var sgd = Optim.SGD(sgd_parameters, 0.1, momentum:0.9, weight_decay:0.01)
     let fixed = Tensor.vector(repeated_gradient)
     sgd_parameters[0].value().multiply(fixed).sum().backward()
@@ -380,7 +380,7 @@ test "match PyTorch optimizer values state and global clipping" {
 
     var first_gradient:float[] = [0.3, -0.2]
     var second_gradient:float[] = [-0.1, 0.4]
-    var adam_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(initial))]
+    var adam_parameters:Neural.Parameter[] = [Neural.Parameter("weight", Tensor.vector(initial))]
     var adam = Optim.Adam(adam_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9, weight_decay:0.05)
     adam_parameters[0].value().multiply(Tensor.vector(first_gradient)).sum().backward()
     adam.step()
@@ -395,9 +395,9 @@ test "match PyTorch optimizer values state and global clipping" {
     var second_values:float[] = [1.0]
     var clip_first:float[] = [3.0, 4.0]
     var clip_second:float[] = [12.0]
-    var clipped:NN.Parameter[] = [
-        NN.Parameter("first", Tensor.vector(first_values)),
-        NN.Parameter("second", Tensor.vector(second_values))
+    var clipped:Neural.Parameter[] = [
+        Neural.Parameter("first", Tensor.vector(first_values)),
+        Neural.Parameter("second", Tensor.vector(second_values))
     ]
     var clipper = Optim.SGD(clipped, 0.1)
     clipped[0].value().multiply(Tensor.vector(clip_first)).sum().backward()

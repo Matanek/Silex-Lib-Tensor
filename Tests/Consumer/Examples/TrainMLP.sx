@@ -1,16 +1,16 @@
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
-func mlp_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 8, seed),
-        NN.Activation.tanh(),
-        NN.Dense("classifier", 8, 2, seed + 1)
+func mlp_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 8, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("classifier", 8, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 func values_match(left:float[], right:float[]) bool {
@@ -45,9 +45,9 @@ func main() {
     let trained = model.forward(input).detach()
     let final_loss = trained.cross_entropy(target, 1).item()
     assert(final_loss < initial_loss * 0.2)
-    NN.Checkpoint.save(model, checkpoint)
+    Neural.Checkpoint.save(model, checkpoint)
     var restored = mlp_model(777)
-    NN.Checkpoint.load(restored, checkpoint)
+    Neural.Checkpoint.load(restored, checkpoint)
     assert(values_match(restored.forward(input).detach().values(), trained.values()))
     match FileSystem.remove_file(checkpoint) {
         success => {}

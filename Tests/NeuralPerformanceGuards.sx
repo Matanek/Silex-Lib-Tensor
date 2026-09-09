@@ -5,20 +5,20 @@ use Tensor.gpu_performance_statistics
 use Tensor.gpu_pipeline_compilations
 use Tensor.reset_gpu_performance_statistics
 use Tensor.reset_gpu_pipeline_compilations
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
-func performance_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 8, seed),
-        NN.Activation.tanh(),
-        NN.Dense("classifier", 8, 2, seed + 1)
+func performance_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 8, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("classifier", 8, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 func training_step(
-    model:NN.Layer, input:Tensor, target:Tensor,
+    model:Neural.Layer, input:Tensor, target:Tensor,
     optimizer:Optim.Adam, device:GPU.Device
 ) {
     optimizer.zero_grad()

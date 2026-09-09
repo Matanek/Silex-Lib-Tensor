@@ -1,7 +1,7 @@
 use STD.Math
 use Tensor
 use Tensor.DType
-use Tensor.NN.Parameter
+use Tensor.Neural.Parameter
 
 func optimizer_parameters(parameters:Parameter[], operation:str) Parameter[] {
     if parameters.is_empty() { panic("Tensor.Optim.$(operation) requires at least one parameter") }

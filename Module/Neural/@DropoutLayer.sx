@@ -9,10 +9,10 @@ public nocopy class Dropout:Layer {
 
     init(probability:float, seed:int) {
         if !Math.is_finite(probability) || probability < 0.0 || probability >= 1.0 {
-            panic("Tensor.NN.Dropout requires 0 <= probability < 1")
+            panic("Tensor.Neural.Dropout requires 0 <= probability < 1")
         }
         if seed < 0 || seed > 4294967295 {
-            panic("Tensor.NN.Dropout seed must fit uint32")
+            panic("Tensor.Neural.Dropout seed must fit uint32")
         }
         self.probability = probability
         self.seed = seed

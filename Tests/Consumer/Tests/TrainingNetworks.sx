@@ -1,7 +1,7 @@
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func network_accuracy(logits:Tensor, targets:int32[], classes:int) float {
@@ -40,32 +40,32 @@ func remove_network_checkpoint(path:str) {
     }
 }
 
-func mlp_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 8, seed),
-        NN.Activation.tanh(),
-        NN.Dense("classifier", 8, 2, seed + 1)
+func mlp_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 8, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("classifier", 8, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
-func cnn_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Conv2D("features", 1, 4, 2, seed),
-        NN.Activation.relu(),
-        NN.MaxPool2D(2, stride:1),
-        NN.Flatten(),
-        NN.Dense("classifier", 16, 2, seed + 1)
+func cnn_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Conv2D("features", 1, 4, 2, seed),
+        Neural.Activation.relu(),
+        Neural.MaxPool2D(2, stride:1),
+        Neural.Flatten(),
+        Neural.Dense("classifier", 16, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
-func rnn_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.SimpleRNN("memory", 1, 6, seed),
-        NN.Dense("classifier", 6, 2, seed + 1)
+func rnn_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.SimpleRNN("memory", 1, 6, seed),
+        Neural.Dense("classifier", 6, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 test "repeat one seeded training trajectory" {
@@ -125,9 +125,9 @@ test "train checkpoint and restore a deterministic MLP" {
     let final_loss = logits.cross_entropy(target, 1).item()
     assert(final_loss < initial_loss * 0.2)
     assert(network_accuracy(logits, target_values, 2) == 1.0)
-    NN.Checkpoint.save(model, path)
+    Neural.Checkpoint.save(model, path)
     var restored = mlp_model(777)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
     remove_network_checkpoint(path)
 }
@@ -159,9 +159,9 @@ test "train checkpoint and restore a deterministic CNN" {
     let final_loss = logits.cross_entropy(target, 1).item()
     assert(final_loss < initial_loss * 0.25)
     assert(network_accuracy(logits, target_values, 2) == 1.0)
-    NN.Checkpoint.save(model, path)
+    Neural.Checkpoint.save(model, path)
     var restored = cnn_model(888)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
     remove_network_checkpoint(path)
 }
@@ -194,9 +194,9 @@ test "train clip checkpoint and restore a deterministic recurrent classifier" {
     let final_loss = logits.cross_entropy(target, 1).item()
     assert(final_loss < initial_loss * 0.25)
     assert(network_accuracy(logits, target_values, 2) == 1.0)
-    NN.Checkpoint.save(model, path)
+    Neural.Checkpoint.save(model, path)
     var restored = rnn_model(999)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     assert(network_values_match(restored.forward(input).detach().values(), logits.values()))
     remove_network_checkpoint(path)
 }

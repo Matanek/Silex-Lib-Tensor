@@ -1,6 +1,6 @@
 use STD.Math
 use Tensor
-use Tensor.NN.Parameter
+use Tensor.Neural.Parameter
 
 class SGDState {
     var initialized:bool

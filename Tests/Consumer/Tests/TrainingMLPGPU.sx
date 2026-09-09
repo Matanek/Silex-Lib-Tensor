@@ -2,7 +2,7 @@ use GFX.GPU
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func mlp_gpu_values_match(left:float[], right:float[], tolerance:float = 0.006) bool {
@@ -15,7 +15,7 @@ func mlp_gpu_values_match(left:float[], right:float[], tolerance:float = 0.006) 
     return true
 }
 
-func mlp_gpu_gradient(parameter:NN.Parameter) Tensor {
+func mlp_gpu_gradient(parameter:Neural.Parameter) Tensor {
     if let gradient = parameter.gradient() { return gradient }
     panic("expected an MLP gradient")
 }
@@ -33,13 +33,13 @@ func mlp_gpu_accuracy(logits:Tensor, targets:int32[]) float {
     return (correct as float) / (targets.count() as float)
 }
 
-func mlp_gpu_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 8, seed),
-        NN.Activation.tanh(),
-        NN.Dense("classifier", 8, 2, seed + 1)
+func mlp_gpu_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 8, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("classifier", 8, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 test "train compare and restore the MLP on GPU" {
@@ -105,9 +105,9 @@ test "train compare and restore the MLP on GPU" {
     let loss = logits.cross_entropy(gpu_target, 1).cpu().item()
     assert(loss < initial * 0.5)
     assert(mlp_gpu_accuracy(logits, target_values) == 1.0)
-    NN.Checkpoint.save(gpu, path)
+    Neural.Checkpoint.save(gpu, path)
     var restored = mlp_gpu_model(901)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     restored.to(device)
     assert(mlp_gpu_values_match(
         restored.forward(gpu_input).detach().cpu().values(),

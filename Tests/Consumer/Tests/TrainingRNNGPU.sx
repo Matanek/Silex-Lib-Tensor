@@ -2,7 +2,7 @@ use GFX.GPU
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func rnn_gpu_match(left:float[], right:float[], tolerance:float = 0.03) bool {
@@ -15,17 +15,17 @@ func rnn_gpu_match(left:float[], right:float[], tolerance:float = 0.03) bool {
     return true
 }
 
-func rnn_gpu_gradient(parameter:NN.Parameter) Tensor {
+func rnn_gpu_gradient(parameter:Neural.Parameter) Tensor {
     if let gradient = parameter.gradient() { return gradient }
     panic("expected an RNN gradient")
 }
 
-func rnn_gpu_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.SimpleRNN("memory", 1, 6, seed),
-        NN.Dense("classifier", 6, 2, seed + 1)
+func rnn_gpu_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.SimpleRNN("memory", 1, 6, seed),
+        Neural.Dense("classifier", 6, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 func rnn_gpu_accuracy(logits:Tensor, targets:int32[]) float {
@@ -113,9 +113,9 @@ test "train compare clip and restore the recurrent classifier on GPU" {
     let loss = logits.cross_entropy(gpu_target, 1).cpu().item()
     assert(loss < initial * 0.5)
     assert(rnn_gpu_accuracy(logits, target_values) == 1.0)
-    NN.Checkpoint.save(gpu, path)
+    Neural.Checkpoint.save(gpu, path)
     var restored = rnn_gpu_model(903)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     restored.to(device)
     assert(rnn_gpu_match(
         restored.forward(gpu_input).detach().cpu().values(), logits.cpu().values()

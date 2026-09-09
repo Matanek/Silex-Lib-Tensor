@@ -14,10 +14,10 @@ public nocopy class Conv2D:Layer {
         kernel_size:int, seed:int, stride:int = 1, padding:int = 0
     ) {
         if input_channels <= 0 || output_channels <= 0 || kernel_size <= 0 {
-            panic("Tensor.NN.Conv2D requires positive channel and kernel sizes")
+            panic("Tensor.Neural.Conv2D requires positive channel and kernel sizes")
         }
         if stride <= 0 || padding < 0 {
-            panic("Tensor.NN.Conv2D requires positive stride and non-negative padding")
+            panic("Tensor.Neural.Conv2D requires positive stride and non-negative padding")
         }
         var randomizer = Randomizer(seed)
         self.input_channels = input_channels
@@ -35,7 +35,7 @@ public nocopy class Conv2D:Layer {
 
     override func forward(input:Tensor) Tensor {
         if input.rank() != 4 || input.shape()[1] != self.input_channels {
-            panic("Tensor.NN.Conv2D.forward requires NCHW input with input_channels")
+            panic("Tensor.Neural.Conv2D.forward requires NCHW input with input_channels")
         }
         return input.conv2d(
             self.weight.value(), self.bias.value(),

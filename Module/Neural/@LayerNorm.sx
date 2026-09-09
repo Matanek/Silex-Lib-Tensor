@@ -10,13 +10,13 @@ public nocopy class LayerNorm:Layer {
 
     init(name:str, normalized_shape:int[], epsilon:float = 0.00001) {
         if normalized_shape.is_empty() {
-            panic("Tensor.NN.LayerNorm requires a non-empty normalized shape")
+            panic("Tensor.Neural.LayerNorm requires a non-empty normalized shape")
         }
         for dimension in normalized_shape {
-            if dimension <= 0 { panic("Tensor.NN.LayerNorm normalized dimensions must be positive") }
+            if dimension <= 0 { panic("Tensor.Neural.LayerNorm normalized dimensions must be positive") }
         }
         if !Math.is_finite(epsilon) || epsilon <= 0.0 {
-            panic("Tensor.NN.LayerNorm requires finite epsilon > 0")
+            panic("Tensor.Neural.LayerNorm requires finite epsilon > 0")
         }
         self.normalized_shape = normalized_shape
         self.epsilon = epsilon
@@ -26,13 +26,13 @@ public nocopy class LayerNorm:Layer {
 
     override func forward(input:Tensor) Tensor {
         if input.rank() < self.normalized_shape.count() {
-            panic("Tensor.NN.LayerNorm.forward requires its normalized trailing shape")
+            panic("Tensor.Neural.LayerNorm.forward requires its normalized trailing shape")
         }
         var axis = 0
         while axis < self.normalized_shape.count() {
             let input_axis = input.rank() - self.normalized_shape.count() + axis
             if input.shape()[input_axis] != self.normalized_shape[axis] {
-                panic("Tensor.NN.LayerNorm.forward requires its normalized trailing shape")
+                panic("Tensor.Neural.LayerNorm.forward requires its normalized trailing shape")
             }
             axis++
         }

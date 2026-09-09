@@ -2,7 +2,7 @@ use STD.File
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 
 func checkpoint_values_match(left:float[], right:float[]) bool {
     if left.count() != right.count() { return false }
@@ -13,13 +13,13 @@ func checkpoint_values_match(left:float[], right:float[]) bool {
     }
     return true
 }
-func checkpoint_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Dense("hidden", 2, 3, seed),
-        NN.Activation.tanh(),
-        NN.Dense("output", 3, 2, seed + 1)
+func checkpoint_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 3, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("output", 3, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 test "save deterministic parameters and restore a fresh model" {
@@ -33,8 +33,8 @@ test "save deterministic parameters and restore a fresh model" {
     let input = Tensor(input_values, [2, 2])
     let expected = source.forward(input).detach().values()
 
-    NN.Checkpoint.save(source, first_path)
-    NN.Checkpoint.save(source, second_path)
+    Neural.Checkpoint.save(source, first_path)
+    Neural.Checkpoint.save(source, second_path)
     match File.read_text(first_path, 1_000_000) {
         success(first) => {
             match File.read_text(second_path, 1_000_000) {
@@ -45,7 +45,7 @@ test "save deterministic parameters and restore a fresh model" {
         failure(error) => { panic(error.detail) }
     }
 
-    NN.Checkpoint.load(restored, first_path)
+    Neural.Checkpoint.load(restored, first_path)
     let actual = restored.forward(input).detach().values()
     assert(checkpoint_values_match(actual, expected))
     match FileSystem.remove_file(first_path) {

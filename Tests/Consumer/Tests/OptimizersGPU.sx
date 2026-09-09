@@ -1,7 +1,7 @@
 use GFX.GPU
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func gpu_optimizer_same(actual:float[], expected:float[], tolerance:float = 0.0003) bool {
@@ -24,8 +24,8 @@ test "keep clipping and Adam updates resident while matching CPU" {
     let cpu_second = Tensor.vector(second_gradient)
     let gpu_first = cpu_first.to(device)
     let gpu_second = cpu_second.to(device)
-    var cpu_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
-    var gpu_parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values).to(device))]
+    var cpu_parameters:Neural.Parameter[] = [Neural.Parameter("weight", Tensor.vector(values))]
+    var gpu_parameters:Neural.Parameter[] = [Neural.Parameter("weight", Tensor.vector(values).to(device))]
     var cpu_optimizer = Optim.Adam(cpu_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9)
     var gpu_optimizer = Optim.Adam(gpu_parameters, learning_rate:0.01, beta1:0.8, beta2:0.9)
 
@@ -61,7 +61,7 @@ test "move parameters after optimizer construction but before state initializati
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
     var values:float[] = [2.0]
     var gradient_values:float[] = [3.0]
-    var parameters:NN.Parameter[] = [NN.Parameter("weight", Tensor.vector(values))]
+    var parameters:Neural.Parameter[] = [Neural.Parameter("weight", Tensor.vector(values))]
     var optimizer = Optim.SGD(parameters, learning_rate:0.1, momentum:0.9)
     parameters[0].to(device)
     let gradient = Tensor.vector(gradient_values).to(device)

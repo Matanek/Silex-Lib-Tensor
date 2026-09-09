@@ -7,7 +7,7 @@ public nocopy class Parameter {
     private var variable:Variable
 
     init(name:str, value:Tensor) {
-        if name == "" { panic("Tensor.NN.Parameter requires a non-empty name") }
+        if name == "" { panic("Tensor.Neural.Parameter requires a non-empty name") }
         self.parameter_name = name
         self.variable = Variable(value)
     }
@@ -22,14 +22,14 @@ public nocopy class Parameter {
 
     func to(device:GPU.Device) {
         if self.gradient() != null {
-            panic("Tensor.NN.Parameter.to requires zero_grad before changing placement")
+            panic("Tensor.Neural.Parameter.to requires zero_grad before changing placement")
         }
         self.variable.replace(self.value().detach().to(device))
     }
 
     func cpu() {
         if self.gradient() != null {
-            panic("Tensor.NN.Parameter.cpu requires zero_grad before changing placement")
+            panic("Tensor.Neural.Parameter.cpu requires zero_grad before changing placement")
         }
         self.variable.replace(self.value().detach().cpu())
     }

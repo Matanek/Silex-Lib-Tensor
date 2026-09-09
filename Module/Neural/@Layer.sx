@@ -13,7 +13,7 @@ public nocopy class Layer {
 
     func forward(input:Tensor) Tensor {
         self.mutable_contract = self.mutable_contract
-        panic("Tensor.NN.Layer.forward must be implemented by a concrete layer")
+        panic("Tensor.Neural.Layer.forward must be implemented by a concrete layer")
     }
     func parameters() Parameter[] { return [] }
     func train() { self.mutable_contract = self.mutable_contract }

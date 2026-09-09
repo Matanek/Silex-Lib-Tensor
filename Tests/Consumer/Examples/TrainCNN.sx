@@ -1,5 +1,5 @@
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func main() {
@@ -12,14 +12,14 @@ func main() {
     var labels:int32[] = [0, 0, 1, 1]
     let input = Tensor(inputs, [4, 1, 4, 4])
     let target = Tensor(labels, [4])
-    var layers:NN.Layer[] = [
-        NN.Conv2D("features", 1, 4, 2, 211),
-        NN.Activation.relu(),
-        NN.MaxPool2D(2, stride:1),
-        NN.Flatten(),
-        NN.Dense("classifier", 16, 2, 212)
+    var layers:Neural.Layer[] = [
+        Neural.Conv2D("features", 1, 4, 2, 211),
+        Neural.Activation.relu(),
+        Neural.MaxPool2D(2, stride:1),
+        Neural.Flatten(),
+        Neural.Dense("classifier", 16, 2, 212)
     ]
-    var model = NN.Sequential(layers)
+    var model = Neural.Sequential(layers)
     var optimizer = Optim.Adam(model.parameters(), learning_rate:0.03)
     let initial_loss = model.forward(input).detach().cross_entropy(target, 1).item()
 

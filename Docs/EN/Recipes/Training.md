@@ -16,7 +16,7 @@ loss.backward()
 optimizer.step()
 ```
 
-`Tensor` remains an immutable value. `NN.Parameter` owns the trainable leaf;
+`Tensor` remains an immutable value. `Neural.Parameter` owns the trainable leaf;
 `optimizer.step()` assigns it a new detached value. Reading `loss.item()` on
 every iteration is correct on the CPU but synchronizes a GPU model. Space that
 observation out when the loop should remain resident.
@@ -27,12 +27,12 @@ The executable [MLP example](../../../Tests/Consumer/Examples/TrainMLP.sx)
 learns XOR, saves its parameters, and loads a fresh model. Its architecture is:
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Dense("hidden", 2, 8, 101),
-    NN.Activation.tanh(),
-    NN.Dense("classifier", 8, 2, 102)
+var layers:Neural.Layer[] = [
+    Neural.Dense("hidden", 2, 8, 101),
+    Neural.Activation.tanh(),
+    Neural.Dense("classifier", 8, 2, 102)
 ]
-var model = NN.Sequential(layers)
+var model = Neural.Sequential(layers)
 ```
 
 Layer names determine stable checkpoint names. Reusing one name in the same
@@ -44,12 +44,12 @@ The executable [CNN example](../../../Tests/Consumer/Examples/TrainCNN.sx)
 classifies four `4 × 4` patterns. Tensor exposes NCHW inputs and OIHW kernels:
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Conv2D("features", 1, 4, 2, 211),
-    NN.Activation.relu(),
-    NN.MaxPool2D(2, stride:1),
-    NN.Flatten(),
-    NN.Dense("classifier", 16, 2, 212)
+var layers:Neural.Layer[] = [
+    Neural.Conv2D("features", 1, 4, 2, 211),
+    Neural.Activation.relu(),
+    Neural.MaxPool2D(2, stride:1),
+    Neural.Flatten(),
+    Neural.Dense("classifier", 16, 2, 212)
 ]
 ```
 
@@ -63,9 +63,9 @@ receives `[batch, time, features]`. `SimpleRNN` unfolds a unidirectional tanh
 recurrence and returns the final state only:
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.SimpleRNN("memory", 1, 6, 307),
-    NN.Dense("classifier", 6, 2, 308)
+var layers:Neural.Layer[] = [
+    Neural.SimpleRNN("memory", 1, 6, 307),
+    Neural.Dense("classifier", 6, 2, 308)
 ]
 ```
 
@@ -100,9 +100,9 @@ and `TrainingRNNGPU.sx` verify all three complete CPU/GPU workflows.
 ## Save parameters
 
 ```sx
-NN.Checkpoint.save(model, path)
+Neural.Checkpoint.save(model, path)
 var restored = make_model(999)
-NN.Checkpoint.load(restored, path)
+Neural.Checkpoint.load(restored, path)
 ```
 
 Load a CPU model with the same architecture and names, then call

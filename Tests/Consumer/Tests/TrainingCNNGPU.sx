@@ -2,7 +2,7 @@ use GFX.GPU
 use STD.FileSystem
 use STD.Math
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 func cnn_gpu_match(left:float[], right:float[], tolerance:float = 0.008) bool {
@@ -14,20 +14,20 @@ func cnn_gpu_match(left:float[], right:float[], tolerance:float = 0.008) bool {
     }
     return true
 }
-func cnn_gpu_gradient(parameter:NN.Parameter) Tensor {
+func cnn_gpu_gradient(parameter:Neural.Parameter) Tensor {
     if let gradient = parameter.gradient() { return gradient }
     panic("expected a CNN gradient")
 }
 
-func cnn_gpu_model(seed:int) NN.Sequential {
-    var layers:NN.Layer[] = [
-        NN.Conv2D("features", 1, 4, 2, seed),
-        NN.Activation.relu(),
-        NN.MaxPool2D(2, stride:1),
-        NN.Flatten(),
-        NN.Dense("classifier", 16, 2, seed + 1)
+func cnn_gpu_model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Conv2D("features", 1, 4, 2, seed),
+        Neural.Activation.relu(),
+        Neural.MaxPool2D(2, stride:1),
+        Neural.Flatten(),
+        Neural.Dense("classifier", 16, 2, seed + 1)
     ]
-    return NN.Sequential(layers)
+    return Neural.Sequential(layers)
 }
 
 func cnn_gpu_accuracy(logits:Tensor, targets:int32[]) float {
@@ -111,9 +111,9 @@ test "train compare and restore the CNN on GPU" {
     let loss = logits.cross_entropy(gpu_target, 1).cpu().item()
     assert(loss < initial * 0.5)
     assert(cnn_gpu_accuracy(logits, target_values) == 1.0)
-    NN.Checkpoint.save(gpu, path)
+    Neural.Checkpoint.save(gpu, path)
     var restored = cnn_gpu_model(902)
-    NN.Checkpoint.load(restored, path)
+    Neural.Checkpoint.load(restored, path)
     restored.to(device)
     assert(cnn_gpu_match(
         restored.forward(gpu_input).detach().cpu().values(), logits.cpu().values()

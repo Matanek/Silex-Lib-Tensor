@@ -7,7 +7,7 @@ checked numerical computation, seeded initialization, and eager neural
 primitives for dense, convolutional, and recurrent models. Its eager
 reverse-mode autodifferentiation keeps immutable Tensor values and GPU-resident
 gradients behind explicit `Tensor.Autograd.Variable` leaves. Named
-`Tensor.NN.Parameter` values, composable dense, convolutional and recurrent
+`Tensor.Neural.Parameter` values, composable dense, convolutional and recurrent
 layers, deterministic checkpoints, and `Tensor.Optim` SGD/Adam optimizers
 complete an explicit eager training workflow without hidden transfers.
 

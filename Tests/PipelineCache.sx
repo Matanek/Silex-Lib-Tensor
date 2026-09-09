@@ -3,7 +3,7 @@ use Tensor
 use Tensor.Autograd.Variable
 use Tensor.gpu_pipeline_compilations
 use Tensor.reset_gpu_pipeline_compilations
-use Tensor.NN.Parameter
+use Tensor.Neural.Parameter
 use Tensor.Optim.SGD
 
 func cached_gradient(variable:Variable) Tensor {

@@ -23,18 +23,18 @@ public static class Checkpoint {
         }
         match File.write_all(path, document) {
             success => {}
-            failure(error) => { panic("Tensor.NN.Checkpoint.save failed: $(error.detail)") }
+            failure(error) => { panic("Tensor.Neural.Checkpoint.save failed: $(error.detail)") }
         }
     }
 
     func load(model:Layer, path:str, maximum_bytes:int = 16 * 1024 * 1024) {
         if maximum_bytes <= 0 {
-            panic("Tensor.NN.Checkpoint.load requires positive maximum_bytes")
+            panic("Tensor.Neural.Checkpoint.load requires positive maximum_bytes")
         }
         var content = ""
         match File.read_text(path, maximum_bytes) {
             success(value) => { content = value }
-            failure(error) => { panic("Tensor.NN.Checkpoint.load failed: $(error.detail)") }
+            failure(error) => { panic("Tensor.Neural.Checkpoint.load failed: $(error.detail)") }
         }
         let entries = parse_checkpoint(content)
         var parameters = model.parameters()
@@ -44,7 +44,7 @@ public static class Checkpoint {
         while parameter_index < parameters.count() {
             var parameter = parameters[parameter_index]
             if !parameter.value().is_cpu() {
-                panic("Tensor.NN.Checkpoint.load requires model.cpu before loading")
+                panic("Tensor.Neural.Checkpoint.load requires model.cpu before loading")
             }
             var found = -1
             var entry_index = 0
@@ -53,10 +53,10 @@ public static class Checkpoint {
                 entry_index++
             }
             if found < 0 {
-                panic("Tensor.NN.Checkpoint.load is missing parameter '$(parameter.name())'")
+                panic("Tensor.Neural.Checkpoint.load is missing parameter '$(parameter.name())'")
             }
             if !checkpoint_shapes_equal(entries[found].shape, parameter.value().shape()) {
-                panic("Tensor.NN.Checkpoint.load shape mismatch for parameter '$(parameter.name())'")
+                panic("Tensor.Neural.Checkpoint.load shape mismatch for parameter '$(parameter.name())'")
             }
             replacements.append(Tensor(entries[found].values, entries[found].shape))
             parameter_index++
@@ -71,7 +71,7 @@ public static class Checkpoint {
                 parameter_index++
             }
             if !found {
-                panic("Tensor.NN.Checkpoint.load contains additional parameter '$(entries[entry_index].name)'")
+                panic("Tensor.Neural.Checkpoint.load contains additional parameter '$(entries[entry_index].name)'")
             }
             entry_index++
         }
@@ -90,7 +90,7 @@ func require_checkpoint_names(parameters:Parameter[]) {
         var previous = 0
         while previous < index {
             if parameters[previous].name() == parameters[index].name() {
-                panic("Tensor.NN.Checkpoint requires unique parameter names")
+                panic("Tensor.Neural.Checkpoint requires unique parameter names")
             }
             previous++
         }
@@ -128,7 +128,7 @@ func checkpoint_floats(values:float[], name:str) str {
     var index = 0
     while index < values.count() {
         if !Math.is_finite(values[index]) {
-            panic("Tensor.NN.Checkpoint.save rejects non-finite parameter '$(name)'")
+            panic("Tensor.Neural.Checkpoint.save rejects non-finite parameter '$(name)'")
         }
         if index > 0 { result += "," }
         result += "$(values[index])"
@@ -140,22 +140,22 @@ func checkpoint_floats(values:float[], name:str) str {
 func parse_checkpoint(content:str) CheckpointEntry[] {
     let lines = Text.split(Text.trim_end(content), "\n")
     if lines.count() < 2 || lines[0] != "SILEX_TENSOR_CHECKPOINT\t1" {
-        panic("Tensor.NN.Checkpoint.load requires schema version 1")
+        panic("Tensor.Neural.Checkpoint.load requires schema version 1")
     }
     let count = checkpoint_non_negative_int(lines[1], "parameter count")
     if lines.count() != count + 2 {
-        panic("Tensor.NN.Checkpoint.load parameter count does not match the document")
+        panic("Tensor.Neural.Checkpoint.load parameter count does not match the document")
     }
     var entries:CheckpointEntry[] = []
     var index = 0
     while index < count {
         let fields = Text.split(lines[index + 2], "\t")
         if fields.count() != 6 {
-            panic("Tensor.NN.Checkpoint.load requires six fields per parameter")
+            panic("Tensor.Neural.Checkpoint.load requires six fields per parameter")
         }
         let name = checkpoint_decoded_name(fields[0])
         if fields[1] != "float32" {
-            panic("Tensor.NN.Checkpoint.load supports dtype float32 only")
+            panic("Tensor.Neural.Checkpoint.load supports dtype float32 only")
         }
         let rank = checkpoint_non_negative_int(fields[2], "rank")
         let shape = checkpoint_shape(fields[3], rank)
@@ -164,7 +164,7 @@ func parse_checkpoint(content:str) CheckpointEntry[] {
         var previous = 0
         while previous < entries.count() {
             if entries[previous].name == name {
-                panic("Tensor.NN.Checkpoint.load rejects duplicate parameter names")
+                panic("Tensor.Neural.Checkpoint.load rejects duplicate parameter names")
             }
             previous++
         }
@@ -177,7 +177,7 @@ func parse_checkpoint(content:str) CheckpointEntry[] {
 func checkpoint_decoded_name(value:str) str {
     let encoded = UTF8.bytes(value)
     if encoded.is_empty() || encoded.count() % 2 != 0 {
-        panic("Tensor.NN.Checkpoint.load contains an invalid parameter name")
+        panic("Tensor.Neural.Checkpoint.load contains an invalid parameter name")
     }
     var decoded:uint8[] = []
     var index = 0
@@ -185,7 +185,7 @@ func checkpoint_decoded_name(value:str) str {
         let high = checkpoint_hex(encoded[index])
         let low = checkpoint_hex(encoded[index + 1])
         if high < 0 || low < 0 {
-            panic("Tensor.NN.Checkpoint.load contains an invalid parameter name")
+            panic("Tensor.Neural.Checkpoint.load contains an invalid parameter name")
         }
         decoded.append((high * 16 + low) as uint8)
         index += 2
@@ -193,7 +193,7 @@ func checkpoint_decoded_name(value:str) str {
     let view = @decoded[0:decoded.count()]
     match UTF8.decode(view) {
         success(name) => { return name }
-        failure(error) => { panic("Tensor.NN.Checkpoint.load contains an invalid UTF-8 parameter name") }
+        failure(error) => { panic("Tensor.Neural.Checkpoint.load contains an invalid UTF-8 parameter name") }
     }
 }
 
@@ -205,11 +205,11 @@ func checkpoint_hex(value:uint8) int {
 
 func checkpoint_shape(value:str, rank:int) int[] {
     if rank == 0 {
-        if value != "-" { panic("Tensor.NN.Checkpoint.load rank and shape disagree") }
+        if value != "-" { panic("Tensor.Neural.Checkpoint.load rank and shape disagree") }
         return []
     }
     let fields = Text.split(value, ",")
-    if fields.count() != rank { panic("Tensor.NN.Checkpoint.load rank and shape disagree") }
+    if fields.count() != rank { panic("Tensor.Neural.Checkpoint.load rank and shape disagree") }
     var shape:int[] = []
     for field in fields {
         let dimension = checkpoint_non_negative_int(field, "shape dimension")
@@ -220,30 +220,30 @@ func checkpoint_shape(value:str, rank:int) int[] {
 
 func checkpoint_values(value:str, count:int) float[] {
     if count == 0 {
-        if value != "" { panic("Tensor.NN.Checkpoint.load value count disagrees") }
+        if value != "" { panic("Tensor.Neural.Checkpoint.load value count disagrees") }
         return []
     }
     let fields = Text.split(value, ",")
-    if fields.count() != count { panic("Tensor.NN.Checkpoint.load value count disagrees") }
+    if fields.count() != count { panic("Tensor.Neural.Checkpoint.load value count disagrees") }
     var values:float[] = []
     for field in fields {
         if parsed = checkpoint_float(field) { values.append(parsed) }
-        else { panic("Tensor.NN.Checkpoint.load contains an invalid float32 value") }
+        else { panic("Tensor.Neural.Checkpoint.load contains an invalid float32 value") }
     }
     return values
 }
 
 func checkpoint_non_negative_int(value:str, role:str) int {
     let bytes = UTF8.bytes(value)
-    if bytes.is_empty() { panic("Tensor.NN.Checkpoint.load contains an invalid $(role)") }
+    if bytes.is_empty() { panic("Tensor.Neural.Checkpoint.load contains an invalid $(role)") }
     var result = 0
     for byte in bytes {
         if byte < 48 || byte > 57 {
-            panic("Tensor.NN.Checkpoint.load contains an invalid $(role)")
+            panic("Tensor.Neural.Checkpoint.load contains an invalid $(role)")
         }
         let digit = (byte - 48) as int
         if result > (9223372036854775807 - digit) / 10 {
-            panic("Tensor.NN.Checkpoint.load $(role) overflows int")
+            panic("Tensor.Neural.Checkpoint.load $(role) overflows int")
         }
         result = result * 10 + digit
     }

@@ -296,18 +296,18 @@ example `gradient.detach().cpu()`; that `cpu()` remains the explicit readback.
 
 ## Train named parameters
 
-`Tensor.NN.Parameter` associates a stable name with a tracked `float32` value
+`Tensor.Neural.Parameter` associates a stable name with a tracked `float32` value
 and its optional gradient. The Tensor remains immutable: an optimizer step
 replaces the parameter value with a new detached leaf.
 
 ```sx
 use Tensor
-use Tensor.NN
+use Tensor.Neural
 use Tensor.Optim
 
 var initial:float[] = [1.0, -2.0]
-var parameters:NN.Parameter[] = [
-    NN.Parameter("linear.weight", Tensor.vector(initial))
+var parameters:Neural.Parameter[] = [
+    Neural.Parameter("linear.weight", Tensor.vector(initial))
 ]
 var optimizer = Optim.Adam(parameters, learning_rate:0.01)
 
@@ -344,19 +344,19 @@ a placement change atomically instead of silently migrating part of a model.
 
 ## Compose and train a network
 
-`Tensor.NN.Layer` is the common layer contract. `Sequential` executes layers
+`Tensor.Neural.Layer` is the common layer contract. `Sequential` executes layers
 in order and recursively collects their named parameters. The 0.1.0 layers are
 `Dense`, `Conv2D`, `MaxPool2D`, `AveragePool2D`, `Flatten`, `Dropout`,
 `LayerNorm`, and `SimpleRNN`. Activations remain Tensor operations;
 `Activation.relu()`, `sigmoid()`, and `tanh()` only adapt them for composition.
 
 ```sx
-var layers:NN.Layer[] = [
-    NN.Dense("hidden", 2, 8, 101),
-    NN.Activation.tanh(),
-    NN.Dense("classifier", 8, 2, 102)
+var layers:Neural.Layer[] = [
+    Neural.Dense("hidden", 2, 8, 101),
+    Neural.Activation.tanh(),
+    Neural.Dense("classifier", 8, 2, 102)
 ]
-var model = NN.Sequential(layers)
+var model = Neural.Sequential(layers)
 var parameters = model.parameters()
 var optimizer = Optim.Adam(parameters, learning_rate:0.04)
 
@@ -373,9 +373,9 @@ unidirectional tanh recurrence, and returns the final state. `train()` and
 `model.to(device)` and `model.cpu()` move every parameter after `zero_grad()`
 under the optimizer placement rules.
 
-`NN.Checkpoint.save(model, path)` writes a deterministic schema-1 text document
+`Neural.Checkpoint.save(model, path)` writes a deterministic schema-1 text document
 with UTF-8 names, dtype, shapes, and values. Saving a GPU model necessarily
-performs the explicit readback into the file. `NN.Checkpoint.load(model, path)`
+performs the explicit readback into the file. `Neural.Checkpoint.load(model, path)`
 validates the document and complete parameter set before the first mutation.
 The model must be on the CPU while loading; explicitly call `model.to(device)`
 afterwards when needed. A checkpoint contains no code, autograd graph, or
