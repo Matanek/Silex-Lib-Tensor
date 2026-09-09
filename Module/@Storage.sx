@@ -258,6 +258,9 @@ package func reset_gpu_pipeline_compilations() { GPUKernelCache.reset_compilatio
 
 package struct GPUPerformanceStatistics {
     let buffer_allocations:int
+    let buffer_releases:int
+    let live_buffers:int
+    let peak_live_buffers:int
     let upload_staging_allocations:int
     let download_staging_allocations:int
     let fence_creations:int
@@ -265,17 +268,32 @@ package struct GPUPerformanceStatistics {
 
 class GPUPerformanceCounters {
     private static var buffer_allocations:int = 0
+    private static var buffer_releases:int = 0
+    private static var live_buffers:int = 0
+    private static var peak_live_buffers:int = 0
     private static var upload_staging_allocations:int = 0
     private static var download_staging_allocations:int = 0
     private static var fence_creations:int = 0
 
-    module static func record_buffer() { GPUPerformanceCounters.buffer_allocations++ }
+    module static func record_buffer() {
+        GPUPerformanceCounters.buffer_allocations++
+        GPUPerformanceCounters.live_buffers++
+        if GPUPerformanceCounters.live_buffers > GPUPerformanceCounters.peak_live_buffers {
+            GPUPerformanceCounters.peak_live_buffers = GPUPerformanceCounters.live_buffers
+        }
+    }
+    module static func record_buffer_release() {
+        GPUPerformanceCounters.buffer_releases++
+        GPUPerformanceCounters.live_buffers--
+    }
     module static func record_upload_staging() { GPUPerformanceCounters.upload_staging_allocations++ }
     module static func record_download_staging() { GPUPerformanceCounters.download_staging_allocations++ }
     module static func record_fence() { GPUPerformanceCounters.fence_creations++ }
 
     module static func reset() {
         GPUPerformanceCounters.buffer_allocations = 0
+        GPUPerformanceCounters.buffer_releases = 0
+        GPUPerformanceCounters.peak_live_buffers = GPUPerformanceCounters.live_buffers
         GPUPerformanceCounters.upload_staging_allocations = 0
         GPUPerformanceCounters.download_staging_allocations = 0
         GPUPerformanceCounters.fence_creations = 0
@@ -284,6 +302,9 @@ class GPUPerformanceCounters {
     module static func statistics() GPUPerformanceStatistics {
         return GPUPerformanceStatistics(
             buffer_allocations:GPUPerformanceCounters.buffer_allocations,
+            buffer_releases:GPUPerformanceCounters.buffer_releases,
+            live_buffers:GPUPerformanceCounters.live_buffers,
+            peak_live_buffers:GPUPerformanceCounters.peak_live_buffers,
             upload_staging_allocations:GPUPerformanceCounters.upload_staging_allocations,
             download_staging_allocations:GPUPerformanceCounters.download_staging_allocations,
             fence_creations:GPUPerformanceCounters.fence_creations
@@ -333,6 +354,7 @@ nocopy class GPUStorage {
     }
 
     drop {
+        if self.current_buffer != null { GPUPerformanceCounters.record_buffer_release() }
         if var fence = self.completion { fence.wait() }
         self.completion = null
         self.upload_buffer = null
@@ -939,6 +961,14 @@ nocopy class GPUStorage {
     }
 
     private func required_buffer() GPU.Buffer {
+        if var fence = self.completion {
+            if fence.is_ready() {
+                self.completion = null
+                self.upload_buffer = null
+                self.parent = null
+                self.other_parent = null
+            }
+        }
         if var buffer = self.current_buffer { return buffer }
         panic("Tensor empty GPU storage has no buffer")
     }

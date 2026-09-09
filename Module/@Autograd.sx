@@ -51,26 +51,71 @@ package nocopy class GradientSlot {
 
 package nocopy class AutogradNode {
     private static var retained_edges:int = 0
+    private static var node_allocations:int = 0
+    private static var node_drops:int = 0
+    private static var live_nodes:int = 0
+    private static var peak_live_nodes:int = 0
+    private static var edge_retentions:int = 0
+    private static var edge_releases:int = 0
     module var rule:AutogradRule
     module var consumed:bool = false
 
     module init(rule:AutogradRule) {
         self.rule = rule
-        AutogradNode.retained_edges += autograd_parents(rule).count()
+        let edges = autograd_parents(rule).count()
+        AutogradNode.node_allocations++
+        AutogradNode.live_nodes++
+        if AutogradNode.live_nodes > AutogradNode.peak_live_nodes {
+            AutogradNode.peak_live_nodes = AutogradNode.live_nodes
+        }
+        AutogradNode.edge_retentions += edges
+        AutogradNode.retained_edges += edges
     }
 
-    drop { AutogradNode.retained_edges -= autograd_parents(self.rule).count() }
+    drop {
+        let edges = autograd_parents(self.rule).count()
+        AutogradNode.node_drops++
+        AutogradNode.live_nodes--
+        AutogradNode.edge_releases += edges
+        AutogradNode.retained_edges -= edges
+    }
 
     module func consume() {
-        AutogradNode.retained_edges -= autograd_parents(self.rule).count()
+        let edges = autograd_parents(self.rule).count()
+        AutogradNode.edge_releases += edges
+        AutogradNode.retained_edges -= edges
         self.rule = AutogradRule.released
         self.consumed = true
     }
 
     module static func retained_edge_count() int { return AutogradNode.retained_edges }
+    module static func performance_statistics() AutogradPerformanceStatistics {
+        return AutogradPerformanceStatistics(
+            node_allocations:AutogradNode.node_allocations,
+            node_drops:AutogradNode.node_drops,
+            live_nodes:AutogradNode.live_nodes,
+            peak_live_nodes:AutogradNode.peak_live_nodes,
+            edge_retentions:AutogradNode.edge_retentions,
+            edge_releases:AutogradNode.edge_releases,
+            retained_edges:AutogradNode.retained_edges
+        )
+    }
+}
+
+package struct AutogradPerformanceStatistics {
+    let node_allocations:int
+    let node_drops:int
+    let live_nodes:int
+    let peak_live_nodes:int
+    let edge_retentions:int
+    let edge_releases:int
+    let retained_edges:int
 }
 
 package func autograd_retained_edge_count() int { return AutogradNode.retained_edge_count() }
+package func autograd_performance_statistics() AutogradPerformanceStatistics {
+    return AutogradNode.performance_statistics()
+}
 
 struct AutogradContribution {
     var node:AutogradNode

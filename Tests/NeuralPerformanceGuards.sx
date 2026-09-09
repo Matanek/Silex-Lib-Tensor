@@ -1,0 +1,94 @@
+use GFX.GPU
+use Tensor
+use Tensor.autograd_performance_statistics
+use Tensor.gpu_performance_statistics
+use Tensor.gpu_pipeline_compilations
+use Tensor.reset_gpu_performance_statistics
+use Tensor.reset_gpu_pipeline_compilations
+use Tensor.NN
+use Tensor.Optim
+
+func performance_model(seed:int) NN.Sequential {
+    var layers:NN.Layer[] = [
+        NN.Dense("hidden", 2, 8, seed),
+        NN.Activation.tanh(),
+        NN.Dense("classifier", 8, 2, seed + 1)
+    ]
+    return NN.Sequential(layers)
+}
+
+func training_step(
+    model:NN.Layer, input:Tensor, target:Tensor,
+    optimizer:Optim.Adam, device:GPU.Device
+) {
+    optimizer.zero_grad()
+    model.forward(input).cross_entropy(target, 1).backward()
+    optimizer.step()
+    device.wait_until_idle()
+}
+
+test "bound hot neural graph buffers fences and pipelines per step" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input_values:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    var target_values:int32[] = [0, 1, 1, 0]
+    let input = Tensor(input_values, [4, 2]).to(device)
+    let target = Tensor(target_values, [4]).to(device)
+    var model = performance_model(501)
+    model.to(device)
+    var parameters = model.parameters()
+    var optimizer = Optim.Adam(parameters, learning_rate:0.02)
+
+    training_step(model, input, target, optimizer, device)
+    training_step(model, input, target, optimizer, device)
+    training_step(model, input, target, optimizer, device)
+    let graph_baseline = autograd_performance_statistics()
+    reset_gpu_performance_statistics()
+    reset_gpu_pipeline_compilations()
+    let resident_baseline = gpu_performance_statistics().live_buffers
+    var expected_buffers = 0
+    var expected_fences = 0
+    var expected_nodes = 0
+    var expected_edges = 0
+    var iteration = 0
+    while iteration < 8 {
+        let gpu_before = gpu_performance_statistics()
+        let graph_before = autograd_performance_statistics()
+        device.reset_command_stats()
+        training_step(model, input, target, optimizer, device)
+        let gpu_after = gpu_performance_statistics()
+        let graph_after = autograd_performance_statistics()
+        let commands = device.command_stats()
+        let buffers = gpu_after.buffer_allocations - gpu_before.buffer_allocations
+        let releases = gpu_after.buffer_releases - gpu_before.buffer_releases
+        let fences = gpu_after.fence_creations - gpu_before.fence_creations
+        let nodes = graph_after.node_allocations - graph_before.node_allocations
+        let edges = graph_after.edge_retentions - graph_before.edge_retentions
+        let edge_releases = graph_after.edge_releases - graph_before.edge_releases
+        assert(commands.uploads == 0 && commands.downloads == 0)
+        assert(commands.compute_passes > 0)
+        assert(releases > 0)
+        assert(gpu_after.live_buffers <= resident_baseline + 16)
+        assert(graph_after.retained_edges == graph_baseline.retained_edges)
+        assert(edges == edge_releases)
+        if iteration == 0 {
+            expected_buffers = buffers
+            expected_fences = fences
+            expected_nodes = nodes
+            expected_edges = edges
+            assert(expected_buffers > 0 && expected_fences > 0)
+            assert(expected_nodes > 0 && expected_edges > 0)
+        } else {
+            assert(buffers == expected_buffers)
+            assert(fences == expected_fences)
+            assert(nodes == expected_nodes)
+            assert(edges == expected_edges)
+        }
+        assert(gpu_pipeline_compilations() == 0)
+        iteration++
+    }
+    let final = gpu_performance_statistics()
+    assert(final.buffer_allocations - final.buffer_releases == final.live_buffers - resident_baseline)
+    assert(final.live_buffers <= resident_baseline + 16)
+    assert(final.peak_live_buffers - resident_baseline <= 16)
+}

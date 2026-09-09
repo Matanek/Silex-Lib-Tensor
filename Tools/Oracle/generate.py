@@ -12,6 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from neural import (
+    build_neural_cases,
+    render_checkpoint,
+    render_neural_fixture,
+    render_neural_report,
+)
+
 EXPECTED_PYTHON = (3, 12, 2)
 EXPECTED_VERSIONS = {
     "numpy": "2.5.3",
@@ -25,6 +32,9 @@ ORDER = "C"
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "Tests/Consumer/Tests/OracleDifferential.sx"
 REPORT_PATH = ROOT / "Tools/Oracle/REPORT.md"
+NEURAL_FIXTURE_PATH = ROOT / "Tests/Consumer/Tests/NeuralOracleDifferential.sx"
+NEURAL_REPORT_PATH = ROOT / "Tools/Oracle/NEURAL_REPORT.md"
+NEURAL_CHECKPOINT_DIRECTORY = ROOT / "Tests/Consumer/Tests/Fixtures"
 
 
 @dataclass(frozen=True)
@@ -1175,6 +1185,8 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "| seeded initialization and dropout | `Neural.sx`, `NeuralGPU.sx` | bounds, fan sizes, probability, seed and iteration |",
         "| eager reverse-mode autodifferentiation | `Autograd.sx`, `AutogradGPU.sx`, `OracleDifferential.sx` | dtype, seed, consumed graph, transfer and disconnected graph |",
         "| named parameters, SGD, Adam and global gradient clipping | `Optimizers.sx`, `OptimizerState.sx`, `OptimizersGPU.sx`, `OracleDifferential.sx` | duplicate names, hyperparameters, non-finite gradients and initialized-state placement |",
+        "| composable MLP, CNN and SimpleRNN layers | `NeuralOracleDifferential.sx`, `TrainingNetworks.sx`, three GPU training fixtures | dimensions, duplicate names and checkpoint contract |",
+        "| deterministic parameter checkpoints | `Checkpoint.sx`, neural oracle checkpoints | schema, missing/additional parameter, dtype and shape |",
         "| `to`, `cpu`, CPU/GPU placement and resource lifetime | `GPU.sx`, `GPUViews.sx`, `GPUCompute.sx`, `GPUStress.sx`, `OracleDifferential.sx` | extraction on GPU, cross-device use and integer GPU compute |",
         "",
         "The successful suite includes targeted scalar, singleton, zero-sized, broadcast, strided-view, axis, signed-zero, NaN, infinity, integer-extrema, exact-conversion, large/small-amplitude, and bounded seeded pseudo-random cases. `Tests/Consumer/Diagnostics/README.md` indexes division-by-zero, overflow, out-of-range conversion, and structural errors.",
@@ -1210,7 +1222,7 @@ def render_report(cases: dict[str, Case], versions: dict[str, str], placement: d
         "",
         "## Hermetic consumption",
         "",
-        "The normal suite reads only `Tests/Consumer/Tests/OracleDifferential.sx`. It imports no Python module, performs no download, and requires no network. The Tensor package manifest contains only its runtime Silex dependencies. A missing local GPU is the sole justified runtime skip; CPU fixtures always run.",
+        "The normal suite reads only the generated `OracleDifferential.sx`, `NeuralOracleDifferential.sx`, and three text checkpoints. It imports no Python module, performs no download, and requires no network. The Tensor package manifest contains only its runtime Silex dependencies. A missing local GPU is the sole justified runtime skip; CPU fixtures always run.",
         "",
     ])
     return "\n".join(lines)
@@ -1232,8 +1244,26 @@ def main() -> None:
     arguments = parser.parse_args()
     versions = require_environment()
     cases, placement = build_cases()
+    import numpy as np
+    import tensorflow as tf
+    import torch
+
+    neural_cases, neural_specs = build_neural_cases(np, torch, tf)
     write_or_check(FIXTURE_PATH, render_fixture(cases, versions), arguments.check)
     write_or_check(REPORT_PATH, render_report(cases, versions, placement), arguments.check)
+    write_or_check(
+        NEURAL_FIXTURE_PATH,
+        render_neural_fixture(neural_cases, neural_specs, versions),
+        arguments.check,
+    )
+    write_or_check(NEURAL_REPORT_PATH, render_neural_report(neural_cases), arguments.check)
+    for family, spec in neural_specs.items():
+        name = {"mlp": "MLP", "cnn": "CNN", "rnn": "RNN"}[family]
+        write_or_check(
+            NEURAL_CHECKPOINT_DIRECTORY / f"NeuralOracle{name}.sxtc",
+            render_checkpoint(spec),
+            arguments.check,
+        )
 
 
 if __name__ == "__main__":

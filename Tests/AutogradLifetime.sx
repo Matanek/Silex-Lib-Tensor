@@ -1,4 +1,5 @@
 use Tensor
+use Tensor.autograd_performance_statistics
 use Tensor.Autograd.Variable
 use Tensor.autograd_retained_edge_count
 use Tensor.NN.Parameter
@@ -28,15 +29,32 @@ test "release every training graph across repeated optimizer steps" {
     var values:float[] = [1.0, -2.0, 3.0]
     var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values))]
     var optimizer = SGD(parameters, 0.01, momentum:0.9)
+    var expected_allocations = 0
+    var expected_retentions = 0
     var iteration = 0
     while iteration < 32 {
+        let before = autograd_performance_statistics()
         optimizer.zero_grad()
         let loss = parameters[0].value().multiply(parameters[0].value()).sum()
         assert(autograd_retained_edge_count() > baseline)
+        let recorded = autograd_performance_statistics()
+        assert(recorded.edge_retentions > before.edge_retentions)
         loss.backward()
         assert(autograd_retained_edge_count() == baseline)
         optimizer.step()
         assert(autograd_retained_edge_count() == baseline)
+        let after = autograd_performance_statistics()
+        let allocations = after.node_allocations - before.node_allocations
+        let retentions = after.edge_retentions - before.edge_retentions
+        let releases = after.edge_releases - before.edge_releases
+        assert(retentions == releases && retentions > 0)
+        if iteration == 0 {
+            expected_allocations = allocations
+            expected_retentions = retentions
+        } else {
+            assert(allocations == expected_allocations)
+            assert(retentions == expected_retentions)
+        }
         iteration++
     }
 }

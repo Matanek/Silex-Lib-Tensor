@@ -1,7 +1,8 @@
 # Differential oracle generator
 
-This development-only tool regenerates the reviewable Silex fixture and its
-reference report. It is not part of the Tensor package manifest or runtime.
+This development-only tool regenerates the reviewable Silex fixtures, fixed
+neural checkpoints, and reference reports. It is not part of the Tensor
+package manifest or runtime.
 
 Use CPython 3.12.2 and create a disposable environment outside the repository:
 
@@ -37,12 +38,20 @@ upstream license files for [NumPy](https://github.com/numpy/numpy/blob/main/LICE
 [JAX](https://github.com/jax-ml/jax/blob/main/LICENSE). No framework source,
 wheel, Python environment, or generated cache is committed.
 
-After regeneration, inspect both diffs before accepting a contract change:
+After regeneration, inspect every generated diff before accepting a contract
+change:
 
 ```sh
-git diff -- Tests/Consumer/Tests/OracleDifferential.sx Tools/Oracle/REPORT.md
+git diff -- Tests/Consumer/Tests/OracleDifferential.sx \
+  Tests/Consumer/Tests/NeuralOracleDifferential.sx \
+  Tests/Consumer/Tests/Fixtures/NeuralOracle*.sxtc \
+  Tools/Oracle/REPORT.md Tools/Oracle/NEURAL_REPORT.md
 ```
 
-The normal Tensor tests consume only the generated `.sx` fixture and remain
-fully offline. The fixture also exercises its comparison primitives with
-deliberately altered shape, stride, value, and tolerance inputs.
+The normal Tensor tests consume only the generated `.sx` fixtures and text
+checkpoints and remain fully offline. The general fixture also exercises its
+comparison primitives with deliberately altered shape, stride, value, and
+tolerance inputs. The neural fixture fixes identical MLP, CNN, and SimpleRNN
+weights and data for PyTorch and TensorFlow, then checks each layer output,
+named gradient, SGD/Adam update, and training checkpoints. A local finite-
+difference test independently covers a smooth derivative.
