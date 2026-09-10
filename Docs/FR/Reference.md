@@ -63,6 +63,10 @@ s'accumulent sur les feuilles jusqu'à `zero_grad()`. Les paramètres, gradients
 et états d'optimiseur restent sur le même placement ; après création de l'état,
 un déplacement partiel est refusé.
 
+`Neural.Parameter.replace(value)` remplace une valeur seulement après
+`zero_grad()` et conserve dtype, forme et placement. La valeur reçue devient une
+nouvelle feuille détachée ; l'état éventuel d'un optimiseur n'est pas réinitialisé.
+
 ## Erreurs structurantes
 
 Tensor diagnostique avant mutation ou soumission les formes non compatibles,

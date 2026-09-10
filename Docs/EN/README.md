@@ -300,6 +300,13 @@ example `gradient.detach().cpu()`; that `cpu()` remains the explicit readback.
 and its optional gradient. The Tensor remains immutable: an optimizer step
 replaces the parameter value with a new detached leaf.
 
+`parameter.replace(value)` provides the same checked public boundary for a value
+produced by another algorithm, including a genome. It requires no accumulated
+gradient and strictly preserves dtype, shape, and placement; the new value is
+detached from any graph. An optimizer that has already stepped retains its own
+state: recreate it when replacement denotes a new candidate rather than a
+continuation of training.
+
 ```sx
 use Tensor
 use Tensor.Neural

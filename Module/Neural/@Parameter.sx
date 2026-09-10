@@ -20,6 +20,13 @@ public nocopy class Parameter {
 
     func zero_grad() { self.variable.clear_gradient() }
 
+    func replace(value:Tensor) {
+        if self.gradient() != null {
+            panic("Tensor.Neural.Parameter.replace requires zero_grad before replacing the value")
+        }
+        self.apply(value.detach())
+    }
+
     func to(device:GPU.Device) {
         if self.gradient() != null {
             panic("Tensor.Neural.Parameter.to requires zero_grad before changing placement")

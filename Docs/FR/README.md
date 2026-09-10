@@ -308,6 +308,13 @@ résidents. Pour observer un résultat, employez par exemple
 son gradient éventuel. Le Tensor reste immuable : une étape d'optimisation
 remplace la valeur du paramètre par une nouvelle feuille détachée.
 
+`parameter.replace(value)` fournit la même frontière publique contrôlée pour
+charger une valeur produite par un autre algorithme, notamment un génome. Il
+exige un gradient absent et conserve strictement dtype, forme et placement ; la
+nouvelle valeur est détachée de son éventuel graphe. Un optimiseur déjà utilisé
+conserve son état propre : recréez-le lorsque le remplacement représente un
+nouveau candidat plutôt qu'une continuation de l'entraînement.
+
 ```sx
 use Tensor
 use Tensor.Neural

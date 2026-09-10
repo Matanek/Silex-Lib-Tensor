@@ -63,6 +63,10 @@ accumulate on leaves until `zero_grad()`. Parameters, gradients, and optimizer
 state remain on one placement; partial movement is rejected after state has
 been created.
 
+`Neural.Parameter.replace(value)` replaces a value only after `zero_grad()` and
+preserves dtype, shape, and placement. The supplied value becomes a new detached
+leaf; any optimizer state is not reset.
+
 ## Structural errors
 
 Before mutation or submission, Tensor diagnoses incompatible shapes, invalid

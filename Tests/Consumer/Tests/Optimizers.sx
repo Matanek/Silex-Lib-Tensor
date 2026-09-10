@@ -43,6 +43,17 @@ test "train named parameters through zero_grad backward and SGD step" {
     assert(optimizer_same(parameters[0].value().detach().values(), second_expected))
 }
 
+test "replace a named parameter through the public package boundary" {
+    var initial:float[] = [1.0, -2.0]
+    var replacement:float[] = [3.0, 4.0]
+    var parameter = Neural.Parameter("weights", Tensor.vector(initial))
+
+    parameter.replace(Tensor.vector(replacement))
+
+    assert(optimizer_same(parameter.value().values(), replacement))
+    assert(parameter.gradient() == null)
+}
+
 test "match coupled weight decay and momentum across SGD steps" {
     var values:float[] = [1.0, -2.0]
     var gradient_values:float[] = [0.3, -0.2]
