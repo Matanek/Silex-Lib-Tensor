@@ -17,6 +17,8 @@ silex install Tensor
 
 ## Documentation
 
+- [Release notes](CHANGELOG.md) · [French](CHANGELOG.fr.md)
+
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 - [French API reference](Docs/FR/Reference.md) · [English](Docs/EN/Reference.md)

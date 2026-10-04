@@ -1,0 +1,90 @@
+use GFX.GPU
+use STD.Math
+use Tensor
+use Tensor.gpu_performance_statistics
+use Tensor.reset_gpu_performance_statistics
+use Tensor.Neural.Parameter
+use Tensor.Optim.Adam
+
+func adam_required(value:Tensor?) Tensor {
+    if let tensor = value { return tensor }
+    panic("expected initialized Adam moment")
+}
+
+func adam_state_matches(actual:Tensor?, expected:float[]) bool {
+    let values = adam_required(actual).detach().cpu().values()
+    if values.count() != expected.count() { return false }
+    var index = 0
+    while index < values.count() {
+        if !Math.is_finite(values[index]) || Math.abs(values[index] - expected[index]) > 0.000001 { return false }
+        index++
+    }
+    return true
+}
+
+func adam_resident_step(optimizer:Adam, device:GPU.Device, expected_passes:int) {
+    device.wait_until_idle()
+    device.reset_command_stats()
+    reset_gpu_performance_statistics()
+    optimizer.step()
+    device.wait_until_idle()
+    let commands = device.command_stats()
+    let resources = gpu_performance_statistics()
+    assert(commands.uploads == 0 && commands.downloads == 0)
+    assert(commands.compute_passes == expected_passes)
+    assert(resources.buffer_allocations == expected_passes)
+    assert(resources.fence_creations == expected_passes)
+    assert(resources.upload_staging_allocations == 0 && resources.download_staging_allocations == 0)
+}
+
+test "initialize Adam moments only on each parameters first gradient" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, -2.0]
+    var first:float[] = [0.3, -0.2]
+    var second:float[] = [-0.2, 0.4]
+    var parameters:Parameter[] = [
+        Parameter("active", Tensor.vector(values).to(device)),
+        Parameter("delayed", Tensor.vector(values).to(device))
+    ]
+    var optimizer = Adam(parameters, learning_rate:0.01, beta1:0.8, beta2:0.9)
+    let first_gradient = Tensor.vector(first).to(device)
+    let second_gradient = Tensor.vector(second).to(device)
+    assert(optimizer.state_step("active") == 0 && optimizer.state_step("delayed") == 0)
+
+    parameters[0].value().multiply(first_gradient).sum().backward()
+    adam_resident_step(optimizer, device, 16)
+    assert(optimizer.state_step("active") == 1 && optimizer.state_step("delayed") == 0)
+    assert(optimizer.first_moment_state("delayed") == null)
+    assert(optimizer.second_moment_state("delayed") == null)
+    assert(adam_state_matches(optimizer.first_moment_state("active"), [0.06, -0.04]))
+    assert(adam_state_matches(optimizer.second_moment_state("active"), [0.009, 0.004]))
+
+    optimizer.zero_grad()
+    parameters[0].value().multiply(second_gradient).sum().backward()
+    adam_resident_step(optimizer, device, 14)
+    assert(optimizer.state_step("active") == 2 && optimizer.state_step("delayed") == 0)
+    assert(adam_state_matches(optimizer.first_moment_state("active"), [0.008, 0.048]))
+    assert(adam_state_matches(optimizer.second_moment_state("active"), [0.0121, 0.0196]))
+
+    optimizer.zero_grad()
+    adam_resident_step(optimizer, device, 0)
+    assert(optimizer.state_step("active") == 2 && optimizer.state_step("delayed") == 0)
+    assert(adam_state_matches(optimizer.first_moment_state("active"), [0.008, 0.048]))
+    assert(adam_state_matches(optimizer.second_moment_state("active"), [0.0121, 0.0196]))
+
+    parameters[0].value().multiply(first_gradient).sum().backward()
+    parameters[1].value().multiply(first_gradient).sum().backward()
+    adam_resident_step(optimizer, device, 30)
+    assert(optimizer.state_step("active") == 3 && optimizer.state_step("delayed") == 1)
+    assert(adam_state_matches(optimizer.first_moment_state("delayed"), [0.06, -0.04]))
+    assert(adam_state_matches(optimizer.second_moment_state("delayed"), [0.009, 0.004]))
+
+    optimizer.zero_grad()
+    parameters[0].value().multiply(second_gradient).sum().backward()
+    parameters[1].value().multiply(second_gradient).sum().backward()
+    adam_resident_step(optimizer, device, 28)
+    assert(optimizer.state_step("active") == 4 && optimizer.state_step("delayed") == 2)
+    assert(adam_state_matches(optimizer.first_moment_state("delayed"), [0.008, 0.048]))
+    assert(adam_state_matches(optimizer.second_moment_state("delayed"), [0.0121, 0.0196]))
+}

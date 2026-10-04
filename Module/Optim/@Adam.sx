@@ -117,11 +117,11 @@ public nocopy class Adam {
                 if self.weight_decay != 0.0 {
                     gradient = gradient.add(parameter.value().detach().multiply(self.weight_decay))
                 }
-                var first = parameter.value().detach().multiply(0.0)
-                var second = parameter.value().detach().multiply(0.0)
-                if state.step_count > 0 {
-                    first = state.first_moment
-                    second = state.second_moment
+                var first = state.first_moment
+                var second = state.second_moment
+                if state.step_count == 0 {
+                    first = parameter.value().detach().multiply(0.0)
+                    second = parameter.value().detach().multiply(0.0)
                 }
                 first = first.multiply(self.beta1).add(gradient.multiply(1.0 - self.beta1)).detach()
                 second = second.multiply(self.beta2).add(gradient.multiply(gradient).multiply(1.0 - self.beta2)).detach()
