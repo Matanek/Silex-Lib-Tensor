@@ -1,0 +1,66 @@
+use GFX.GPU
+use Tensor
+use Tensor.Profile
+use Tensor.gpu_profile_device_count
+
+func profile_lifetime_periods(device:GPU.Device) {
+    var index = 0
+    while index < 2000 {
+        var profile = Profile(device)
+        profile.reset()
+        assert(profile.snapshot().buffer_allocations == 0)
+        index++
+    }
+}
+
+func profile_lifetime_storage(device:GPU.Device) {
+    var values:float[] = [1.0, 2.0]
+    let input = Tensor.vector(values).to(device)
+    var profile:Profile? = Profile(device)
+    profile = null
+    let output = input.multiply(2.0)
+    // The live input keeps attribution available after the observer dies.
+    var next = Profile(device)
+    assert(next.snapshot().active_bytes == 16)
+    assert(output.cpu().values()[1] == 4.0)
+}
+
+func profile_lifetime_release(device:GPU.Device) {
+    var values:float[] = [1.0, 2.0]
+    let input = Tensor.vector(values).to(device)
+    let output = input.multiply(2.0)
+}
+
+test "retire the device registry after its last storage and observer" {
+    if !GPU.Device.is_supported() { return }
+    let baseline = gpu_profile_device_count()
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    profile_lifetime_periods(device)
+    assert(gpu_profile_device_count() == baseline)
+    profile_lifetime_storage(device)
+    assert(gpu_profile_device_count() == baseline)
+    var profile:Profile? = Profile(device)
+    profile_lifetime_release(device)
+    if var observer = profile {
+        let stats = observer.snapshot()
+        assert(stats.live_buffers == 0 && stats.active_bytes == 0)
+        assert(stats.buffer_allocations == 2 && stats.buffer_releases == 2)
+        assert(stats.peak_bytes == 16)
+    }
+    assert(gpu_profile_device_count() == baseline + 1)
+    profile = null
+    assert(gpu_profile_device_count() == baseline)
+}
+
+test "retire registry entries across repeated device lifetimes" {
+    if !GPU.Device.is_supported() { return }
+    let baseline = gpu_profile_device_count()
+    var index = 0
+    while index < 8 {
+        var device = GPU.Device(GPU.DeviceSettings(debug:true))
+        profile_lifetime_storage(device)
+        profile_lifetime_periods(device)
+        assert(gpu_profile_device_count() == baseline)
+        index++
+    }
+}

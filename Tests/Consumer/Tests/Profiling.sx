@@ -1,0 +1,209 @@
+use GFX.GPU
+use Tensor
+use Tensor.Profile
+use Tensor.Neural.Parameter
+use Tensor.Optim.SGD
+use STD.Math
+
+test "observe resident Tensor compute without transfers" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, 2.0, 3.0]
+    let input = Tensor.vector(values).to(device)
+    var profile = Profile(device)
+    let before = profile.snapshot()
+    assert(before.active_bytes == 12 && before.live_buffers == 1)
+    let output = input.multiply(2.0)
+    let snapshot = profile.snapshot()
+    assert(snapshot.uploads == 0 && snapshot.downloads == 0)
+    assert(snapshot.buffer_allocations == 1)
+    assert(snapshot.active_bytes == 24 && snapshot.peak_bytes == 24)
+    assert(snapshot.compute_passes == 1 && snapshot.pipeline_bindings == 1 && snapshot.dispatches == 1)
+    assert(snapshot.submissions == 1 && snapshot.fence_creations == 1)
+    assert(snapshot.pipeline_compilations == 1)
+    let actual = output.cpu().values()
+    assert(actual[0] == 2.0 && actual[2] == 6.0)
+    assert(snapshot.downloads == 0)
+    assert(profile.snapshot().downloads == 1)
+}
+
+func profile_temporary_compute(input:Tensor) {
+    let first = input.multiply(2.0)
+    let second = first.multiply(3.0)
+}
+
+test "reset one overlapping period and release temporary buffers" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, 2.0]
+    let input = Tensor.vector(values).to(device)
+    var outer = Profile(device)
+    profile_temporary_compute(input)
+    let first = outer.snapshot()
+    assert(first.buffer_allocations == 2 && first.buffer_releases == 2)
+    assert(first.active_bytes == 8 && first.peak_bytes == 24)
+    assert(first.live_buffers == 1 && first.peak_live_buffers == 3)
+    assert(first.pipeline_compilations == 1)
+    var inner = Profile(device)
+    outer.reset()
+    let reset = outer.snapshot()
+    assert(reset.buffer_allocations == 0 && reset.buffer_releases == 0)
+    assert(reset.peak_bytes == 8 && reset.peak_live_buffers == 1)
+    profile_temporary_compute(input)
+    let a = outer.snapshot()
+    let b = inner.snapshot()
+    assert(a.dispatches == 2 && b.dispatches == 2)
+    assert(a.buffer_releases == 2 && b.buffer_releases == 2)
+    assert(a.pipeline_compilations == 0 && b.pipeline_compilations == 0)
+    assert(a.downloads == 0 && b.downloads == 0)
+    inner.reset()
+    profile_temporary_compute(input)
+    assert(outer.snapshot().dispatches == 4 && inner.snapshot().dispatches == 2)
+    assert(first.dispatches == 2 && reset.dispatches == 0)
+}
+
+test "isolate Tensor periods from other devices and GFX resets" {
+    if !GPU.Device.is_supported() { return }
+    var first = GPU.Device(GPU.DeviceSettings(debug:true))
+    var second = GPU.Device(GPU.DeviceSettings(debug:true))
+    var a = Profile(first)
+    var b = Profile(second)
+    var values:float[] = [1.0, 2.0]
+    let input = Tensor.vector(values).to(first)
+    let other = Tensor.vector(values).to(second)
+    first.reset_command_stats()
+    let output = input.add(1.0)
+    let own = a.snapshot()
+    let foreign = b.snapshot()
+    assert(own.uploads == 1 && own.uploaded_bytes == 8 && own.buffer_allocations == 2)
+    assert(own.dispatches == 1 && own.pipeline_compilations == 1)
+    assert(foreign.uploads == 1 && foreign.uploaded_bytes == 8 && foreign.buffer_allocations == 1)
+    assert(foreign.dispatches == 0 && foreign.active_bytes == 8)
+    // A GFX-only upload on the selected device is outside Tensor attribution.
+    var upload = first.upload_buffer(8, "profile external upload")
+    upload.write_floats(@values[0:2])
+    var buffer = first.buffer(GPU.BufferSettings(size:8, usage:GPU.BufferUsage.storage()))
+    var commands = first.commands()
+    var transfer = commands.copy()
+    transfer.upload(upload, buffer, 8)
+    transfer.finish()
+    var fence = commands.submit_and_track()
+    fence.wait()
+    let unchanged = a.snapshot()
+    assert(unchanged.uploads == own.uploads && unchanged.active_bytes == own.active_bytes)
+    assert(unchanged.submissions == own.submissions && unchanged.fence_creations == own.fence_creations)
+    assert(output.cpu().values()[1] == 3.0 && other.cpu().values()[1] == 2.0)
+    assert(a.snapshot().downloads == 1 && b.snapshot().downloads == 1)
+}
+
+test "count requested integer and empty storage bytes" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile = Profile(device)
+    var values:int16[] = [-2, 3, 7]
+    let integers = Tensor.vector(values).to(device)
+    let uploaded = profile.snapshot()
+    assert(uploaded.uploads == 1 && uploaded.uploaded_bytes == 6)
+    assert(uploaded.upload_staging_allocations == 1 && uploaded.active_bytes == 6)
+    assert(integers.cpu().int16_values()[2] == 7 as int16)
+    let downloaded = profile.snapshot()
+    assert(downloaded.downloads == 1 && downloaded.downloaded_bytes == 6)
+    assert(downloaded.download_staging_allocations == 1)
+    profile.reset()
+    var empty:float[] = []
+    let tensor = Tensor.vector(empty).to(device)
+    assert(tensor.cpu().values().is_empty())
+    let stats = profile.snapshot()
+    assert(stats.buffer_allocations == 1 && stats.active_bytes == 10)
+    assert(stats.uploads == 0 && stats.downloads == 0)
+    assert(stats.submissions == 0 && stats.fence_creations == 0)
+    assert(stats.pipeline_compilations == 0 && stats.dispatches == 0)
+    assert(stats.upload_staging_allocations == 0 && stats.download_staging_allocations == 0)
+}
+
+test "observe copy materialization without counting views as buffers" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    let resident = Tensor(values, [2, 2]).to(device)
+    var profile = Profile(device)
+    let view = resident.transpose()
+    let shaped = view.narrow(0, 0, 1)
+    assert(profile.snapshot().buffer_allocations == 0)
+    let output = shaped.contiguous()
+    let stats = profile.snapshot()
+    assert(stats.buffer_allocations == 1 && stats.active_bytes == 24)
+    assert(stats.submissions == 1 && stats.fence_creations == 1)
+    assert(stats.compute_passes == 0 && stats.pipeline_bindings == 0 && stats.dispatches == 0)
+    assert(stats.pipeline_compilations == 0 && stats.uploads == 0 && stats.downloads == 0)
+    let actual = output.cpu().values()
+    assert(actual[0] == 1.0 && actual[1] == 3.0)
+}
+
+test "reading resetting and dropping profiles issues no GPU commands" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile:Profile? = Profile(device)
+    device.reset_command_stats()
+    if var observer = profile {
+        let empty = observer.snapshot()
+        assert(empty.active_bytes == 0 && empty.peak_bytes == 0)
+        var values:float[] = [2.0, 3.0]
+        assert(Tensor.vector(values).multiply(2.0).values()[0] == 4.0)
+        observer.reset()
+        assert(observer.snapshot().submissions == 0)
+    }
+    profile = null
+    let commands = device.command_stats()
+    assert(commands.uploads == 0 && commands.downloads == 0 && commands.compute_passes == 0)
+}
+
+test "attribute releases of earlier buffers and shared views" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0, 2.0]
+    var input:Tensor? = Tensor.vector(values).to(device)
+    var view:Tensor? = null
+    if var tensor = input { view = tensor.reshape([1, 2]).transpose() }
+    var profile = Profile(device)
+    input = null
+    let shared = profile.snapshot()
+    assert(shared.buffer_allocations == 0 && shared.buffer_releases == 0)
+    assert(shared.active_bytes == 8 && shared.live_buffers == 1)
+    view = null
+    let released = profile.snapshot()
+    assert(released.buffer_allocations == 0 && released.buffer_releases == 1)
+    assert(released.active_bytes == 0 && released.live_buffers == 0)
+    assert(released.peak_bytes == 8 && released.peak_live_buffers == 1)
+}
+
+func profile_training_values(device:GPU.Device, enabled:bool) float[] {
+    var profile:Profile? = null
+    if enabled { profile = Profile(device) }
+    var values:float[] = [2.0, -3.0]
+    var parameters:Parameter[] = [Parameter("weight", Tensor.vector(values).to(device))]
+    var optimizer = SGD(parameters, 0.1, momentum:0.9)
+    var index = 0
+    while index < 2 {
+        optimizer.zero_grad()
+        let weight = parameters[0].value()
+        weight.multiply(weight).sum().backward()
+        optimizer.step()
+        index++
+    }
+    if var observer = profile {
+        let stats = observer.snapshot()
+        assert(stats.uploads == 1 && stats.downloads == 0 && stats.dispatches > 0)
+    }
+    return parameters[0].value().detach().cpu().values()
+}
+
+test "preserve training values with public collection active or inactive" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let inactive = profile_training_values(device, false)
+    let active = profile_training_values(device, true)
+    assert(inactive[0] == active[0] && inactive[1] == active[1])
+    assert(Math.abs(active[0] - 0.92) < 0.00001)
+    assert(Math.abs(active[1] + 1.38) < 0.00001)
+}

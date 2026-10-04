@@ -78,3 +78,9 @@ produces a NaN sentinel instead of a hidden readback.
 Model and checkpoint limits are summarized in the
 [0.2.0 direction](Direction.md). Complete workflows are available in the
 [training recipes](Recipes/Training.md).
+
+## GPU profiling
+
+`Tensor.Profile` defines a period on one device; `snapshot()` returns immutable
+`Tensor.ProfileStatistics` and `reset()` starts a new period. See
+[attribution, counters and lifetime](Profiling.md).

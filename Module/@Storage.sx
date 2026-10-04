@@ -126,7 +126,12 @@ nocopy class GPUKernelCache {
     private var convolution_gradient_pipeline:GPU.ComputePipeline? = null
     private var pooling_gradient_pipeline:GPU.ComputePipeline? = null
 
-    init(device:GPU.Device) { self.current_device = device }
+    var profile_state:GPUProfileState
+
+    init(device:GPU.Device) {
+        self.current_device = device
+        self.profile_state = GPUProfileRegistry.state(device)
+    }
 
     func elementwise() GPU.ComputePipeline {
         if var pipeline = self.elementwise_pipeline { return pipeline }
@@ -136,6 +141,7 @@ nocopy class GPUKernelCache {
         )
         self.elementwise_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -147,6 +153,7 @@ nocopy class GPUKernelCache {
         )
         self.binary_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -158,6 +165,7 @@ nocopy class GPUKernelCache {
         )
         self.reduction_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -169,6 +177,7 @@ nocopy class GPUKernelCache {
         )
         self.linear_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -180,6 +189,7 @@ nocopy class GPUKernelCache {
         )
         self.gather_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -191,6 +201,7 @@ nocopy class GPUKernelCache {
         )
         self.convolution_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -202,6 +213,7 @@ nocopy class GPUKernelCache {
         )
         self.pooling_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -213,6 +225,7 @@ nocopy class GPUKernelCache {
         )
         self.dropout_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -224,6 +237,7 @@ nocopy class GPUKernelCache {
         )
         self.gather_gradient_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -235,6 +249,7 @@ nocopy class GPUKernelCache {
         )
         self.convolution_gradient_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -246,6 +261,7 @@ nocopy class GPUKernelCache {
         )
         self.pooling_gradient_pipeline = pipeline
         GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
         return pipeline
     }
 
@@ -330,6 +346,7 @@ nocopy class GPUStorage {
     private var other_parent:GPUStorage? = null
     private let current_dtype:DType
     private let element_count:int
+    private var buffer_bytes:int = 0
 
     init(
         device:GPU.Device,
@@ -345,6 +362,7 @@ nocopy class GPUStorage {
         self.current_device = device
         self.kernel_cache = cache
         self.current_buffer = buffer
+        if let value = buffer { self.buffer_bytes = value.size() }
         self.upload_buffer = upload
         self.completion = completion
         self.parent = parent
@@ -359,6 +377,7 @@ nocopy class GPUStorage {
         self.completion = null
         self.upload_buffer = null
         self.current_buffer = null
+        if self.buffer_bytes > 0 { self.kernel_cache.profile_state.release(self.buffer_bytes) }
         self.parent = null
         self.other_parent = null
     }
@@ -437,12 +456,14 @@ nocopy class GPUStorage {
         let byte_count = checked_byte_count(self.element_count, self.current_dtype.byte_width())
         var download = self.current_device.download_buffer(gpu_byte_count(byte_count), "Tensor download")
         GPUPerformanceCounters.record_download_staging()
+        self.kernel_cache.profile_state.download(byte_count)
         var commands = self.current_device.commands()
         var transfer = commands.copy()
         transfer.download(self.required_buffer(), download, byte_count)
         transfer.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         completed.wait()
         if self.current_dtype == DType.float32() { return CPUStorage(download.read_floats(count:self.element_count)) }
         if self.current_dtype == DType.int8() { return CPUStorage(download.read_int8s(count:self.element_count)) }
@@ -479,6 +500,7 @@ nocopy class GPUStorage {
         transfer.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, layout.count())
     }
 
@@ -495,12 +517,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(1, value)
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -517,12 +543,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(1, 0.0)
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -539,12 +569,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(1, 0.0)
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -561,12 +595,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(1, value)
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -588,13 +626,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, other.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -612,13 +654,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, other.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -640,12 +686,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -667,13 +717,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, other.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -719,6 +773,7 @@ nocopy class GPUStorage {
         transfer.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -734,13 +789,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, indices.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, indices, self.current_dtype, count)
     }
 
@@ -759,13 +818,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, indices.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, indices, self.current_dtype, count)
     }
 
@@ -788,13 +851,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, kernel.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, kernel, self.current_dtype, count)
     }
 
@@ -835,13 +902,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, other.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
@@ -864,12 +935,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -892,13 +967,17 @@ nocopy class GPUStorage {
         commands.compute_uniform(0, @metadata[0:metadata.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.storage_buffer(1, input.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, input, self.current_dtype, count)
     }
 
@@ -919,12 +998,16 @@ nocopy class GPUStorage {
         commands.compute_uniform(3, @counter_bytes[0:counter_bytes.count()])
         var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
         var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
         compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
         compute.storage_buffer(0, self.required_buffer())
         compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
         compute.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, count)
     }
 
@@ -941,6 +1024,8 @@ nocopy class GPUStorage {
     private static func finish_upload(device:GPU.Device, upload:GPU.TransferBuffer, dtype:DType, count:int) GPUStorage {
         let byte_count = checked_byte_count(count, dtype.byte_width())
         GPUPerformanceCounters.record_upload_staging()
+        var profile_state = GPUProfileRegistry.state(device)
+        profile_state.upload(byte_count)
         var buffer = GPUStorage.allocate_buffer(device, gpu_byte_count(byte_count), "Tensor storage")
         var commands = device.commands()
         var transfer = commands.copy()
@@ -948,16 +1033,19 @@ nocopy class GPUStorage {
         transfer.finish()
         var completed = commands.submit_and_track()
         GPUPerformanceCounters.record_fence()
+        profile_state.submit()
         return GPUStorage(device, GPUKernelCache(device), buffer, upload, completed, null, null, dtype, count)
     }
 
     private static func allocate_buffer(device:GPU.Device, size:int, name:str) GPU.Buffer {
-        GPUPerformanceCounters.record_buffer()
-        return device.buffer(GPU.BufferSettings(
+        var buffer = device.buffer(GPU.BufferSettings(
             size:size,
             usage:GPU.BufferUsage.storage(),
             name:name
         ))
+        GPUPerformanceCounters.record_buffer()
+        GPUProfileRegistry.state(device).allocate(size)
+        return buffer
     }
 
     private func required_buffer() GPU.Buffer {

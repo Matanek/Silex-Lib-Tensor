@@ -79,3 +79,5 @@ Every fixture must fail and mention its intended contract:
   before any model value is replaced;
 - transposed GPU views are covered as successful stride-aware computation in
   `Tests/GPUCompute.sx`.
+
+- `ProfileSnapshotMutation.sx`: public profile snapshots have immutable fields.

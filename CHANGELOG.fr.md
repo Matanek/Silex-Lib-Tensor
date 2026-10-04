@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- Ajout de `Tensor.Profile` et `Tensor.ProfileStatistics` : coûts GPU propres à
+  Tensor, par device et période, instantanés immuables et reset indépendant.
+  Transferts, buffers/bytes actifs et de pointe, staging, fences, soumissions,
+  compilations, passes, bindings et dispatches sont observables sans readback
+  ni attente implicite. Les bytes désignent les tailles de stockage demandées,
+  pas la VRAM physique ; les périodes suivent les appels du thread appelant.
+  Voir le [guide de profilage](Docs/FR/Profiling.md).
+
 - Adam évite de recalculer les moments nuls après leur première initialisation,
   sur CPU et GPU. Les formules, les valeurs des moments et l’initialisation
   différée des paramètres restent identiques. Sur GPU, les étapes suivantes

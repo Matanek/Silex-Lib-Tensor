@@ -1,0 +1,9 @@
+use GFX.GPU
+use Tensor.Profile
+
+func main() {
+    var device = GPU.Device()
+    var profile = Profile(device)
+    var snapshot = profile.snapshot()
+    snapshot.downloads = 1
+}

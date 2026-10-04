@@ -11,6 +11,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
   placements, opérations, erreurs et tolérances.
 - Utilisez les [recettes MLP, CNN et RNN](Recipes/Training.md) pour une boucle
   d'entraînement complète et les checkpoints.
+- Observez les [coûts GPU par période](Profiling.md) avant d’optimiser une chaîne.
 - Lisez la [direction de l'API](Direction.md) pour ses influences PyTorch,
   TensorFlow et JAX, ses garanties et ses omissions délibérées.
 

@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Observe [GPU costs by period](Profiling.md) before optimizing a chain.
 - Start here to construct, transform, compute, differentiate, and train.
 - Consult the [compatibility reference](Reference.md) for dtypes, placements,
   operations, errors, and tolerances.

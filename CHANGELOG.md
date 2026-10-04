@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Add `Tensor.Profile` and `Tensor.ProfileStatistics`: Tensor GPU costs per
+  device and period, immutable snapshots and independent resets. Transfers,
+  live/peak buffers and bytes, staging, fences, submissions, compilations,
+  passes, bindings and dispatches are observable without implicit readback or
+  waits. Bytes describe requested storage sizes, not physical VRAM; periods
+  follow calls from the calling thread. See the [profiling guide](Docs/EN/Profiling.md).
+
 - Adam avoids recomputing zero moments after their first initialization on
   CPU and GPU. The formulas, moment values, and deferred initialization of
   parameters remain unchanged. Subsequent GPU steps remove two passes and

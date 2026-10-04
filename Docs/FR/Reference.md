@@ -78,3 +78,9 @@ indice hors limites produit un NaN sentinelle au lieu d'un readback caché.
 Les limites de modèles et de checkpoints sont résumées dans la
 [direction 0.2.0](Direction.md). Les parcours complets figurent dans les
 [recettes d'entraînement](Recipes/Training.md).
+
+## Profilage GPU
+
+`Tensor.Profile` délimite une période sur un device ; `snapshot()` retourne
+`Tensor.ProfileStatistics` immuable et `reset()` recommence la période. Voir
+[attribution, compteurs et durée de vie](Profiling.md).
