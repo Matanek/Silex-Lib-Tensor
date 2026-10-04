@@ -73,3 +73,44 @@ test "move parameters after optimizer construction but before state initializati
     var expected:float[] = [1.7]
     assert(gpu_optimizer_same(parameters[0].value().detach().cpu().values(), expected))
 }
+
+test "match the independent first Adam update for tiny signed gradients" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var gradients:float[] = [
+        0.0, 0.0000000009313226, -0.0000000009313226,
+        0.000000007450581, -0.000000007450581
+    ]
+    let cpu_gradient = Tensor.vector(gradients)
+    let gpu_gradient = cpu_gradient.to(device)
+    var cpu_parameters:Neural.Parameter[] = [
+        Neural.Parameter("tiny", Tensor.zeros([gradients.count()]))
+    ]
+    var gpu_parameters:Neural.Parameter[] = [
+        Neural.Parameter("tiny", Tensor.zeros([gradients.count()]).to(device))
+    ]
+    var cpu = Optim.Adam(cpu_parameters, learning_rate:0.05)
+    var gpu = Optim.Adam(gpu_parameters, learning_rate:0.05)
+    device.reset_command_stats()
+    cpu_parameters[0].value().multiply(cpu_gradient).sum().backward()
+    gpu_parameters[0].value().multiply(gpu_gradient).sum().backward()
+    cpu.step()
+    gpu.step()
+    let stats = device.command_stats()
+    assert(stats.uploads == 0 && stats.downloads == 0)
+    let cpu_values = cpu_parameters[0].value().detach().values()
+    let gpu_values = gpu_parameters[0].value().detach().cpu().values()
+    var index = 0
+    while index < gradients.count() {
+        // Bias-corrected moments make the first update independent of beta1/2.
+        let expected = -0.05 * gradients[index] / (Math.abs(gradients[index]) + 0.00000001)
+        assert(Math.is_finite(cpu_values[index]) && Math.is_finite(gpu_values[index]))
+        assert(Math.abs(cpu_values[index] - expected) < 0.000001)
+        assert(Math.abs(gpu_values[index] - expected) < 0.000001)
+        index++
+    }
+    // A gradient below epsilon still has an observable update; treating it as
+    // exactly zero would conceal the source of trajectory sensitivity.
+    assert(Math.abs(cpu_values[1]) > 0.004)
+    assert(Math.abs(gpu_values[1]) > 0.004)
+}

@@ -5,10 +5,11 @@ use Tensor
 use Tensor.Neural
 use Tensor.Optim
 
-func rnn_gpu_match(left:float[], right:float[], tolerance:float = 0.03) bool {
+func rnn_gpu_match(left:float[], right:float[], tolerance:float = 0.003) bool {
     if left.count() != right.count() { return false }
     var index = 0
     while index < left.count() {
+        if !Math.is_finite(left[index]) || !Math.is_finite(right[index]) { return false }
         if Math.abs(left[index] - right[index]) > tolerance { return false }
         index++
     }
@@ -48,7 +49,9 @@ test "train compare clip and restore the recurrent classifier on GPU" {
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
     var input_values:float[] = [
         -1.0, 0.0, 1.0,
-        -0.5, 0.0, 0.5,
+        // Avoid exact antisymmetry: near-zero bias gradients are amplified by
+        // Adam's default epsilon and cannot qualify cross-device trajectories.
+        -0.5, 0.1, 0.4,
         1.0, 0.0, -1.0,
         0.5, 0.0, -0.5
     ]
@@ -102,7 +105,7 @@ test "train compare clip and restore the recurrent classifier on GPU" {
                 assert(rnn_gpu_match(
                     cpu_parameters[index].value().detach().values(),
                     gpu_parameters[index].value().detach().cpu().values(),
-                    0.15
+                    0.003
                 ))
                 index++
             }
@@ -124,4 +127,51 @@ test "train compare clip and restore the recurrent classifier on GPU" {
         success => {}
         failure(error) => { panic(error.detail) }
     }
+}
+
+test "bound symmetric recurrent bias gradients before Adam amplification" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var inputs:float[] = [
+        -1.0, 0.0, 1.0, -0.5, 0.0, 0.5,
+        1.0, 0.0, -1.0, 0.5, 0.0, -0.5
+    ]
+    var targets:int32[] = [0, 0, 1, 1]
+    let input = Tensor(inputs, [4, 3, 1])
+    let target = Tensor.vector(targets)
+    var cpu = rnn_gpu_model(307)
+    var gpu = rnn_gpu_model(307)
+    gpu.to(device)
+    let gpu_input = input.to(device)
+    let gpu_target = target.to(device)
+    device.reset_command_stats()
+    cpu.forward(input).cross_entropy(target, 1).backward()
+    gpu.forward(gpu_input).cross_entropy(gpu_target, 1).backward()
+    let stats = device.command_stats()
+    assert(stats.uploads == 0 && stats.downloads == 0)
+    var cpu_parameters = cpu.parameters()
+    var gpu_parameters = gpu.parameters()
+    var index = 0
+    var checked_biases = 0
+    while index < cpu_parameters.count() {
+        let name = cpu_parameters[index].name()
+        if name == "memory.bias" || name == "classifier.bias" {
+            let cpu_gradient = rnn_gpu_gradient(cpu_parameters[index]).detach().values()
+            let gpu_gradient = rnn_gpu_gradient(gpu_parameters[index]).detach().cpu().values()
+            assert(cpu_gradient.count() == gpu_gradient.count())
+            var component = 0
+            while component < cpu_gradient.count() {
+                // With zero initial biases, odd inputs paired with opposite
+                // labels cancel analytically. Float32 roundoff remains bounded.
+                assert(Math.is_finite(cpu_gradient[component]))
+                assert(Math.is_finite(gpu_gradient[component]))
+                assert(Math.abs(cpu_gradient[component]) < 0.0000001)
+                assert(Math.abs(gpu_gradient[component]) < 0.0000001)
+                component++
+            }
+            checked_biases++
+        }
+        index++
+    }
+    assert(checked_biases == 2)
 }
