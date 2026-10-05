@@ -1,0 +1,76 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Neural.Buffer
+use Tensor.Optim.Adam
+use Tensor.Optim.SGD
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+use STD.Math
+
+func required_moment(value:Tensor?) Tensor {
+    if let tensor = value { return tensor }
+    panic("missing optimizer moment")
+}
+func moment_near(value:float, expected:float) { assert(Math.abs(value-expected) < 0.00001) }
+
+test "freezing preserves exact warm momentum moments and Adam counters" {
+    var adam_parameter = Parameter("adam",Tensor.scalar(2.0))
+    var adam = Adam([adam_parameter],learning_rate:0.1,beta1:0.5,beta2:0.75,epsilon:0.001,weight_decay:0.2)
+    adam_parameter.value().sum().backward(); adam.step(); adam.zero_grad()
+    moment_near(required_moment(adam.first_moment_state("adam")).item(),0.7)
+    moment_near(required_moment(adam.second_moment_state("adam")).item(),0.49)
+    let old_adam = adam_parameter.value().multiply(9.0).sum()
+    adam_parameter.freeze(); old_adam.backward(); adam.step(); adam.step()
+    assert(adam.state_step("adam") == 1)
+    moment_near(required_moment(adam.first_moment_state("adam")).item(),0.7)
+    moment_near(required_moment(adam.second_moment_state("adam")).item(),0.49)
+    var sgd_parameter = Parameter("sgd",Tensor.scalar(2.0))
+    var sgd = SGD([sgd_parameter],learning_rate:0.1,momentum:0.5,weight_decay:0.2)
+    sgd_parameter.value().sum().backward(); sgd.step(); sgd.zero_grad()
+    let old_sgd = sgd_parameter.value().multiply(9.0).sum()
+    sgd_parameter.freeze(); old_sgd.backward(); sgd.step(); sgd.step()
+    moment_near(required_moment(sgd.momentum_state("sgd")).item(),1.4)
+}
+
+test "frozen cold parameters do not initialize optimizer state" {
+    var parameter = Parameter("weight",Tensor.scalar(2.0))
+    let old_graph = parameter.value().sum()
+    parameter.freeze(); old_graph.backward()
+    var adam = Adam([parameter],weight_decay:0.2)
+    var sgd = SGD([parameter],learning_rate:0.1,momentum:0.5,weight_decay:0.2)
+    adam.step(); sgd.step()
+    assert(adam.state_step("weight") == 0 && adam.first_moment_state("weight") == null && adam.second_moment_state("weight") == null)
+    assert(sgd.momentum_state("weight") == null && parameter.value().item() == 2.0)
+}
+
+func primitive_cycle(device:GPU.Device) {
+    var source = Autograd.Variable(Tensor.scalar(3.0).to(device))
+    var buffer = Buffer("coefficient",source.value())
+    var parameter = Parameter("weight",Tensor.scalar(2.0).to(device))
+    var optimizer = Adam([parameter],weight_decay:0.2)
+    let old_graph = parameter.value().sum()
+    parameter.freeze()
+    var input = Autograd.Variable(Tensor.scalar(4.0).to(device))
+    buffer.value().multiply(parameter.value()).multiply(input.value()).backward()
+    old_graph.backward(); optimizer.step(); optimizer.zero_grad(); parameter.unfreeze()
+    parameter.value().sum().backward(); optimizer.step()
+    assert(source.gradient() == null && adam_step(optimizer) == 1)
+}
+func adam_step(optimizer:Adam) int { return optimizer.state_step("weight") }
+
+test "buffers and frozen graphs release all resident state resources" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics()
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 32 {
+        primitive_cycle(device)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        iteration++
+    }
+}

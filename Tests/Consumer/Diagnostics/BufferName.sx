@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+func main() { var buffer = Neural.Buffer("",Tensor.scalar(1.0)) }

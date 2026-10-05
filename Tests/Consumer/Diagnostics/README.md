@@ -132,3 +132,9 @@ Sequence constructors add `ArangeStep`, `ArangeValue`, `ArangeLast`, and
 `ArangeCardinality` for nonzero steps, int32 outputs, and checked cardinality;
 `LinspaceCount`, `LinspaceNaN`, `LinspaceInfinity`, and `LinspaceBytes` for
 nonnegative counts, finite bounds, and physical sizes. Each name is its `.sx` fixture.
+
+State primitives add `BufferName` for a nonempty name, `BufferDType`,
+`BufferShape`, and `BufferPlacement` for replacement compatibility,
+`BufferOptimizer` for the distinct Buffer/Parameter types, and
+`ParameterFreezeGradient`/`ParameterUnfreezeGradient` for an empty slot before
+changing trainability. Each name refers to its `.sx` fixture.

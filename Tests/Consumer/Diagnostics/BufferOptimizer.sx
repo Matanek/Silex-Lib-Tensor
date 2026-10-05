@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+func main() { var buffer = Neural.Buffer("counter",Tensor.scalar(1.0)); var optimizer = Optim.SGD([buffer],learning_rate:0.1) }

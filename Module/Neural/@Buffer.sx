@@ -1,0 +1,26 @@
+use GFX.GPU
+use Tensor
+
+public nocopy class Buffer {
+    private let buffer_name:str
+    private var current_value:Tensor
+
+    init(name:str, value:Tensor) {
+        if name == "" { panic("Tensor.Neural.Buffer requires a non-empty name") }
+        self.buffer_name = name
+        self.current_value = value.detach()
+    }
+
+    func name() str { return self.buffer_name }
+    func value() Tensor { return self.current_value }
+
+    func replace(value:Tensor) {
+        if value.dtype() != self.current_value.dtype() { panic("Tensor.Neural.Buffer.replace cannot change dtype") }
+        if !same_parameter_shape(value.shape(),self.current_value.shape()) { panic("Tensor.Neural.Buffer.replace cannot change shape") }
+        if !value.same_optimizer_placement(self.current_value) { panic("Tensor.Neural.Buffer.replace cannot change placement") }
+        self.current_value = value.detach()
+    }
+
+    func to(device:GPU.Device) { self.current_value = self.current_value.to(device) }
+    func cpu() { self.current_value = self.current_value.cpu() }
+}

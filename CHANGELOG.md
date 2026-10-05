@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add detached, named and shared `Neural.Buffer` values with checked replacement
+  and exact CPU/GPU transfers. `Parameter.freeze/unfreeze/is_trainable` suspend
+  new gradients, updates, decay, clipping and SGD/Adam state, even when a graph
+  built earlier produces a gradient. Unfreezing retains moments. See the
+  [buffer and freezing guide](Docs/EN/State.md).
+
 - External classes can derive from `Neural.Layer` through its protected
   constructor and share existing layers/parameters. Virtual state hooks rely
   on the compiler’s family-wide mutation inference; remove the obsolete base

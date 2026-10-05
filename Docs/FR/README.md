@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Conservez un [buffer et gelez un paramètre](State.md).
 - Composez une [couche extérieure et partagez ses paramètres](Composition.md).
 - Sélectionnez les [meilleurs éléments et leurs gradients](TopK.md).
 - Trouvez les [indices des extrema](IndexedReductions.md) et sélectionnez leurs valeurs.

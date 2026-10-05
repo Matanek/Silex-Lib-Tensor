@@ -53,7 +53,7 @@ public nocopy class SGD {
         var squared_norm = reference.autograd_constant_shape([], 0.0)
         index = 0
         while index < self.parameters.count() {
-            if let gradient = self.parameters[index].gradient() {
+            if let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm") {
                 if !gradient.is_empty() {
                     squared_norm = squared_norm.add(gradient.multiply(gradient).sum())
                 }
@@ -73,7 +73,7 @@ public nocopy class SGD {
         let factor = one.subtract(one.subtract(ratio).relu())
         index = 0
         while index < self.parameters.count() {
-            if let gradient = self.parameters[index].gradient() {
+            if let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm") {
                 self.parameters[index].replace_gradient(gradient.multiply(factor).detach())
             }
             index++
@@ -99,7 +99,7 @@ public nocopy class SGD {
         while index < self.parameters.count() {
             var parameter = self.parameters[index]
             var state = self.states[index]
-            if let incoming = parameter.gradient() {
+            if let incoming = optimizer_gradient(parameter, "SGD.step") {
                 var gradient = incoming
                 if self.weight_decay != 0.0 {
                     gradient = gradient.add(parameter.value().detach().multiply(self.weight_decay))

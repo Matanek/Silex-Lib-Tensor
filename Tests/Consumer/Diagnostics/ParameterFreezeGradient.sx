@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+func main() { var parameter = Neural.Parameter("weight",Tensor.scalar(1.0)); parameter.value().sum().backward(); parameter.freeze() }

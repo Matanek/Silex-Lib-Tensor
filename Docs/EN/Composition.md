@@ -70,7 +70,8 @@ and `cpu()` perform transfers.
 
 Passing an existing layer to several parents retains its identity. For the
 optimizer, collect each shared Parameter once; current Sequential still requires
-unique names in its collection. This guide adds no automatic recursive
-registration, buffers or freezing. The [training recipe](Recipes/Training.md)
+unique names in its collection. Automatic recursive registration
+still requires manual forwarding. The [buffer and freezing guide](State.md)
+explains the available state primitives. The [training recipe](Recipes/Training.md)
 explains the existing loop; the [gradient guide](Gradients.md) details slots and
 graph consumption.

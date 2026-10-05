@@ -107,3 +107,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Variance et écart-type](Statistics.md) : correction, domaines et gradient constant.
 
 [Progressions et grilles](Sequences.md) : bornes, pas, cardinalité et dtypes.
+
+[Buffers et gel des paramètres](State.md) : détachement, identité, transferts et état conservé des optimiseurs.

@@ -63,6 +63,7 @@ func require_optimizer_tensor(parameter:Parameter, tensor:Tensor, role:str, oper
 }
 
 func optimizer_gradient(parameter:Parameter, operation:str) Tensor? {
+    if !parameter.is_trainable() { return null }
     if let gradient = parameter.gradient() {
         require_optimizer_tensor(parameter, gradient, "gradient", operation)
         return gradient.detach()

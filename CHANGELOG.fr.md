@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+- Ajout de `Neural.Buffer` détaché, nommé et partagé, avec remplacement contrôlé
+  et transferts exacts CPU/GPU. `Parameter.freeze/unfreeze/is_trainable` suspend
+  les nouveaux gradients, mises à jour, décroissance, clipping et états SGD/Adam,
+  même avec un gradient issu d’un graphe antérieur. Le dégel conserve les moments.
+  Voir le [guide des buffers et du gel](Docs/FR/State.md).
+
+- Les classes extérieures peuvent dériver de `Neural.Layer` par son constructeur
+  protégé et partager les couches et paramètres existants. Les hooks virtuels
+  utilisent l’inférence de mutation du compilateur ; suppression du marqueur
+  obsolète de la base. Valeurs et gradients partagés qualifiés CPU/GPU. Voir le
+  [guide de composition](Docs/FR/Composition.md).
+
+- Ajout de `Tensor.topk` avec axe explicite, valeurs ordonnées et indices int32
+  détachés dans `TopKResult`. Comparaisons numériques CPU exactes et sélection
+  float32 GPU résidente ; égalités et NaN conservent l’ordre des indices. Les
+  valeurs se différencient par `gather`. k0 et sorties vides définis, formes,
+  tailles et indices contrôlés. Voir le [guide top-k](Docs/FR/TopK.md).
+
+- Ajout de `argmin` et `argmax` : indices int32 détachés en ordre logique,
+  comparaisons entières CPU exactes et entrée float32 GPU résidente. Égalités et
+  NaN retiennent le premier indice ; axes, domaines et largeur d’index contrôlés.
+  Les valeurs sélectionnées se différencient par `gather`. Voir le
+  [guide des indices](Docs/FR/IndexedReductions.md).
+
 - Ajout de `Tensor.arange` int32 à borne exclusive et `Tensor.linspace` float32
   à count explicite, générés sur CPU. Bornes/pas/cardinalité/valeurs int32 sont
   contrôlés avant allocation ; extrêmes int64 et interpolation de grandes bornes

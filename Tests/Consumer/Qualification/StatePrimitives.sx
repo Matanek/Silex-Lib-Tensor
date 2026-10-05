@@ -1,0 +1,47 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+
+func gpu_buffer_dtype<T>(device:GPU.Device) {
+    var values:T[] = [1 as T,2 as T]
+    var buffer = Neural.Buffer("state",Tensor.vector(values))
+    var profile = Profile(device)
+    buffer.to(device)
+    assert(buffer.value().is_gpu() && profile.snapshot().uploads == 1 && profile.snapshot().downloads == 0)
+    buffer.cpu()
+    let actual = buffer.value().cast(DType.float32()).values()
+    assert(actual[0] == 1.0 && actual[1] == 2.0 && profile.snapshot().downloads == 1)
+}
+
+func gpu_freeze(device:GPU.Device, adam:bool) {
+    var parameter = Neural.Parameter("weight",Tensor.scalar(2.0).to(device))
+    var input = Autograd.Variable(Tensor.scalar(3.0).to(device))
+    let old_graph = parameter.value().multiply(9.0).sum()
+    parameter.freeze()
+    parameter.value().multiply(input.value()).backward()
+    assert(parameter.gradient() == null)
+    old_graph.backward()
+    var profile = Profile(device)
+    if adam { var optimizer = Optim.Adam([parameter],learning_rate:0.1,weight_decay:0.2); profile.reset(); optimizer.step() }
+    else { var optimizer = Optim.SGD([parameter],learning_rate:0.1,momentum:0.5,weight_decay:0.2); profile.reset(); optimizer.step() }
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && profile.snapshot().dispatches == 0)
+    assert(parameter.value().detach().cpu().item() == 2.0)
+    if let gradient = input.gradient() { assert(gradient.cpu().item() == 2.0) }
+    else { panic("GPU frozen coefficient lost input gradient") }
+    parameter.zero_grad(); parameter.unfreeze()
+    assert(parameter.is_trainable())
+}
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    gpu_buffer_dtype<float>(device); gpu_buffer_dtype<int8>(device); gpu_buffer_dtype<uint8>(device)
+    gpu_buffer_dtype<int16>(device); gpu_buffer_dtype<uint16>(device); gpu_buffer_dtype<int32>(device); gpu_buffer_dtype<uint32>(device)
+    gpu_buffer_dtype<int64>(device); gpu_buffer_dtype<uint64>(device)
+    gpu_freeze(device,false); gpu_freeze(device,true)
+    print("Tensor state primitives qualification passed")
+}

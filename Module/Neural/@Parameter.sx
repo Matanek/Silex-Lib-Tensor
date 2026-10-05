@@ -5,16 +5,39 @@ use Tensor.Autograd.Variable
 public nocopy class Parameter {
     private let parameter_name:str
     private var variable:Variable
+    private var current_trainable:bool
 
     init(name:str, value:Tensor) {
         if name == "" { panic("Tensor.Neural.Parameter requires a non-empty name") }
         self.parameter_name = name
         self.variable = Variable(value)
+        self.current_trainable = true
     }
 
     func name() str { return self.parameter_name }
 
-    func value() Tensor { return self.variable.value() }
+    func value() Tensor {
+        if !self.current_trainable { return self.variable.value().detach() }
+        return self.variable.value()
+    }
+
+    func is_trainable() bool { return self.current_trainable }
+
+    func freeze() {
+        if !self.current_trainable { return }
+        self.require_empty_gradient("freeze")
+        self.current_trainable = false
+    }
+
+    func unfreeze() {
+        if self.current_trainable { return }
+        self.require_empty_gradient("unfreeze")
+        self.current_trainable = true
+    }
+
+    private func require_empty_gradient(operation:str) {
+        if self.gradient() != null { panic("Tensor.Neural.Parameter.$(operation) requires zero_grad before changing trainability") }
+    }
 
     func gradient() Tensor? { return self.variable.gradient() }
 

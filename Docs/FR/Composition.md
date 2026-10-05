@@ -72,7 +72,8 @@ sans remplir leurs slots. Sur GPU, les calculs restent résidents ; seuls
 Transmettre une couche existante à plusieurs parents conserve son identité.
 Pour l’optimiseur, collectez chaque Parameter partagé une seule fois ; le
 Sequential actuel exige encore des noms uniques dans sa collecte. L’enregistrement
-récursif automatique, les buffers et le gel ne sont pas ajoutés par ce guide.
+récursif automatique reste à relayer manuellement. Le [guide des buffers et du gel](State.md)
+explique les primitives d’état disponibles.
 La [recette d’entraînement](Recipes/Training.md) explique la boucle existante,
 et le [guide des gradients](Gradients.md) détaille les slots et la consommation
 du graphe.

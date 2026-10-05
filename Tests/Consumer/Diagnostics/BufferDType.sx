@@ -1,0 +1,6 @@
+use Tensor
+use Tensor.Neural
+func main() {
+    var buffer = Neural.Buffer("counter",Tensor.scalar(1.0))
+    buffer.replace(Tensor.scalar(1 as int32))
+}

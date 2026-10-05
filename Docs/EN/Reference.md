@@ -107,3 +107,5 @@ graph consumption, and Jacobian checking.
 [Variance and standard deviation](Statistics.md): correction, domains, and constant gradients.
 
 [Progressions and grids](Sequences.md): bounds, steps, cardinality, and dtypes.
+
+[Buffers and parameter freezing](State.md): detachment, identity, transfers, and retained optimizer state.

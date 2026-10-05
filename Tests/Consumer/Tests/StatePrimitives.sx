@@ -1,0 +1,185 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func state_near(actual:float, expected:float) { assert(Math.is_finite(actual) && Math.abs(actual-expected) < 0.0001) }
+
+func buffer_dtype<T>() {
+    var values:T[] = [1 as T,2 as T]
+    var buffer = Neural.Buffer("state",Tensor.vector(values))
+    assert(buffer.value().dtype() == Tensor.vector(values).dtype() && buffer.name() == "state")
+    let actual = buffer.value().cast(DType.float32()).values()
+    assert(actual[0] == 1.0 && actual[1] == 2.0)
+}
+
+test "buffers preserve names identities storage dtypes and detached provenance" {
+    buffer_dtype<float>(); buffer_dtype<int8>(); buffer_dtype<uint8>(); buffer_dtype<int16>(); buffer_dtype<uint16>()
+    buffer_dtype<int32>(); buffer_dtype<uint32>(); buffer_dtype<int64>(); buffer_dtype<uint64>()
+    var booleans:bool[] = [true,false]
+    var flags = Neural.Buffer("flags",Tensor.vector(booleans))
+    var alias = flags
+    var next:bool[] = [false,true]
+    alias.replace(Tensor.vector(next))
+    assert(alias == flags && flags.value().bool_values()[0] == false && flags.value().bool_values()[1] == true)
+    var source = Autograd.Variable(Tensor.scalar(3.0))
+    var input = Autograd.Variable(Tensor.scalar(2.0))
+    var coefficient = Neural.Buffer("coefficient",source.value())
+    coefficient.value().multiply(input.value()).backward()
+    assert(source.gradient() == null)
+    if let gradient = input.gradient() { assert(gradient.item() == 3.0) }
+    else { panic("buffer lost input gradient") }
+}
+
+test "frozen parameter values detach future graphs and trainability shares identity" {
+    var parameter = Neural.Parameter("weight",Tensor.scalar(3.0))
+    var alias = parameter
+    assert(parameter.is_trainable())
+    alias.freeze(); alias.freeze()
+    assert(!parameter.is_trainable() && alias == parameter)
+    var input = Autograd.Variable(Tensor.scalar(2.0))
+    parameter.value().multiply(input.value()).backward()
+    assert(parameter.gradient() == null)
+    if let gradient = input.gradient() { assert(gradient.item() == 3.0) }
+    else { panic("frozen coefficient lost input gradient") }
+    alias.unfreeze(); alias.unfreeze()
+    parameter.value().sum().backward()
+    if let gradient = parameter.gradient() { assert(gradient.item() == 1.0) }
+    else { panic("unfrozen parameter remained detached") }
+}
+
+test "SGD freezes momentum and decay even when an older graph fills the slot" {
+    var parameter = Neural.Parameter("weight",Tensor.scalar(2.0))
+    var optimizer = Optim.SGD([parameter],learning_rate:0.1,momentum:0.5,weight_decay:0.2)
+    parameter.value().sum().backward(); optimizer.step(); optimizer.zero_grad()
+    state_near(parameter.value().item(),1.86)
+    let old_graph = parameter.value().multiply(9.0).sum()
+    parameter.freeze(); old_graph.backward()
+    if let gradient = parameter.gradient() { assert(gradient.item() == 9.0) }
+    else { panic("old graph no longer reaches its retained leaf") }
+    optimizer.step(); optimizer.step()
+    state_near(parameter.value().item(),1.86)
+    optimizer.zero_grad(); parameter.unfreeze()
+    parameter.value().sum().backward(); optimizer.step()
+    state_near(parameter.value().item(),1.6528)
+}
+
+test "Adam resumes exactly after frozen steps without changing bias correction" {
+    var parameter = Neural.Parameter("weight",Tensor.scalar(2.0))
+    var control = Neural.Parameter("control",Tensor.scalar(2.0))
+    var optimizer = Optim.Adam([parameter],learning_rate:0.1,beta1:0.5,beta2:0.75,epsilon:0.001,weight_decay:0.2)
+    var reference = Optim.Adam([control],learning_rate:0.1,beta1:0.5,beta2:0.75,epsilon:0.001,weight_decay:0.2)
+    parameter.value().sum().backward(); control.value().sum().backward()
+    optimizer.step(); reference.step(); optimizer.zero_grad(); reference.zero_grad()
+    let previous = parameter.value().item()
+    let old_graph = parameter.value().multiply(9.0).sum()
+    parameter.freeze(); old_graph.backward(); optimizer.step(); optimizer.step()
+    assert(parameter.value().item() == previous)
+    optimizer.zero_grad(); parameter.unfreeze()
+    parameter.value().multiply(3.0).sum().backward(); control.value().multiply(3.0).sum().backward()
+    optimizer.step(); reference.step()
+    assert(parameter.value().item() == control.value().item())
+}
+
+func freeze_clip(adam:bool) {
+    var frozen = Neural.Parameter("frozen",Tensor.scalar(2.0))
+    var active = Neural.Parameter("active",Tensor.scalar(2.0))
+    let old_graph = frozen.value().multiply(9.0).sum()
+    frozen.freeze(); old_graph.backward(); active.value().multiply(3.0).sum().backward()
+    var norm = Tensor.scalar(0.0)
+    if adam {
+        var optimizer = Optim.Adam([frozen,active],learning_rate:0.1)
+        norm = optimizer.clip_grad_norm(1.0); optimizer.step()
+    } else {
+        var optimizer = Optim.SGD([frozen,active],learning_rate:0.1)
+        norm = optimizer.clip_grad_norm(1.0); optimizer.step()
+    }
+    assert(norm.item() == 3.0 && frozen.value().item() == 2.0)
+    if let gradient = frozen.gradient() { assert(gradient.item() == 9.0) }
+    else { panic("clipping changed a frozen gradient slot") }
+    if let gradient = active.gradient() { state_near(gradient.item(),1.0) }
+    else { panic("clipping lost active gradient") }
+}
+
+test "clipping excludes frozen slots while keeping active gradients" { freeze_clip(false); freeze_clip(true) }
+
+func gpu_buffer_dtype<T>(device:GPU.Device) {
+    var values:T[] = [1 as T,2 as T]
+    var buffer = Neural.Buffer("state",Tensor.vector(values))
+    var profile = Profile(device)
+    buffer.to(device)
+    assert(buffer.value().is_gpu() && profile.snapshot().uploads == 1 && profile.snapshot().downloads == 0)
+    buffer.cpu()
+    let actual = buffer.value().cast(DType.float32()).values()
+    assert(actual[0] == 1.0 && actual[1] == 2.0 && profile.snapshot().downloads == 1)
+}
+
+test "buffers transfer all storage dtypes explicitly and exactly" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    gpu_buffer_dtype<float>(device); gpu_buffer_dtype<int8>(device); gpu_buffer_dtype<uint8>(device)
+    gpu_buffer_dtype<int16>(device); gpu_buffer_dtype<uint16>(device); gpu_buffer_dtype<int32>(device); gpu_buffer_dtype<uint32>(device)
+    gpu_buffer_dtype<int64>(device); gpu_buffer_dtype<uint64>(device)
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    var values:uint64[] = [maximum,maximum-(1 as uint64)]
+    var buffer = Neural.Buffer("extreme",Tensor.vector(values))
+    buffer.to(device); buffer.cpu()
+    assert(buffer.value().uint64_values()[0] == maximum && buffer.value().uint64_values()[1] == maximum-(1 as uint64))
+    var flags:bool[] = [true,false,true]
+    var boolean = Neural.Buffer("flags",Tensor.vector(flags))
+    boolean.to(device); boolean.cpu()
+    assert(boolean.value().bool_values()[0] && !boolean.value().bool_values()[1] && boolean.value().bool_values()[2])
+}
+
+func gpu_freeze(device:GPU.Device, adam:bool) {
+    var parameter = Neural.Parameter("weight",Tensor.scalar(2.0).to(device))
+    var input = Autograd.Variable(Tensor.scalar(3.0).to(device))
+    let old_graph = parameter.value().multiply(9.0).sum()
+    parameter.freeze()
+    parameter.value().multiply(input.value()).backward()
+    assert(parameter.gradient() == null)
+    old_graph.backward()
+    var profile = Profile(device)
+    if adam { var optimizer = Optim.Adam([parameter],learning_rate:0.1,weight_decay:0.2); profile.reset(); optimizer.step() }
+    else { var optimizer = Optim.SGD([parameter],learning_rate:0.1,momentum:0.5,weight_decay:0.2); profile.reset(); optimizer.step() }
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && profile.snapshot().dispatches == 0)
+    assert(parameter.value().detach().cpu().item() == 2.0)
+    if let gradient = input.gradient() { assert(gradient.cpu().item() == 2.0) }
+    else { panic("GPU frozen coefficient lost input gradient") }
+    parameter.zero_grad(); parameter.unfreeze()
+    assert(parameter.is_trainable())
+}
+
+test "GPU frozen parameters preserve resident input gradients without optimizer work" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    gpu_freeze(device,false); gpu_freeze(device,true)
+}
+
+test "warm GPU Adam resumes after frozen steps with unchanged state evolution" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var parameter = Neural.Parameter("weight",Tensor.scalar(2.0).to(device))
+    var control = Neural.Parameter("control",Tensor.scalar(2.0).to(device))
+    var optimizer = Optim.Adam([parameter],learning_rate:0.1,beta1:0.5,beta2:0.75,epsilon:0.001,weight_decay:0.2)
+    var reference = Optim.Adam([control],learning_rate:0.1,beta1:0.5,beta2:0.75,epsilon:0.001,weight_decay:0.2)
+    parameter.value().sum().backward(); control.value().sum().backward()
+    optimizer.step(); reference.step(); optimizer.zero_grad(); reference.zero_grad()
+    let previous = parameter.value().detach().cpu().item()
+    let old_graph = parameter.value().multiply(9.0).sum()
+    parameter.freeze(); old_graph.backward()
+    var profile = Profile(device)
+    optimizer.step(); optimizer.step()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && profile.snapshot().dispatches == 0)
+    assert(parameter.value().detach().cpu().item() == previous)
+    optimizer.zero_grad(); parameter.unfreeze()
+    profile.reset()
+    parameter.value().multiply(3.0).sum().backward(); control.value().multiply(3.0).sum().backward()
+    optimizer.step(); reference.step()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(parameter.value().detach().cpu().item() == control.value().detach().cpu().item())
+}
