@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- `Tensor.Autograd.grad` returns detached CPU/GPU gradients without changing
+  slots, with an explicit seed and optional zeros for unused inputs. The graph
+  is consumed after success. `Autograd.gradcheck` checks a deterministic function’s
+  complete Jacobian on float32 CPU data, with explicit epsilon and tolerances
+  and a localized first discrepancy. See the [guide](Docs/EN/Gradients.md).
+
 - Add `DType.boolean()` masks, broadcast comparisons, and logic on CPU/GPU.
   `Tensor.where` selects numeric branches with broadcast gradients and no
   implicit GPU transfers; `masked_select` compacts on the CPU and differentiates

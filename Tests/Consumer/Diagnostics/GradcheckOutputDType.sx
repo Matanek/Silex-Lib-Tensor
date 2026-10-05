@@ -1,0 +1,10 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func identity(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+func boolean_output(inputs:Tensor[]) Tensor { return inputs[0].greater_than(0.0) }
+func main() {
+    let result = Autograd.gradcheck(boolean_output,[Tensor.scalar(1.0)],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001); print(result.passed)
+}

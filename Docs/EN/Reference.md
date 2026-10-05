@@ -21,6 +21,8 @@ contract.
 | boolean equality, logic | booleans | booleans | no |
 | `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
 | `masked_select` | all nine + booleans | explicit rejection | `float32` source |
+| `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
+| `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
 
 “All nine” means `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -91,3 +93,6 @@ Model and checkpoint limits are summarized in the
 `Tensor.Profile` defines a period on one device; `snapshot()` returns immutable
 `Tensor.ProfileStatistics` and `reset()` starts a new period. See
 [attribution, counters and lifetime](Profiling.md).
+
+The [functional gradient guide](Gradients.md) explains preserved slots, seeds,
+graph consumption, and Jacobian checking.

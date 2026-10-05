@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- `Tensor.Autograd.grad` retourne des gradients détachés CPU/GPU sans modifier
+  les slots, avec seed explicite et zéro optionnel pour les entrées inutilisées.
+  Le graphe est consommé après réussite. `Autograd.gradcheck` contrôle le Jacobien
+  complet d'une fonction déterministe sur données CPU float32, avec epsilon et
+  tolérances explicites et premier écart localisé. Voir le [guide](Docs/FR/Gradients.md).
+
 - Ajout des masques `DType.boolean()`, comparaisons broadcast et logique sur
   CPU/GPU. `Tensor.where` sélectionne des branches numériques avec gradients
   broadcast et sans transfert GPU implicite ; `masked_select` compacte sur CPU

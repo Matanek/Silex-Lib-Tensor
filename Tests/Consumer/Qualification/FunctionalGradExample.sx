@@ -1,0 +1,20 @@
+use Tensor
+use Tensor.Autograd
+
+func energy(inputs:Tensor[]) Tensor {
+    return inputs[0].multiply(inputs[0]).sum()
+}
+
+func main() {
+    var data:float[] = [1.0, 2.0, 3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    input.value().multiply(7.0).sum().backward()
+    var gradients = Autograd.grad(energy([input.value()]), [input.value()])
+    let values = gradients[0].values()
+    assert(values[0] == 2.0 && values[1] == 4.0 && values[2] == 6.0)
+    if let stored = input.gradient() { assert(stored.values()[0] == 7.0) }
+    else { panic("expected stored gradient") }
+    let check = Autograd.gradcheck(energy, [Tensor.vector(data)],
+        epsilon:0.001, absolute_tolerance:0.003, relative_tolerance:0.001)
+    assert(check.passed && check.checked_derivatives == 3)
+}

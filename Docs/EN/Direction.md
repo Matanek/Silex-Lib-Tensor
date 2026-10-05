@@ -19,8 +19,8 @@ placement.
 
 JAX demonstrates the value of immutable array values and predictable
 functional transformations. Tensor nevertheless provides neither `jit`,
-`vmap`, nor a general functional gradient transformation: autodifferentiation
-remains eager and attached to executed operations.
+`vmap`, nor a general function transformation: `Autograd.grad` returns the
+gradients of an eager graph, and `gradcheck` checks a function by central differences.
 
 ## What version 0.2.0 guarantees
 
@@ -32,6 +32,8 @@ remains eager and attached to executed operations.
 - resident `float32` GPU computation without fallback or implicit readback;
 - eager reverse-mode `float32` autodifferentiation, named parameters, SGD,
   Adam, and global-norm clipping;
+- functional gradients that preserve slots and a CPU check of the complete
+  Jacobian by central differences;
 - sequential dense, simple convolutional, and simple recurrent models;
 - deterministic parameter checkpoints validated before mutation.
 

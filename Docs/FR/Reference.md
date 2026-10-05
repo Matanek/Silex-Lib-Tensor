@@ -21,6 +21,8 @@ contrats de chaque opération.
 | égalité booléenne, logique | booléens | booléens | non |
 | `where` | branches : les neuf ; masque booléen | branches `float32` ; masque booléen | branches `float32` |
 | `masked_select` | les neuf + booléens | refus explicite | source `float32` |
+| `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
+| `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
 
 « Les neuf » désigne `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -91,3 +93,6 @@ Les limites de modèles et de checkpoints sont résumées dans la
 `Tensor.Profile` délimite une période sur un device ; `snapshot()` retourne
 `Tensor.ProfileStatistics` immuable et `reset()` recommence la période. Voir
 [attribution, compteurs et durée de vie](Profiling.md).
+
+Le [guide des gradients fonctionnels](Gradients.md) décrit les slots préservés,
+les seeds, la consommation du graphe et le contrôle du Jacobien.

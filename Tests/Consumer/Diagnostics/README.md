@@ -96,3 +96,21 @@ Boolean masks add the following fixtures:
 - `MaskGPUCompaction`: dynamic compaction requires the CPU explicitly.
 
 Each name above refers to the corresponding `.sx` file.
+
+Functional gradients add the following fixtures:
+
+- `GradUnused`, `GradUntrackedInput`, `GradUntrackedOutput`, `GradEmptyInputs`,
+  `GradOutputDType`: tracked float32 provenance and explicit unused-input policy;
+- `GradSeedMissing`, `GradSeedShape`, `GradSeedDType`, `GradSeedPlacement`,
+  `GradSeedDevice`: exact seed shape, dtype, placement, and device;
+- `GradConsumed`, `GradConsumedAncestor`, `BackwardAfterGrad`, `GradAfterBackward`:
+  graph consumption is shared by both reverse-mode entry points;
+- `GradDetachedResult`: returned derivatives cannot be differentiated again;
+- `GradcheckEmptyInputs`, `GradcheckDType`, `GradcheckGPU`, `GradcheckOutputDType`:
+  nonempty float32 CPU input lists and float32 CPU outputs;
+- `GradcheckEpsilon`, `GradcheckTolerance`, `GradcheckNonfiniteTolerance`,
+  `GradcheckPerturbation`, `GradcheckNonfiniteInput`: finite numerical options,
+  input values, and effective perturbations;
+- `GradcheckShape`: the callback keeps a stable output shape.
+
+Each name refers to the corresponding `.sx` file.

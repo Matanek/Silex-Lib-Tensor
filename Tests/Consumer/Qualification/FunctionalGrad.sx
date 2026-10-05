@@ -1,0 +1,37 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+
+func energy(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]).sum() }
+func vector_energy(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+func missing_derivative(inputs:Tensor[]) Tensor { return inputs[0].detach().multiply(3.0).sum() }
+func verify_gpu(device:GPU.Device) {
+    var values:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(values).to(device))
+    input.value().multiply(7.0).sum().backward()
+    var profile = Profile(device)
+    var gradients = Autograd.grad(energy([input.value()]),[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    let actual = gradients[0].cpu().values()
+    assert(actual[0] == 2.0 && actual[1] == 4.0 && actual[2] == 6.0)
+    if let existing = input.gradient() { assert(existing.cpu().values()[0] == 7.0) }
+    else { panic("stored gradient changed") }
+}
+func main() {
+    var values:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    input.value().multiply(7.0).sum().backward()
+    var gradients = Autograd.grad(energy([input.value()]),[input.value()])
+    assert(gradients[0].values()[2] == 6.0)
+    if let existing = input.gradient() { assert(existing.values()[2] == 7.0) }
+    else { panic("stored gradient changed") }
+    let good = Autograd.gradcheck(vector_energy,[Tensor.vector(values)],epsilon:0.001,absolute_tolerance:0.003,relative_tolerance:0.001)
+    assert(good.passed && good.checked_derivatives == 9)
+    let bad = Autograd.gradcheck(missing_derivative,[Tensor.vector(values)],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001)
+    assert(!bad.passed)
+    if let failure = bad.failure { assert(failure.analytical == 0.0 && failure.numerical > 2.99) }
+    else { panic("missing discrepancy") }
+    if GPU.Device.is_supported() { var device = GPU.Device(GPU.DeviceSettings(debug:true)); verify_gpu(device) }
+    print("Functional Tensor gradients qualification passed")
+}

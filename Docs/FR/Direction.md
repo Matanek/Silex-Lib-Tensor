@@ -20,8 +20,8 @@ fonctions ni le placement implicite.
 
 JAX montre l'intérêt de valeurs de tableaux immuables et de transformations
 fonctionnelles prévisibles. Tensor ne fournit toutefois ni `jit`, ni `vmap`, ni
-transformation fonctionnelle générale de gradient : l'autodifférentiation reste
-eager et attachée aux opérations exécutées.
+transformation générale de fonctions : `Autograd.grad` retourne les gradients
+d’un graphe eager, et `gradcheck` contrôle une fonction par différences centrales.
 
 ## Ce que garantit la version 0.2.0
 
@@ -33,6 +33,8 @@ eager et attachée aux opérations exécutées.
 - calcul GPU `float32` résident, sans fallback ni readback implicite ;
 - autodifférentiation inverse eager de `float32`, paramètres nommés, SGD, Adam
   et écrêtage par norme globale ;
+- gradients fonctionnels préservant les slots et contrôle CPU du Jacobien
+  complet par différences centrales ;
 - modèles séquentiels denses, convolutionnels simples et récurrents simples ;
 - checkpoints déterministes des paramètres, validés avant mutation.
 

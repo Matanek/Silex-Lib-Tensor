@@ -1,0 +1,6 @@
+use Tensor
+use Tensor.functional_gradients
+
+public func grad(output:Tensor, inputs:Tensor[], seed:Tensor? = null, allow_unused:bool = false) Tensor[] {
+    return functional_gradients(output, inputs, seed, allow_unused)
+}

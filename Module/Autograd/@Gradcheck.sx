@@ -1,0 +1,134 @@
+use Tensor
+use Tensor.DType
+use STD.Math
+
+public struct GradcheckFailure {
+    let input:int
+    let element:int
+    let output:int
+    let analytical:float
+    let numerical:float
+}
+
+public struct GradcheckResult {
+    let passed:bool
+    let checked_derivatives:int
+    let failure:GradcheckFailure?
+}
+
+public func gradcheck(
+    evaluate:func(Tensor[]) Tensor,
+    inputs:Tensor[],
+    epsilon:float,
+    absolute_tolerance:float,
+    relative_tolerance:float
+) GradcheckResult {
+    require_gradcheck_options(epsilon, absolute_tolerance, relative_tolerance)
+    if inputs.is_empty() { panic("Tensor.Autograd.gradcheck requires at least one input") }
+    var baseline:Tensor[] = []
+    for input in inputs {
+        require_gradcheck_value(input)
+        let values = input.values()
+        for value in values {
+            if !Math.is_finite(value) { panic("Tensor.Autograd.gradcheck inputs must be finite") }
+            let upper = value + epsilon
+            let lower = value - epsilon
+            if !Math.is_finite(upper) || !Math.is_finite(lower) || upper == value || lower == value {
+                panic("Tensor.Autograd.gradcheck epsilon must produce finite distinct perturbations")
+            }
+        }
+        baseline.append(Tensor(values, input.shape()))
+    }
+    let reference = evaluate(baseline)
+    require_gradcheck_value(reference)
+    let shape = reference.shape()
+    var checked = 0
+    var output_index = 0
+    while output_index < reference.count() {
+        var variables:Variable[] = []
+        var tracked:Tensor[] = []
+        for input in baseline {
+            var variable = Variable(input)
+            tracked.append(variable.value())
+            variables.append(variable)
+        }
+        let output = evaluate(tracked)
+        require_gradcheck_shape(output, shape)
+        var seed_values:float[] = []
+        var index = 0
+        while index < output.count() {
+            if index == output_index { seed_values.append(1.0) } else { seed_values.append(0.0) }
+            index++
+        }
+        var analytical = grad(output, tracked, seed:Tensor(seed_values, shape), allow_unused:true)
+        var input_index = 0
+        while input_index < baseline.count() {
+            let derivatives = analytical[input_index].values()
+            let original = baseline[input_index].values()
+            var element = 0
+            while element < original.count() {
+                var upper_values = copy original
+                var lower_values = copy original
+                upper_values[element] += epsilon
+                lower_values[element] -= epsilon
+                var upper_inputs = gradcheck_probe(baseline, input_index, upper_values)
+                var lower_inputs = gradcheck_probe(baseline, input_index, lower_values)
+                let upper = evaluate(upper_inputs)
+                let lower = evaluate(lower_inputs)
+                require_gradcheck_shape(upper, shape)
+                require_gradcheck_shape(lower, shape)
+                let numerical = (upper.values()[output_index] - lower.values()[output_index]) / (2.0 * epsilon)
+                let exact = derivatives[element]
+                checked++
+                if !gradcheck_close(exact, numerical, absolute_tolerance, relative_tolerance) {
+                    return GradcheckResult(passed:false, checked_derivatives:checked,
+                        failure:GradcheckFailure(input:input_index, element:element, output:output_index,
+                            analytical:exact, numerical:numerical))
+                }
+                element++
+            }
+            input_index++
+        }
+        output_index++
+    }
+    return GradcheckResult(passed:true, checked_derivatives:checked, failure:null)
+}
+
+func require_gradcheck_options(epsilon:float, absolute:float, relative:float) {
+    if !Math.is_finite(epsilon) || epsilon <= 0.0 || !Math.is_finite(2.0 * epsilon) {
+        panic("Tensor.Autograd.gradcheck epsilon must be finite and positive with a finite double")
+    }
+    if !Math.is_finite(absolute) || !Math.is_finite(relative) || absolute < 0.0 || relative < 0.0 {
+        panic("Tensor.Autograd.gradcheck tolerances must be finite and nonnegative")
+    }
+}
+func require_gradcheck_value(value:Tensor) {
+    if value.dtype() != DType.float32() || !value.is_cpu() {
+        panic("Tensor.Autograd.gradcheck requires float32 CPU inputs and outputs")
+    }
+}
+func require_gradcheck_shape(value:Tensor, expected:int[]) {
+    require_gradcheck_value(value)
+    let actual = value.shape()
+    if actual.count() != expected.count() { panic("Tensor.Autograd.gradcheck output shape must remain stable") }
+    var axis = 0
+    while axis < actual.count() {
+        if actual[axis] != expected[axis] { panic("Tensor.Autograd.gradcheck output shape must remain stable") }
+        axis++
+    }
+}
+func gradcheck_probe(baseline:Tensor[], selected:int, values:float[]) Tensor[] {
+    var inputs:Tensor[] = []
+    var index = 0
+    while index < baseline.count() {
+        if index == selected { inputs.append(Tensor(values, baseline[index].shape())) }
+        else { inputs.append(baseline[index]) }
+        index++
+    }
+    return inputs
+}
+func gradcheck_close(analytical:float, numerical:float, absolute:float, relative:float) bool {
+    if !Math.is_finite(analytical) || !Math.is_finite(numerical) { return false }
+    let magnitude = Math.max(Math.abs(analytical), Math.abs(numerical))
+    return Math.abs(analytical - numerical) <= absolute + relative * magnitude
+}

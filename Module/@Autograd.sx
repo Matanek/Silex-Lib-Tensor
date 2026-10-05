@@ -446,24 +446,24 @@ func require_autograd_node(tensor:Tensor) AutogradNode {
     panic("Tensor.backward requires a result connected to a tracked Variable")
 }
 
-func backward_seed(output:Tensor, requested:Tensor?) Tensor {
+func backward_seed(output:Tensor, requested:Tensor?, operation:str = "backward") Tensor {
     if let seed = requested {
         if seed.dtype() != DType.float32() || !shapes_equal(seed.shape(), output.shape()) {
-            panic("Tensor.backward seed must be float32 with the output shape")
+            panic("Tensor.$(operation) seed must be float32 with the output shape")
         }
         if seed.is_cpu() != output.is_cpu() {
-            panic("Tensor.backward seed must use the output placement")
+            panic("Tensor.$(operation) seed must use the output placement")
         }
         if seed.is_gpu() {
             var output_storage = output.autograd_gpu_storage()
             var seed_storage = seed.autograd_gpu_storage()
             if !output_storage.same_device(seed_storage) {
-                panic("Tensor.backward seed must use the output GPU device")
+                panic("Tensor.$(operation) seed must use the output GPU device")
             }
         }
         return seed.autograd_detached()
     }
-    if output.rank() != 0 { panic("Tensor.backward without a seed requires a scalar output") }
+    if output.rank() != 0 { panic("Tensor.$(operation) without a seed requires a scalar output") }
     return output.autograd_detached().autograd_constant(1.0)
 }
 
@@ -961,4 +961,71 @@ func backward_masked(mask:Tensor, left:AutogradInput, right:AutogradInput, gradi
     if left.node != null { append_contribution(left, reduce_autograd_shape(Tensor.where(mask, gradient, zero), left.value.shape()), result) }
     if right.node != null { append_contribution(right, reduce_autograd_shape(Tensor.where(mask, zero, gradient), right.value.shape()), result) }
     return result
+}
+
+// Return detached derivatives without writing any GradientSlot.
+package func functional_gradients(output:Tensor, inputs:Tensor[], seed:Tensor?, allow_unused:bool) Tensor[] {
+    if output.dtype() != DType.float32() { panic("Tensor.Autograd.grad output must use dtype float32") }
+    if inputs.is_empty() { panic("Tensor.Autograd.grad requires at least one tracked input") }
+    var requested:AutogradNode[] = []
+    for input in inputs {
+        if var node = input.autograd_node() {
+            if node.consumed { panic("Tensor.Autograd.grad cannot reuse a consumed graph") }
+            requested.append(node)
+        } else { panic("Tensor.Autograd.grad inputs must be tracked Tensor values") }
+    }
+    var visited:AutogradNode[] = []
+    var order:AutogradNode[] = []
+    var gradient_nodes:AutogradNode[] = []
+    var gradients:Tensor[] = []
+    if var root = output.autograd_node() {
+        append_autograd_order(root, visited, order)
+        for node in order {
+            if node.consumed { panic("Tensor.Autograd.grad cannot reuse a consumed graph") }
+        }
+        gradient_nodes.append(root)
+        gradients.append(backward_seed(output, seed, "Autograd.grad"))
+    } else {
+        if !allow_unused { panic("Tensor.Autograd.grad output is not connected to tracked inputs") }
+        let validated_seed = backward_seed(output, seed, "Autograd.grad")
+    }
+    for node in requested {
+        if !autograd_contains_node(order, node) && !allow_unused {
+            panic("Tensor.Autograd.grad requested input is unused; pass allow_unused:true for zero")
+        }
+    }
+    var index = order.count() - 1
+    while index >= 0 {
+        var node = order[index]
+        let gradient = autograd_gradient(node, gradient_nodes, gradients)
+        match node.rule {
+            leaf(slot) => {}
+            released => { panic("Tensor.Autograd.grad cannot reuse a consumed graph") }
+            else => {
+                var contributions = backward_rule(node.rule, gradient)
+                for contribution in contributions {
+                    accumulate_autograd_gradient(contribution.node, contribution.gradient, gradient_nodes, gradients)
+                }
+            }
+        }
+        index--
+    }
+    var result:Tensor[] = []
+    index = 0
+    while index < requested.count() {
+        if autograd_contains_node(gradient_nodes, requested[index]) {
+            result.append(autograd_gradient(requested[index], gradient_nodes, gradients).autograd_detached())
+        } else { result.append(inputs[index].autograd_detached().autograd_constant(0.0)) }
+        index++
+    }
+    // A rejected request or failed derivative leaves every operation unconsumed.
+    for node in order {
+        match node.rule { leaf(slot) => {}; else => { node.consume() } }
+    }
+    return result
+}
+
+func autograd_contains_node(nodes:AutogradNode[], requested:AutogradNode) bool {
+    for node in nodes { if node == requested { return true } }
+    return false
 }

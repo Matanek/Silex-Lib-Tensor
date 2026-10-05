@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func identity(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+func main() {
+    var device = GPU.Device(); let result = Autograd.gradcheck(identity,[Tensor.scalar(1.0).to(device)],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001); print(result.passed)
+}

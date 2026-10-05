@@ -1,0 +1,50 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use Tensor.autograd_retained_edge_count
+use GFX.GPU
+
+func lifetime_loss(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]).sum() }
+func lifetime_bad(inputs:Tensor[]) Tensor { return inputs[0].detach().multiply(3.0).sum() }
+func functional_cycle(device:GPU.Device) {
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data).to(device))
+    let before = autograd_retained_edge_count()
+    let branch = input.value().multiply(input.value())
+    let output = branch.add(branch).sum()
+    assert(autograd_retained_edge_count() > before)
+    var gradients = Autograd.grad(output,[input.value(),branch,input.value()])
+    assert(autograd_retained_edge_count() == before && input.gradient() == null)
+    assert(gradients[0].is_gpu() && gradients[1].is_gpu())
+}
+func gradcheck_cycle() {
+    var data:float[] = [1.0,2.0,3.0]
+    let before = autograd_performance_statistics()
+    let good = Autograd.gradcheck(lifetime_loss,[Tensor.vector(data)],epsilon:0.001,absolute_tolerance:0.003,relative_tolerance:0.002)
+    let bad = Autograd.gradcheck(lifetime_bad,[Tensor.vector(data)],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001)
+    assert(good.passed && !bad.passed)
+    let after = autograd_performance_statistics()
+    assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+}
+
+test "functional GPU gradients release consumed edges and all buffers" {
+    if !GPU.Device.is_supported() { return }
+    let baseline = autograd_performance_statistics()
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 48 {
+        functional_cycle(device)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        assert(autograd_performance_statistics().live_nodes == baseline.live_nodes)
+        iteration++
+    }
+    let after = autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions == after.edge_releases-baseline.edge_releases)
+}
+
+test "gradcheck releases successful and failed temporary graphs" {
+    var iteration = 0
+    while iteration < 48 { gradcheck_cycle(); iteration++ }
+}

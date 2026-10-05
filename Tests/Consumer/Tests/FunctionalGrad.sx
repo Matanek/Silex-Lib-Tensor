@@ -1,0 +1,200 @@
+use Tensor
+use Tensor.Autograd
+
+test "functional branch gradients preserve every existing slot" {
+    var data:float[] = [1.0, 2.0, 3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    input.value().multiply(7.0).sum().backward()
+    let branch = input.value().multiply(input.value())
+    let output = branch.add(branch).sum()
+    var gradients = Autograd.grad(output, [input.value(), branch, input.value()])
+    let actual = gradients[0].values()
+    assert(actual[0] == 4.0 && actual[1] == 8.0 && actual[2] == 12.0)
+    assert(gradients[1].values()[1] == 2.0 && gradients[2].values()[2] == 12.0)
+    if let previous = input.gradient() { assert(previous.values()[0] == 7.0 && previous.values()[2] == 7.0) }
+    else { panic("existing slot was cleared") }
+}
+
+test "functional gradients leave absent slots absent and unused inputs zero explicitly" {
+    var input = Autograd.Variable(Tensor.scalar(2.0))
+    var unused = Autograd.Variable(Tensor.scalar(3.0))
+    var gradients = Autograd.grad(input.value().multiply(input.value()), [input.value(), unused.value()], allow_unused:true)
+    assert(gradients[0].item() == 4.0 && gradients[1].item() == 0.0)
+    assert(input.gradient() == null && unused.gradient() == null)
+    var constant = Autograd.grad(Tensor.scalar(8.0), [input.value()], allow_unused:true)
+    assert(constant[0].item() == 0.0 && input.gradient() == null)
+}
+
+test "vector seed reduces broadcast derivatives" {
+    var a:float[] = [1.0, 2.0, 3.0]
+    var b:float[] = [4.0, 5.0]
+    var left = Autograd.Variable(Tensor(a, [1,3]))
+    var right = Autograd.Variable(Tensor(b, [2,1]))
+    var weights:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    var gradients = Autograd.grad(left.value().multiply(right.value()), [left.value(), right.value()], seed:Tensor(weights,[2,3]))
+    let x = gradients[0].values()
+    let y = gradients[1].values()
+    assert(x[0] == 24.0 && x[1] == 33.0 && x[2] == 42.0)
+    assert(y[0] == 14.0 && y[1] == 32.0)
+}
+
+func vector_function(inputs:Tensor[]) Tensor {
+    return inputs[0].multiply(inputs[1]).add(inputs[0].multiply(inputs[0]))
+}
+func scalar_function(inputs:Tensor[]) Tensor {
+    return inputs[0].transpose().multiply(inputs[0].transpose()).sum()
+}
+func constant_function(inputs:Tensor[]) Tensor { return Tensor.scalar(5.0) }
+func broken_provenance(inputs:Tensor[]) Tensor { return inputs[0].detach().multiply(3.0).sum() }
+
+test "gradcheck checks a multi input vector Jacobian" {
+    var a:float[] = [1.0, 2.0]
+    var b:float[] = [3.0, 4.0]
+    let result = Autograd.gradcheck(vector_function, [Tensor.vector(a), Tensor.vector(b)],
+        epsilon:0.001, absolute_tolerance:0.003, relative_tolerance:0.001)
+    assert(result.passed && result.checked_derivatives == 8 && result.failure == null)
+}
+
+test "gradcheck handles views and constant functions" {
+    var a:float[] = [1.0, 2.0, 3.0, 4.0]
+    let result = Autograd.gradcheck(scalar_function, [Tensor(a,[2,2]).transpose()],
+        epsilon:0.001, absolute_tolerance:0.005, relative_tolerance:0.002)
+    assert(result.passed && result.checked_derivatives == 4)
+    let constant = Autograd.gradcheck(constant_function, [Tensor.vector(a)],
+        epsilon:0.001, absolute_tolerance:0.0, relative_tolerance:0.0)
+    assert(constant.passed && constant.checked_derivatives == 4)
+}
+
+test "gradcheck localizes a deliberately missing derivative" {
+    var values:float[] = [1.0, 2.0]
+    let result = Autograd.gradcheck(broken_provenance, [Tensor.vector(values)],
+        epsilon:0.001, absolute_tolerance:0.001, relative_tolerance:0.001)
+    assert(!result.passed && result.checked_derivatives == 1)
+    if let failure = result.failure {
+        assert(failure.input == 0 && failure.element == 0 && failure.output == 0)
+        assert(failure.analytical == 0.0 && failure.numerical > 2.99 && failure.numerical < 3.01)
+    } else { panic("expected a localized discrepancy") }
+}
+
+use GFX.GPU
+use Tensor.Profile
+use STD.Math
+
+func functional_near(actual:float[], expected:float[]) {
+    assert(actual.count() == expected.count())
+    var i = 0
+    while i < actual.count() { assert(Math.is_finite(actual[i]) && Math.abs(actual[i]-expected[i]) < 0.003); i++ }
+}
+func empty_function(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+func nonfinite_function(inputs:Tensor[]) Tensor { return inputs[0].sqrt() }
+func masked_function(inputs:Tensor[]) Tensor {
+    return Tensor.where(inputs[0].greater_than(0.0), inputs[0].multiply(inputs[0]), inputs[0].multiply(-3.0)).sum()
+}
+func relative_function(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+
+test "functional view and masked gradients keep slots absent" {
+    var data:float[] = [1.0,-2.0,3.0,-4.0,5.0,-6.0]
+    var input = Autograd.Variable(Tensor(data,[2,3]))
+    let view = input.value().transpose().narrow(0,1,2)
+    var gradients = Autograd.grad(masked_function([view]), [input.value()])
+    var expected:float[] = [0.0,-3.0,6.0,0.0,10.0,-3.0]
+    functional_near(gradients[0].values(),expected)
+    assert(input.gradient() == null)
+    var independent = Autograd.Variable(gradients[0])
+    independent.value().sum().backward()
+    if let gradient = independent.gradient() { assert(gradient.values()[0] == 1.0) }
+    else { panic("detached derivative must be reusable as independent data") }
+    assert(input.gradient() == null)
+}
+
+test "functional empty gradients and root leaf requests" {
+    var input = Autograd.Variable(Tensor.zeros([0,3]))
+    var gradients = Autograd.grad(input.value().sum(),[input.value()])
+    assert(gradients[0].shape()[0] == 0 && gradients[0].values().is_empty() && input.gradient() == null)
+    var leaf = Autograd.Variable(Tensor.scalar(4.0))
+    var first = Autograd.grad(leaf.value(),[leaf.value()])
+    var second = Autograd.grad(leaf.value(),[leaf.value()],seed:Tensor.scalar(3.0))
+    assert(first[0].item() == 1.0 && second[0].item() == 3.0 && leaf.gradient() == null)
+}
+
+test "gradcheck preserves caller slots and handles empty output" {
+    var input = Autograd.Variable(Tensor.scalar(2.0))
+    input.value().multiply(7.0).backward()
+    let result = Autograd.gradcheck(relative_function,[input.value()],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.002)
+    assert(result.passed && result.checked_derivatives == 1)
+    if let gradient = input.gradient() { assert(gradient.item() == 7.0) }
+    else { panic("gradcheck changed the caller slot") }
+    let empty = Autograd.gradcheck(empty_function,[Tensor.zeros([0,3])],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001)
+    assert(empty.passed && empty.checked_derivatives == 0 && empty.failure == null)
+}
+
+test "gradcheck rejects nonfinite derivatives and checks masked smooth regions" {
+    let bad = Autograd.gradcheck(nonfinite_function,[Tensor.scalar(-1.0)],epsilon:0.001,absolute_tolerance:0.001,relative_tolerance:0.001)
+    assert(!bad.passed && bad.checked_derivatives == 1)
+    if let failure = bad.failure { assert(Math.is_nan(failure.analytical) && Math.is_nan(failure.numerical)) }
+    else { panic("expected a nonfinite failure") }
+    var data:float[] = [-2.0,1.0,3.0]
+    let good = Autograd.gradcheck(masked_function,[Tensor.vector(data)],epsilon:0.001,absolute_tolerance:0.003,relative_tolerance:0.001)
+    assert(good.passed && good.checked_derivatives == 3)
+}
+
+test "gradcheck combines absolute and relative tolerances" {
+    let relative = Autograd.gradcheck(relative_function,[Tensor.scalar(100.0)],epsilon:0.01,absolute_tolerance:0.0,relative_tolerance:0.002)
+    assert(relative.passed)
+    let strict = Autograd.gradcheck(relative_function,[Tensor.scalar(100.0)],epsilon:0.01,absolute_tolerance:0.0,relative_tolerance:0.0)
+    assert(!strict.passed)
+}
+
+test "GPU functional gradients preserve slots and remain resident" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var a:float[] = [1.0,2.0,3.0]
+    var b:float[] = [4.0,5.0]
+    var left = Autograd.Variable(Tensor(a,[1,3]).to(device))
+    var right = Autograd.Variable(Tensor(b,[2,1]).to(device))
+    left.value().multiply(7.0).sum().backward()
+    var weights:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let seed = Tensor(weights,[2,3]).to(device)
+    var profile = Profile(device)
+    let output = left.value().multiply(right.value())
+    var gradients = Autograd.grad(output,[left.value(),right.value()],seed:seed)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(gradients[0].is_gpu() && gradients[1].is_gpu())
+    var x:float[] = [24.0,33.0,42.0]
+    var y:float[] = [14.0,32.0]
+    functional_near(gradients[0].cpu().values(),x)
+    functional_near(gradients[1].cpu().values(),y)
+    if let existing = left.gradient() {
+        var expected:float[] = [7.0,7.0,7.0]
+        functional_near(existing.cpu().values(),expected)
+    } else { panic("existing GPU slot was cleared") }
+    assert(right.gradient() == null)
+}
+
+test "GPU masked gradients and explicit unused zeros" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [-2.0,1.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(values).to(device))
+    var unused = Autograd.Variable(Tensor.ones([2]).to(device))
+    var profile = Profile(device)
+    let output = masked_function([input.value()])
+    var gradients = Autograd.grad(output,[input.value(),unused.value(),input.value()],allow_unused:true)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    var expected:float[] = [-3.0,2.0,6.0]
+    functional_near(gradients[0].cpu().values(),expected)
+    functional_near(gradients[2].cpu().values(),expected)
+    assert(gradients[1].is_gpu() && gradients[1].cpu().values()[0] == 0.0)
+    assert(input.gradient() == null && unused.gradient() == null)
+}
+
+use Tensor.Neural.Parameter
+
+test "functional parameter derivatives preserve the optimizer slot" {
+    var parameter = Parameter("weight",Tensor.scalar(2.0))
+    parameter.value().multiply(5.0).backward()
+    var gradients = Autograd.grad(parameter.value().multiply(parameter.value()),[parameter.value()])
+    assert(gradients[0].item() == 4.0)
+    if let stored = parameter.gradient() { assert(stored.item() == 5.0) }
+    else { panic("parameter slot changed") }
+}

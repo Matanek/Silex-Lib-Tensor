@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func identity(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+func main() {
+    var x = Autograd.Variable(Tensor.ones([2])); var result = Autograd.grad(x.value().multiply(2.0),[x.value()]); print(result.count())
+}
