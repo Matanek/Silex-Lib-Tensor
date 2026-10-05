@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Les gardes de durée de vie de MultiHeadAttention, Transformer et de la chaîne résidente vérifient des bornes par variante avec tous les ancêtres retenus, indépendantes de la vitesse de complétion GPU, ainsi que les nombres exacts d’allocations et la libération complète.
+
 - Ajoute LSTM batch-first i/f/g/o avec paire hidden/cell et séquence explicites, quatre paramètres, oracles CPU/Metal, segmentation et reprise exacte.
 
 - Ajoute GRU batch-first reset-after r/z/n avec état et séquence explicites, quatre paramètres nommés, oracles CPU/Metal, segmentation et reprise exacte.

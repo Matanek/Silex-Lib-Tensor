@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- MultiHeadAttention, Transformer and resident-chain lifetime guards check per-variant bounds with all ancestors retained, independently of GPU completion speed, plus exact allocation counts and complete release.
+
 - Add batch-first i/f/g/o LSTM with explicit hidden/cell pair and sequence, four parameters, CPU/Metal oracles, chunking and exact resumption.
 
 - Add batch-first reset-after r/z/n GRU with explicit state and sequence, four named parameters, CPU/Metal oracles, chunking and exact resumption.

@@ -15,25 +15,35 @@ func transformer_graph(device:GPU.Device,mode:int,return_weights:bool,norm_first
     elif mode==1 {var gradients=Autograd.grad(result.output,[input.value()],seed:input.value());assert(gradients.count()==1)}
     if let weights=result.weights {assert(weights.count()==8)}
 }
-test "pre and post Transformer optional graphs release all resources within a fixed peak" {
+// Bounds are the retained-ancestor worst case, measured with early fence release
+// disabled; production Storage is unchanged. First-cycle peaks are timing-dependent.
+test "Transformer optional graphs stay within retained-ancestor bounds and release every resource" {
     if !GPU.Device.is_supported() {return}
     var device=GPU.Device(GPU.DeviceSettings(debug:true))
-    let baseline=autograd_performance_statistics()
-    var profile=Profile(device);var peak=0;var cycle=0
+    let baseline=autograd_performance_statistics();var profile=Profile(device);var cycle=0;var peak=0
+    var bounds:int[]=[6252,6252,6180,6180,2332,2332,6252,6252,6180,6180,2332,2332]
+    var allocations:int[]=[202,202,198,198,81,81,202,202,198,198,81,81]
     while cycle<16 {
-        profile.reset()
+        var index=0
         for norm_first in [true,false] {
             var mode=0
-            while mode<3 {transformer_graph(device,mode,false,norm_first,cycle);transformer_graph(device,mode,true,norm_first,cycle);mode++}
+            while mode<3 {
+                for weights in [false,true] {
+                    profile.reset()
+                    transformer_graph(device,mode,weights,norm_first,cycle)
+                    let stats=profile.snapshot()
+                    assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+                    assert(stats.buffer_allocations==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
+                    assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+                    if stats.peak_bytes>peak {peak=stats.peak_bytes}
+                    index++
+                }
+                mode++
+            }
         }
-        let stats=profile.snapshot()
-        assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
-        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
-        if cycle==0 {peak=stats.peak_bytes;assert(peak>0)}
-        assert(stats.peak_bytes<=peak)
         cycle++
     }
     let after=autograd_performance_statistics()
     assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
-    print("Transformer lifetime peak bytes: ",peak)
+    print("Transformer lifetime peak bytes: ",peak," retained-ancestor bound: 6252")
 }

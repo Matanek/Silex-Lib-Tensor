@@ -17,24 +17,32 @@ func multihead_graph(device:GPU.Device, mode:int, return_weights:bool, iteration
     elif mode==1 {var gradients=Autograd.grad(result.output.sum(),[q.value(),k.value(),v.value()]);assert(gradients.count()==3)}
     if let weights=result.weights {assert(weights.count()==12)}
 }
-test "multi-head projections dropout and optional graphs release resources within a fixed peak" {
+// Bounds are the retained-ancestor worst case, measured with early fence release
+// disabled; production Storage is unchanged. First-cycle peaks are timing-dependent.
+test "MultiHeadAttention optional graphs stay within retained-ancestor bounds and release every resource" {
     if !GPU.Device.is_supported() {return}
     var device=GPU.Device(GPU.DeviceSettings(debug:true))
-    let baseline=autograd_performance_statistics()
-    var profile=Profile(device)
-    var peak=0;var cycle=0
+    let baseline=autograd_performance_statistics();var profile=Profile(device);var cycle=0;var peak=0
+    var bounds:int[]=[2604,2604,2604,2604,1188,1188]
+    var allocations:int[]=[99,99,99,99,48,48]
     while cycle<32 {
-        profile.reset()
-        var mode=0
-        while mode<3 {multihead_graph(device,mode,false,cycle);multihead_graph(device,mode,true,cycle);mode++}
-        let stats=profile.snapshot()
-        assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
-        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
-        if cycle==0 {peak=stats.peak_bytes;assert(peak>0)}
-        assert(stats.peak_bytes<=peak)
+        var index=0;var mode=0
+        while mode<3 {
+            for weights in [false,true] {
+                profile.reset()
+                multihead_graph(device,mode,weights,cycle)
+                let stats=profile.snapshot()
+                assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+                assert(stats.buffer_allocations==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
+                assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+                if stats.peak_bytes>peak {peak=stats.peak_bytes}
+                index++
+            }
+            mode++
+        }
         cycle++
     }
     let after=autograd_performance_statistics()
     assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
-    print("Multi-head lifetime peak bytes: ",peak)
+    print("MultiHeadAttention lifetime peak bytes: ",peak," retained-ancestor bound: 2604")
 }
