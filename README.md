@@ -31,6 +31,7 @@ silex install Tensor
 - [French batch sampling guide](Docs/FR/BatchSampling.md) · [English](Docs/EN/BatchSampling.md)
 - [French optimizer updates guide](Docs/FR/OptimizerUpdates.md) · [English](Docs/EN/OptimizerUpdates.md)
 - [French optimizer restoration guide](Docs/FR/OptimizerState.md) · [English](Docs/EN/OptimizerState.md)
+- [French CPU model metadata guide](Docs/FR/HostState.md) · [English](Docs/EN/HostState.md)
 - [French model state guide](Docs/FR/ModelState.md) · [English](Docs/EN/ModelState.md)
 - [French layer registration guide](Docs/FR/Registration.md) · [English](Docs/EN/Registration.md)
 - [French buffer and freezing guide](Docs/FR/State.md) · [English](Docs/EN/State.md)

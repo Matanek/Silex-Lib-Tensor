@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Buffers can declare BufferPlacement.cpu to retain exact CPU state during model transfers. The model policy remains the compatible default; conflicting direct transfers are rejected without conversion or hidden readback. See the [guide](Docs/EN/HostState.md).
+
 - AdamW applies decay independently of moments, with distinct named state and atomic restoration. LearningRateSchedule provides constant, step, exponential, and bounded cosine rates from an explicit step; finite positive rates and rate/update/increment order are documented in the [guide](Docs/EN/OptimizerUpdates.md).
 
 - SGD and Adam capture and restore named state with recoverable errors and atomic validation, without hidden transfers. The current rate can change without discarding moments. Adam bias correction is bounded for large restored counters, and overflow is rejected before mutation. See the [resume guide](Docs/EN/OptimizerState.md).

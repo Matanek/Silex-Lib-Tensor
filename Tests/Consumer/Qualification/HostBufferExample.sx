@@ -1,0 +1,27 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class CounterLayer:Neural.Layer {
+    private var weight:Neural.Parameter
+    private var count:Neural.Buffer
+    init() {
+        self.weight=Neural.Parameter("weight",Tensor.scalar(2.0))
+        self.count=Neural.Buffer("count",Tensor.scalar(0 as int64),placement:Neural.BufferPlacement.cpu)
+        self.register_parameter(self.weight);self.register_buffer(self.count)
+    }
+    override func forward(input:Tensor) Tensor {
+        self.count.replace(Tensor.scalar(self.count.value().int64_item()+1))
+        return input.multiply(self.weight.value())
+    }
+}
+
+func main() {
+    var layer=CounterLayer();var input=Tensor.scalar(3.0)
+    if GPU.Device.is_supported() {
+        var device=GPU.Device();layer.to(device);input=input.to(device)
+    }
+    let result=layer.forward(input)
+    assert(layer.buffers()[0].value().is_cpu())
+    assert(layer.buffers()[0].value().int64_item()==1 && result.detach().cpu().item()==6.0)
+}

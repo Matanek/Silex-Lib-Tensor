@@ -1,0 +1,67 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class HostStateLayer:Neural.Layer {
+    private var weight:Neural.Parameter
+    private var statistic:Neural.Buffer
+    private var batches:Neural.Buffer
+
+    init() {
+        self.weight=Neural.Parameter("weight",Tensor.scalar(2.0))
+        self.statistic=Neural.Buffer("statistic",Tensor.scalar(3.0))
+        self.batches=Neural.Buffer("batches",Tensor.scalar(41 as int64),placement:Neural.BufferPlacement.cpu)
+        self.register_parameter(self.weight);self.register_buffer(self.statistic);self.register_buffer(self.batches)
+    }
+
+    override func forward(input:Tensor) Tensor {
+        self.batches.replace(Tensor.scalar(self.batches.value().int64_item()+1))
+        return input.multiply(self.weight.value()).add(self.statistic.value())
+    }
+}
+
+test "CPU state buffers retain explicit policy typed values and identity on replacement" {
+    var values:int64[]=[-9223372036854775807,9223372036854775807]
+    var buffer=Neural.Buffer("metadata",Tensor.vector(values),placement:Neural.BufferPlacement.cpu)
+    var shared=buffer
+    assert(buffer.placement_policy()==Neural.BufferPlacement.cpu && buffer.value().is_cpu())
+    assert(buffer.value().int64_values()[1]==9223372036854775807)
+    var replacement:int64[]=[0,9223372036854775806];shared.replace(Tensor.vector(replacement))
+    assert(buffer==shared && buffer.value().int64_values()[1]==9223372036854775806)
+    var boolean=Neural.Buffer("flag",Tensor.scalar(true),placement:Neural.BufferPlacement.cpu)
+    boolean.replace(Tensor.scalar(false));boolean.cpu();assert(!boolean.value().bool_item())
+    var default_buffer=Neural.Buffer("ordinary",Tensor.scalar(2.0))
+    assert(default_buffer.placement_policy()==Neural.BufferPlacement.model)
+}
+
+test "model transfer moves numerical state while preserving the named CPU counter" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var model=HostStateLayer()
+    var buffers=model.buffers();var statistic=buffers[0];var counter=buffers[1]
+    let initial=Tensor.scalar(1.0).to(device)
+    device.reset_command_stats();model.to(device)
+    let transfer=device.command_stats();assert(transfer.uploads==2 && transfer.downloads==0)
+    assert(statistic.value().is_gpu() && counter.value().is_cpu())
+    device.reset_command_stats();let output=model.forward(initial)
+    let resident=device.command_stats();assert(resident.uploads==0 && resident.downloads==0)
+    assert(counter.value().int64_item()==42 && output.detach().cpu().item()==5.0)
+    model.to(device);assert(counter==model.buffers()[1] && counter.value().int64_item()==42)
+    model.cpu();assert(statistic.value().is_cpu() && counter.value().is_cpu())
+    assert(counter.value().int64_item()==42 && statistic.value().item()==3.0)
+}
+
+test "shared registered CPU metadata is collected once and used at each forward" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var shared=HostStateLayer()
+    var layers:Neural.Layer[]=[shared,shared];var model=Neural.Sequential(layers)
+    var counter=shared.buffers()[1]
+    assert(model.buffers().count()==2 && model.parameters().count()==1)
+    model.to(device);model.eval();model.freeze()
+    assert(!shared.is_training() && !model.parameters()[0].is_trainable())
+    let input=Tensor.scalar(1.0).to(device);device.reset_command_stats()
+    let result=model.forward(input);let stats=device.command_stats()
+    assert(stats.uploads==0 && stats.downloads==0 && counter.value().int64_item()==43)
+    assert(result.cpu().item()==13.0)
+    model.cpu();model.train();model.unfreeze()
+    assert(shared.is_training() && model.parameters()[0].is_trainable() && counter==shared.buffers()[1])
+}

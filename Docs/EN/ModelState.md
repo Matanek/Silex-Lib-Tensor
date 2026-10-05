@@ -90,7 +90,8 @@ the devices of all GPU parameters and buffers are checked before the first
 transfers. Moving between devices explicitly requires `model.cpu()` followed by
 `model.to(other_device)`.
 
-Each unique registered Parameter and Buffer moves once. Buffers support all
+Every Parameter and Buffer that follows the model moves once per unique
+registered identity. Declared CPU buffers remain on CPU. Buffers support all
 storage dtypes, including booleans, without conversion. Collection, mode changes,
 and freezing perform no readback. Moving parameters does not automatically move
 an optimizer’s moments: its consistency checks still apply.
@@ -108,3 +109,5 @@ still propagate. See the [individual Buffer and Parameter contract](State.md).
 [Names, aliases, cycles, and identities](Registration.md) define collection.
 The current checkpoint still saves parameters only: buffers, mode, freezing,
 and optimizer state are outside its schema.
+
+[CPU model metadata](HostState.md): explicit CPU buffers and recursive transfers.

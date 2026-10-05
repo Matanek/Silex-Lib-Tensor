@@ -376,6 +376,8 @@ de migrer silencieusement une partie du modèle.
 
 [Décroissance découplée et calendriers](OptimizerUpdates.md) : AdamW, étape explicite et taux du prochain pas.
 
+[Métadonnées CPU du modèle](HostState.md) : buffers à placement CPU explicite et transferts récursifs.
+
 ## Composer et entraîner un réseau
 
 `Tensor.Neural.Layer` est le contrat commun des couches et `Sequential` les exécute

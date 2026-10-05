@@ -1,17 +1,25 @@
 use GFX.GPU
 use Tensor
 
+public enum BufferPlacement { model; cpu }
+
 public nocopy class Buffer {
     private let buffer_name:str
+    private let policy:BufferPlacement
     private var current_value:Tensor
 
-    init(name:str, value:Tensor) {
+    init(name:str, value:Tensor, placement:BufferPlacement = BufferPlacement.model) {
         if name == "" { panic("Tensor.Neural.Buffer requires a non-empty name") }
+        if placement == BufferPlacement.cpu && !value.is_cpu() {
+            panic("Tensor.Neural.Buffer CPU placement policy requires a CPU value")
+        }
         self.buffer_name = name
+        self.policy = placement
         self.current_value = value.detach()
     }
 
     func name() str { return self.buffer_name }
+    func placement_policy() BufferPlacement { return self.policy }
     func value() Tensor { return self.current_value }
 
     func replace(value:Tensor) {
@@ -21,6 +29,9 @@ public nocopy class Buffer {
         self.current_value = value.detach()
     }
 
-    func to(device:GPU.Device) { self.current_value = self.current_value.to(device) }
+    func to(device:GPU.Device) {
+        if self.policy == BufferPlacement.cpu { panic("Tensor.Neural.Buffer.to cannot move a CPU state buffer") }
+        self.current_value = self.current_value.to(device)
+    }
     func cpu() { self.current_value = self.current_value.cpu() }
 }

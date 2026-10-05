@@ -180,3 +180,7 @@ AdamW adds `AdamWLearningRateZero`/`NaN`/`Infinity`, `AdamWInvalidBeta`,
 invalid rate/gamma domains, positive step sizes/durations, explicit cosine bounds,
 negative steps, and multiplicative overflow/underflow. Ordinary schedule tests
 cover exact boundaries and restart order.
+
+Explicit CPU buffers add `HostBufferGPUValue` (initial CPU value required),
+`HostBufferTo` (direct transfer conflicts with policy), and `HostBufferReplace`
+(replacement still preserves placement).

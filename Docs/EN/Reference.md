@@ -121,3 +121,5 @@ graph consumption, and Jacobian checking.
 [Optimizer restoration](OptimizerState.md): named moments, atomic restoration, and current learning rate.
 
 [Decoupled decay and schedules](OptimizerUpdates.md): AdamW, explicit step, and next update rate.
+
+[CPU model metadata](HostState.md): explicit CPU buffers and recursive transfers.

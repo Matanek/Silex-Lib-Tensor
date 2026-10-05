@@ -120,11 +120,15 @@ public nocopy class Layer {
         var state = self.collect_state()
         self.require_transfer_gradients(state,"to")
         for parameter in state.parameters { parameter.value().require_transfer_device(device) }
-        for buffer in state.buffers { buffer.value().require_transfer_device(device) }
+        for buffer in state.buffers {
+            if buffer.placement_policy() == BufferPlacement.model { buffer.value().require_transfer_device(device) }
+        }
         var parameters = state.parameters
         for var parameter in parameters { parameter.to(device) }
         var buffers = state.buffers
-        for var buffer in buffers { buffer.to(device) }
+        for var buffer in buffers {
+            if buffer.placement_policy() == BufferPlacement.model { buffer.to(device) }
+        }
         var layers = state.layers
         for var layer in layers {
             if layer != self && !layer.has_registration() { layer.to(device) }

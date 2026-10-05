@@ -367,6 +367,8 @@ a placement change atomically instead of silently migrating part of a model.
 
 [Decoupled decay and schedules](OptimizerUpdates.md): AdamW, explicit step, and next update rate.
 
+[CPU model metadata](HostState.md): explicit CPU buffers and recursive transfers.
+
 ## Compose and train a network
 
 `Tensor.Neural.Layer` is the common layer contract. `Sequential` executes layers

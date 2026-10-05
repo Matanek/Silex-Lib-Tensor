@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+func main() { var device=GPU.Device();var buffer=Neural.Buffer("counter",Tensor.scalar(0 as int64).to(device),placement:Neural.BufferPlacement.cpu) }

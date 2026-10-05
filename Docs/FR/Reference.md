@@ -121,3 +121,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Reprise des optimiseurs](OptimizerState.md) : moments nommés, restauration atomique et taux courant.
 
 [Décroissance découplée et calendriers](OptimizerUpdates.md) : AdamW, étape explicite et taux du prochain pas.
+
+[Métadonnées CPU du modèle](HostState.md) : buffers à placement CPU explicite et transferts récursifs.

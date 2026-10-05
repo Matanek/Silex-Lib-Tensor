@@ -47,7 +47,8 @@ et détache la nouvelle valeur avant de la stocker. La valeur Tensor précédent
 reste valide : son stockage est immuable. Plusieurs références au même Buffer
 observent le remplacement par son identité partagée.
 
-`to(device)` et `cpu()` déplacent explicitement la valeur du Buffer. Les
+Avec la politique par défaut `BufferPlacement.model`, `to(device)` et `cpu()`
+déplacent explicitement la valeur du Buffer. Les
 transferts restent exacts pour tous les dtypes ; les entiers et booléens ne
 bénéficient pas d’un calcul numérique GPU supplémentaire. L’extraction des
 éléments exige une valeur CPU.
@@ -82,3 +83,5 @@ uniquement ses paramètres, sans
 buffers, état de gel ni moments d’optimiseur.
 
 Les [opérations d’état du modèle](ModelState.md) propagent mode, gel et placement aux objets enregistrés.
+
+[Métadonnées CPU du modèle](HostState.md) : buffers à placement CPU explicite et transferts récursifs.

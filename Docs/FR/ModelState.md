@@ -91,7 +91,8 @@ les gradients de tous les paramètres collectés soient vides ; appelez d’abor
 sont contrôlés avant les premiers transferts. Un changement de device passe
 explicitement par `model.cpu()` puis `model.to(other_device)`.
 
-Chaque Parameter et Buffer enregistré unique est déplacé une fois. Les buffers
+Chaque Parameter et Buffer qui suit le modèle est déplacé une fois par identité
+enregistrée unique. Les buffers CPU déclarés restent sur CPU. Les buffers
 acceptent tous les dtypes de stockage, y compris les booléens, sans conversion.
 La collecte et les changements de mode ou de gel n’effectuent aucun readback.
 Les paramètres déjà déplacés ne migrent pas automatiquement les moments d’un
@@ -110,3 +111,5 @@ des entrées restent calculables. Voir le [contrat individuel de Buffer et Param
 Les [noms, aliases, cycles et identités](Registration.md) définissent la collecte.
 Le checkpoint actuel sauvegarde encore les paramètres seuls : buffers, mode,
 gel et état d’optimiseur ne font pas partie de son schéma.
+
+[Métadonnées CPU du modèle](HostState.md) : buffers à placement CPU explicite et transferts récursifs.

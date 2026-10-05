@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Les buffers peuvent déclarer BufferPlacement.cpu pour garder un état exact sur CPU lors des transferts du modèle. La politique model reste le défaut compatible ; un transfert direct incompatible est refusé sans conversion ni readback caché. Voir le [guide](Docs/FR/HostState.md).
+
 - AdamW applique une décroissance découplée des moments, avec état nommé distinct et reprise atomique. LearningRateSchedule fournit constant, paliers, exponentiel et cosinus borné depuis une étape explicite ; taux finis positifs, ordre taux/pas/incrément documenté. Voir le [guide](Docs/FR/OptimizerUpdates.md).
 
 - SGD et Adam capturent et restaurent leurs états nommés avec erreurs récupérables et validation atomique, sans transfert caché. Le taux courant peut changer sans perdre les moments. Correction de biais Adam bornée pour les grands compteurs restaurés et débordement refusé avant mutation. Voir le [guide de reprise](Docs/FR/OptimizerState.md).

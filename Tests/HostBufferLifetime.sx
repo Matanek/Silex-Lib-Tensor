@@ -1,0 +1,35 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+nocopy class HostBufferLifetimeLayer:Neural.Layer {
+    init() {
+        self.register_parameter(Neural.Parameter("weight",Tensor.scalar(2.0)))
+        self.register_buffer(Neural.Buffer("counter",Tensor.scalar(7 as int64),placement:Neural.BufferPlacement.cpu))
+        self.register_buffer(Neural.Buffer("statistic",Tensor.scalar(3.0)))
+    }
+    override func forward(input:Tensor) Tensor {return input.multiply(self.parameters()[0].value()).add(self.buffers()[1].value())}
+}
+
+func host_buffer_cycle(device:GPU.Device) {
+    var child=HostBufferLifetimeLayer();var layers:Neural.Layer[]=[child,child];var model=Neural.Sequential(layers)
+    model.to(device)
+    let output=model.forward(Tensor.scalar(1.0).to(device));output.sum().backward();model.zero_grad();model.cpu()
+    assert(model.buffers()[0].value().int64_item()==7)
+}
+
+test "mixed explicit CPU state and GPU model transfers release all graphs and buffers" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let before=autograd_performance_statistics()
+    var index=0
+    while index<32 {
+        host_buffer_cycle(device)
+        let after=autograd_performance_statistics()
+        assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        index++
+    }
+}
