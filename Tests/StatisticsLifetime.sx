@@ -1,0 +1,29 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func statistics_cycle(device:GPU.Device, constant:bool) {
+    var values:float[] = [1.0,2.0,3.0]
+    if constant { values = [1.0,1.0,1.0] }
+    var input = Autograd.Variable(Tensor.vector(values).to(device))
+    let output = input.value().standard_deviation(correction:1)
+    var gradients = Autograd.grad(output,[input.value()])
+    assert(gradients[0].is_gpu() && input.gradient() == null)
+}
+
+test "statistical graphs release all GPU buffers and retained edges" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics()
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 32 {
+        statistics_cycle(device,iteration%2 == 0)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        iteration++
+    }
+}

@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() { var device = GPU.Device(); let result = Tensor.ones([1,1,1,1,1,2]).to(device).variance(correction:0); print(result.count()) }

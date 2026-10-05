@@ -1,0 +1,3 @@
+use Tensor
+use Tensor.DType
+func main() { let result = Tensor.full([2],true).variance(correction:0); print(result.count()) }

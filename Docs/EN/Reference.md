@@ -22,6 +22,7 @@ contract.
 | `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
 | `masked_select` | all nine + booleans | explicit rejection | `float32` source |
 | unit dimensions, `expand`, `repeat` | all nine + booleans | all nine + booleans | float32 |
+| `variance`, `standard_deviation` | `float32` | resident `float32` | yes, explicit correction |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
@@ -99,3 +100,5 @@ The [functional gradient guide](Gradients.md) explains preserved slots, seeds,
 graph consumption, and Jacobian checking.
 
 [Shapes, views, and tiles](Shapes.md): axes, empty dimensions, and gradients.
+
+[Variance and standard deviation](Statistics.md): correction, domains, and constant gradients.

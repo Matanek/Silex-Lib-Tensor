@@ -8,6 +8,7 @@ enum AutogradRule {
     unary(AutogradInput, Tensor, UnaryOperation)
     reshape(AutogradInput)
     expand(AutogradInput)
+    standard_deviation(AutogradInput, Tensor)
     permute(AutogradInput, int[])
     select(AutogradInput, int, int)
     narrow(AutogradInput, int, int, int)
@@ -351,6 +352,10 @@ func autograd_record_expand(result:Tensor, input:Tensor) Tensor {
     return autograd_record(result, AutogradRule.expand(autograd_input(input)))
 }
 
+func autograd_record_standard_deviation(result:Tensor, variance:Tensor) Tensor {
+    return autograd_record(result, AutogradRule.standard_deviation(autograd_input(variance), result.autograd_detached()))
+}
+
 func autograd_record_permute(result:Tensor, input:Tensor, axes:int[]) Tensor {
     return autograd_record(result, AutogradRule.permute(autograd_input(input), copy axes))
 }
@@ -427,6 +432,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
         unary(input, output, operation) => { append_autograd_parent(input, result) }
         reshape(input) => { append_autograd_parent(input, result) }
         expand(input) => { append_autograd_parent(input, result) }
+        standard_deviation(input, output) => { append_autograd_parent(input, result) }
         permute(input, axes) => { append_autograd_parent(input, result) }
         select(input, axis, index) => { append_autograd_parent(input, result) }
         narrow(input, axis, start, count) => { append_autograd_parent(input, result) }
@@ -513,6 +519,7 @@ func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
         unary(input, output, operation) => backward_unary(input, output, operation, gradient)
         reshape(input) => one_contribution(input, gradient.contiguous().reshape(input.value.shape()))
         expand(input) => one_contribution(input, reduce_autograd_shape(gradient, input.value.shape()))
+        standard_deviation(input, output) => one_contribution(input, backward_standard_deviation(output, gradient))
         permute(input, axes) => one_contribution(input, gradient.permute(inverse_axes(axes)))
         select(input, axis, index) => one_contribution(input, backward_select(input.value, gradient, axis, index))
         narrow(input, axis, start, count) => one_contribution(input, backward_narrow(input.value, gradient, axis, start, count))
@@ -1035,4 +1042,10 @@ package func functional_gradients(output:Tensor, inputs:Tensor[], seed:Tensor?, 
 func autograd_contains_node(nodes:AutogradNode[], requested:AutogradNode) bool {
     for node in nodes { if node == requested { return true } }
     return false
+}
+
+func backward_standard_deviation(output:Tensor, gradient:Tensor) Tensor {
+    let nonzero = output.not_equal(0.0)
+    let divisor = Tensor.where(nonzero, output.multiply(2.0), output.autograd_constant(1.0))
+    return Tensor.where(nonzero, gradient.divide(divisor), output.autograd_constant(0.0))
 }

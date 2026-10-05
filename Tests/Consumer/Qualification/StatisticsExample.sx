@@ -1,0 +1,15 @@
+use Tensor
+use Tensor.Autograd
+use STD.Math
+
+func main() {
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    let population = input.value().variance(correction:0)
+    assert(Math.abs(population.detach().item()-2.0/3.0) < 0.001)
+    let sample = input.value().variance(correction:1)
+    var gradients = Autograd.grad(sample,[input.value()])
+    assert(gradients[0].values()[0] == -1.0 && gradients[0].values()[2] == 1.0)
+    assert(input.gradient() == null)
+    assert(Tensor.vector(data).standard_deviation(correction:1).item() == 1.0)
+}

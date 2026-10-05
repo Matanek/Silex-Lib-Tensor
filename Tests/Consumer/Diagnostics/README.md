@@ -121,3 +121,9 @@ Shape adaptation adds `UnsqueezeAxis`, `UnsqueezeNegative`, `SqueezeAxis`, and
 broadcast views; `ExpandOverflow` and `ExpandBytes` for logical sizes;
 `RepeatRank`, `RepeatNegative`, `RepeatOverflow`, and `RepeatBytes` for checked
 tiling factors and sizes. Each name refers to its `.sx` fixture.
+
+Statistics add `VarianceCorrection`, `VarianceDomain`, `VarianceEmpty`,
+`VarianceInteger`, `VarianceBoolean`, `VarianceAxis`, `VarianceDuplicate`,
+`DeviationCorrection`, `DeviationDomain`, `DeviationDType`, and `VarianceGPURank`:
+explicit nonnegative correction below domain size, float32 data, valid axes,
+and the existing GPU rank limit. Each name refers to its `.sx` fixture.

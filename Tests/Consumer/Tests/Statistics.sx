@@ -1,0 +1,141 @@
+use Tensor
+use Tensor.Autograd
+use STD.Math
+
+func stat_near(actual:float, expected:float) { assert(Math.is_finite(actual) && Math.abs(actual-expected) < 0.003) }
+func variance_loss(inputs:Tensor[]) Tensor { return inputs[0].transpose().variance(correction:1,axes:[0]).sum() }
+func deviation_loss(inputs:Tensor[]) Tensor { return inputs[0].standard_deviation(correction:0,axes:[1]).sum() }
+
+test "variance and deviation use explicit population and sample corrections" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let matrix = Tensor(data,[2,3])
+    stat_near(matrix.variance(correction:0).item(),35.0/12.0)
+    stat_near(matrix.variance(correction:1).item(),3.5)
+    let rows = matrix.variance(correction:0,axes:[1]).values()
+    stat_near(rows[0],2.0/3.0); stat_near(rows[1],2.0/3.0)
+    let columns = matrix.variance(correction:1,axes:[0],keep_dimensions:true)
+    assert(columns.shape()[0] == 1 && columns.shape()[1] == 3)
+    for value in columns.values() { stat_near(value,4.5) }
+    stat_near(matrix.standard_deviation(correction:1).item(),Math.sqrt(3.5))
+}
+
+test "statistics retain strided axes and stable centered values" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let source = Tensor(data,[2,3]).transpose().narrow(0,1,2)
+    for value in source.variance(correction:0,axes:[1]).values() { stat_near(value,2.25) }
+    stat_near(source.variance(correction:0,axes:[1,0]).item(),2.5)
+    var shifted:float[] = [10000.0,10001.0,10002.0]
+    stat_near(Tensor.vector(shifted).variance(correction:0).item(),2.0/3.0)
+}
+
+test "statistics define scalars empty axes and empty output" {
+    stat_near(Tensor.scalar(3.0).variance(correction:0).item(),0.0)
+    stat_near(Tensor.scalar(3.0).standard_deviation(correction:0).item(),0.0)
+    let unchanged_shape = Tensor.ones([2,3]).variance(correction:0,axes:[])
+    assert(unchanged_shape.shape()[0] == 2 && unchanged_shape.shape()[1] == 3)
+    for value in unchanged_shape.values() { assert(value == 0.0) }
+    assert(Tensor.zeros([0,3]).variance(correction:1,axes:[1]).count() == 0)
+}
+
+test "statistics propagate NaN and infinite input" {
+    var nan:float[] = [1.0,Math.sqrt(-1.0)]
+    var infinite:float[] = [1.0,1.0/0.0]
+    assert(Math.is_nan(Tensor.vector(nan).variance(correction:0).item()))
+    assert(Math.is_nan(Tensor.vector(infinite).standard_deviation(correction:0).item()))
+}
+
+test "variance gradients are centered with a zero constant convention" {
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    var gradients = Autograd.grad(input.value().variance(correction:1),[input.value()])
+    stat_near(gradients[0].values()[0],-1.0); stat_near(gradients[0].values()[1],0.0); stat_near(gradients[0].values()[2],1.0)
+    var constant = Autograd.Variable(Tensor.ones([3]))
+    var zero = Autograd.grad(constant.value().standard_deviation(correction:0),[constant.value()])
+    for value in zero[0].values() { assert(value == 0.0) }
+    assert(input.gradient() == null && constant.gradient() == null)
+}
+
+test "statistical gradients match central differences" {
+    var data:float[] = [1.0,2.0,3.0,5.0,7.0,8.0]
+    let variance = Autograd.gradcheck(variance_loss,[Tensor(data,[2,3])],epsilon:0.01,absolute_tolerance:0.005,relative_tolerance:0.002)
+    let deviation = Autograd.gradcheck(deviation_loss,[Tensor(data,[2,3])],epsilon:0.01,absolute_tolerance:0.005,relative_tolerance:0.002)
+    assert(variance.passed && deviation.passed)
+}
+
+use GFX.GPU
+use Tensor.Profile
+
+test "standard deviation analytical gradients preserve preexisting slots" {
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    input.value().multiply(7.0).sum().backward()
+    var gradients = Autograd.grad(input.value().standard_deviation(correction:1),[input.value()])
+    stat_near(gradients[0].values()[0],-0.5); stat_near(gradients[0].values()[1],0.0); stat_near(gradients[0].values()[2],0.5)
+    if let previous = input.gradient() { for value in previous.values() { assert(value == 7.0) } }
+    else { panic("stored gradient changed") }
+}
+
+test "multiple statistical axes and rank five return analytical gradients" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let input = Tensor(data,[2,1,3,1,1])
+    let result = input.variance(correction:0,axes:[0,2],keep_dimensions:true)
+    assert(result.rank() == 5 && result.shape()[0] == 1 && result.shape()[2] == 1)
+    stat_near(result.item(),35.0/12.0)
+    let expanded = input.expand([2,2,3,1,1])
+    stat_near(expanded.variance(correction:0).item(),35.0/12.0)
+}
+
+test "GPU statistical values and gradients remain resident on strided sources" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    var input = Autograd.Variable(Tensor(data,[2,3]).to(device))
+    var profile = Profile(device)
+    let output = input.value().transpose().variance(correction:1,axes:[0]).sum()
+    var gradients = Autograd.grad(output,[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    let actual = gradients[0].cpu().values()
+    var expected:float[] = [-1.0,0.0,1.0,-1.0,0.0,1.0]
+    var i = 0
+    while i < 6 { stat_near(actual[i],expected[i]); i++ }
+    stat_near(output.detach().cpu().item(),2.0)
+    assert(input.gradient() == null)
+}
+
+test "GPU standard deviation preserves finite zero gradients on constant domains" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input = Autograd.Variable(Tensor.ones([3]).to(device))
+    var profile = Profile(device)
+    let output = input.value().standard_deviation(correction:1)
+    var gradients = Autograd.grad(output,[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    for value in gradients[0].cpu().values() { assert(value == 0.0) }
+    assert(output.detach().cpu().item() == 0.0 && input.gradient() == null)
+}
+
+test "GPU standard deviation agrees with independent analytic values and gradients" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data).to(device))
+    var profile = Profile(device)
+    let output = input.value().standard_deviation(correction:0)
+    var gradients = Autograd.grad(output,[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    let expected = Math.sqrt(2.0/3.0)
+    stat_near(output.detach().cpu().item(),expected)
+    let actual = gradients[0].cpu().values()
+    stat_near(actual[0],-1.0/(3.0*expected)); stat_near(actual[1],0.0); stat_near(actual[2],1.0/(3.0*expected))
+}
+
+test "GPU statistics preserve empty outputs without a hidden transfer" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input = Autograd.Variable(Tensor.zeros([0,3]).to(device))
+    var profile = Profile(device)
+    let output = input.value().standard_deviation(correction:1,axes:[1])
+    var gradients = Autograd.grad(output.sum(),[input.value()])
+    assert(output.shape()[0] == 0 && gradients[0].count() == 0)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+}

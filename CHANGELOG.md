@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Add float32 CPU/GPU `variance` and `standard_deviation` with explicit integer
+  correction, validated axes/domains, centered computation, and resident gradients.
+  Standard deviation chooses a zero gradient when computed variance is zero; NaN remains
+  observable. See the [statistics guide](Docs/EN/Statistics.md).
+
 - Add exact `squeeze`, `unsqueeze`, and `expand` views, and materialized
   `repeat` tiles, for all nine numeric dtypes and booleans on CPU/GPU. Resident
   float32 gradients, validated axes/factors/shapes, and defined empty domains.

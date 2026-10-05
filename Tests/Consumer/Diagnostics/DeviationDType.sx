@@ -1,0 +1,3 @@
+use Tensor
+use Tensor.DType
+func main() { let result = Tensor.ones([2],DType.int32()).standard_deviation(correction:0); print(result.count()) }

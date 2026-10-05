@@ -1,0 +1,3 @@
+use Tensor
+use Tensor.DType
+func main() { let result = Tensor.zeros([0]).variance(correction:0); print(result.count()) }

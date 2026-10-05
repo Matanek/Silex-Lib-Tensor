@@ -22,6 +22,7 @@ contrats de chaque opération.
 | `where` | branches : les neuf ; masque booléen | branches `float32` ; masque booléen | branches `float32` |
 | `masked_select` | les neuf + booléens | refus explicite | source `float32` |
 | dimensions unitaires, `expand`, `repeat` | les neuf + booléens | les neuf + booléens | float32 |
+| `variance`, `standard_deviation` | `float32` | `float32` résident | oui, correction explicite |
 | `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
 | `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
@@ -99,3 +100,5 @@ Le [guide des gradients fonctionnels](Gradients.md) décrit les slots préservé
 les seeds, la consommation du graphe et le contrôle du Jacobien.
 
 [Formes, vues et tuiles](Shapes.md) : axes, dimensions vides et gradients.
+
+[Variance et écart-type](Statistics.md) : correction, domaines et gradient constant.

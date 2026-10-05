@@ -1,0 +1,21 @@
+extend Tensor {
+    func variance(correction:int, axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        return centered_variance(self, correction, axes, keep_dimensions, "variance")
+    }
+
+    func standard_deviation(correction:int, axes:int[]? = null, keep_dimensions:bool = false) Tensor {
+        let variance = centered_variance(self, correction, axes, keep_dimensions, "standard_deviation")
+        let result = variance.detach().sqrt()
+        return autograd_record_standard_deviation(result, variance)
+    }
+}
+
+func centered_variance(input:Tensor, correction:int, axes:int[]?, keep_dimensions:bool, operation:str) Tensor {
+    require_neural_float(input, operation)
+    let reduced = normalized_axes(axes, input.rank(), operation)
+    let domain = reduction_domain_size(input.shape(), reduced)
+    if correction < 0 { panic("Tensor.$(operation) correction must be non-negative") }
+    if domain <= correction { panic("Tensor.$(operation) requires a domain larger than correction") }
+    let centered = input.subtract(input.mean(reduced, true))
+    return centered.multiply(centered).sum(reduced, keep_dimensions).divide((domain - correction) as float)
+}

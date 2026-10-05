@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Ajout de `variance` et `standard_deviation` float32 CPU/GPU, avec correction
+  entière explicite, axes et domaines validés, calcul centré et gradients résidents.
+  L’écart-type choisit un gradient nul pour une variance calculée nulle ; NaN reste visible.
+  Voir le [guide des statistiques](Docs/FR/Statistics.md).
+
 - Ajout de `squeeze`, `unsqueeze` et `expand` en vues exactes, et `repeat` en
   tuiles matérialisées, sur les neuf dtypes numériques et booléens CPU/GPU.
   Gradients float32 résidents, axes/facteurs/formes validés et domaines vides
