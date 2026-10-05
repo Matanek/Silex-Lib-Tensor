@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Learn [embedding vectors with padding](Embeddings.md).
 - Interrupt and [resume a complete training run](TrainingCheckpoint.md).
 
 - Normalize a [dense or NCHW batch and evaluate with running statistics](BatchNorm.md).

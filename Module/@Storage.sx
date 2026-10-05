@@ -960,11 +960,11 @@ nocopy class GPUStorage {
 
     func gather_backward(
         indices:GPUStorage, gradient_layout:Layout,
-        index_layout:Layout, source:Layout, axis:int
+        index_layout:Layout, source:Layout, axis:int, padding_index:int = -1
     ) GPUStorage {
         let count = source.count()
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, self.current_dtype) }
-        var metadata = gather_metadata(Layout(source.shape()), index_layout, axis)
+        var metadata = gather_metadata(Layout(source.shape()), index_layout, axis, padding_index)
         var output = GPUStorage.allocate_buffer(
             self.current_device, checked_byte_count(count, 4), "Tensor float32 gather gradient result"
         )
@@ -1371,7 +1371,7 @@ func output_count_rank(left:Layout, right:Layout) int {
     return rank
 }
 
-func gather_metadata(source:Layout, indices:Layout, axis:int) uint8[] {
+func gather_metadata(source:Layout, indices:Layout, axis:int, padding_index:int = -1) uint8[] {
     require_gpu_layout(source)
     require_gpu_layout(indices)
     var words:uint32[] = []
@@ -1382,7 +1382,7 @@ func gather_metadata(source:Layout, indices:Layout, axis:int) uint8[] {
     words.append(indices.rank() as uint32)
     words.append(indices.offset() as uint32)
     words.append(source.shape()[axis] as uint32)
-    words.append(0 as uint32)
+    words.append((padding_index + 1) as uint32)
     append_padded_shape(words, source.shape())
     append_padded_strides(words, source.strides(), source.shape(), source.rank())
     append_padded_shape(words, indices.shape())

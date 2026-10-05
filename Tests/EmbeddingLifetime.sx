@@ -1,0 +1,26 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+func embedding_lifetime_cycle(device:GPU.Device,kind:int) {
+    var layer=Neural.Embedding("tokens",4,2,seed:7,padding_index:0);layer.to(device)
+    var ids:int32[]=[0,1,1,2]
+    let output=layer.forward(Tensor(ids,[2,2]).to(device)).sum()
+    if kind==0 {output.backward();layer.zero_grad()}
+    else if kind==1 {var parameters=layer.parameters();var gradients=Autograd.grad(output,[parameters[0].value()]);assert(gradients[0].is_gpu())}
+}
+test "Embedding releases lookup indices graphs and GPU buffers after backward grad and drop" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let baseline=autograd_performance_statistics()
+    var iteration=0
+    while iteration<32 {
+        embedding_lifetime_cycle(device,0);embedding_lifetime_cycle(device,1);embedding_lifetime_cycle(device,2)
+        let current=autograd_performance_statistics()
+        assert(current.live_nodes==baseline.live_nodes && current.retained_edges==baseline.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        iteration++
+    }
+}

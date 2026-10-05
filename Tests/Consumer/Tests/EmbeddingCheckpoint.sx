@@ -1,0 +1,87 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use STD.File
+use STD.Math
+use STD.FileSystem
+use GFX.GPU
+
+func embedding_checkpoint_source() Data.TensorSource {
+    var ids:int32[]=[0,1,2,3,1,2,3,0]
+    var values:float[]=[0.0,0.0,0.2,-0.3,0.4,-0.5,0.6,-0.7,0.2,-0.3,0.4,-0.5,0.6,-0.7,0.0,0.0]
+    return Data.TensorSource(Tensor(ids,[8,1]),Tensor(values,[8,1,2]))
+}
+func embedding_checkpoint_step(layer:Neural.Embedding,optimizer:Optim.AdamW,cursor:Data.BatchCursor,device:GPU.Device?) {
+    var reading=cursor
+    var batch=try reading.next() else error {panic(error)}
+    if batch==null {reading.set_epoch(reading.state().epoch+1);batch=try reading.next() else error {panic(error)}}
+    if var value=batch {
+        if let gpu=device {value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        let delta=layer.forward(value.input).subtract(value.target)
+        delta.multiply(delta).mean().backward()
+        var active=optimizer;active.step();active.zero_grad()
+    } else {panic("empty embedding checkpoint source")}
+}
+func embedding_checkpoint_text(path:str) str {
+    match File.read_text(path,1024*1024) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
+}
+func embedding_checkpoint_remove(path:str) {
+    match FileSystem.remove_file(path) {success=>{};failure(error)=>{panic(error.detail)}}
+}
+func embedding_checkpoint_resume(device:GPU.Device?) {
+    let first="/private/tmp/tensor-embedding-checkpoint-a.sxtc"
+    let second="/private/tmp/tensor-embedding-checkpoint-b.sxtc"
+    var left=Neural.Embedding("tokens",4,2,seed:42,padding_index:0)
+    var cursor=Data.BatchCursor(embedding_checkpoint_source(),2,shuffle:true,seed:7)
+    if let gpu=device {left.to(gpu)}
+    var optimizer=Optim.AdamW(left.parameters(),learning_rate:0.05,weight_decay:0.02)
+    var step=0
+    while step<3 {embedding_checkpoint_step(left,optimizer,cursor,device);step++}
+    try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+    var right=Neural.Embedding("tokens",4,2,seed:97,padding_index:0)
+    var resumed_cursor=Data.BatchCursor(embedding_checkpoint_source(),2,shuffle:true,seed:7,prefetch:2)
+    var resumed=Optim.AdamW(right.parameters(),learning_rate:1.0)
+    let progress=try Neural.TrainingCheckpoint.load(right,resumed,resumed_cursor,first) else error {panic(error)}
+    assert(progress.step==3 && cursor.state()==resumed_cursor.state())
+    try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,progress,second) else error {panic(error)}
+    assert(embedding_checkpoint_text(first)==embedding_checkpoint_text(second))
+    var incompatible=Neural.Embedding("tokens",4,2,seed:97,padding_index:1)
+    var rejected_optimizer=Optim.AdamW(incompatible.parameters(),learning_rate:1.0)
+    let before=incompatible.parameters()[0].value().detach().values()
+    match Neural.TrainingCheckpoint.load(incompatible,rejected_optimizer,resumed_cursor,first) {
+        success(ignored_progress)=>{panic("accepted incompatible embedding padding")}
+        failure(error)=>{assert(error!="")}
+    }
+    let after=incompatible.parameters()[0].value().detach().values()
+    var index=0;while index<before.count() {assert(before[index]==after[index]);index++}
+    if let gpu=device {
+        let moments=resumed.state().to(gpu);right.to(gpu)
+        try resumed.restore(moments) else error {panic(error)}
+    }
+    while step<8 {
+        embedding_checkpoint_step(left,optimizer,cursor,device)
+        embedding_checkpoint_step(right,resumed,resumed_cursor,device)
+        step++
+        try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+        try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,Neural.TrainingProgress(step:step),second) else error {panic(error)}
+        assert(embedding_checkpoint_text(first)==embedding_checkpoint_text(second))
+        let values=right.parameters()[0].value().detach().cpu().values()
+        assert(values[0]==0.0 && values[1]==0.0)
+    }
+    embedding_checkpoint_remove(first);embedding_checkpoint_remove(second)
+}
+test "Embedding training checkpoint resumes shuffled int32 batches and AdamW exactly" {embedding_checkpoint_resume(null)}
+test "Embedding training checkpoint resumes Metal weights and moments with explicit uploads" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));embedding_checkpoint_resume(device)
+}
+test "Embedding named weights round trip through the lightweight checkpoint" {
+    let path="/private/tmp/tensor-embedding-weights.sxtc"
+    var left=Neural.Embedding("tokens",4,2,seed:17,padding_index:0)
+    var right=Neural.Embedding("tokens",4,2,seed:93,padding_index:0)
+    Neural.Checkpoint.save(left,path);Neural.Checkpoint.load(right,path)
+    let expected=left.parameters()[0].value().detach().values();let actual=right.parameters()[0].value().detach().values()
+    var i=0;while i<expected.count() {assert(Math.abs(expected[i]-actual[i])<0.000001);i++}
+    embedding_checkpoint_remove(path)
+}

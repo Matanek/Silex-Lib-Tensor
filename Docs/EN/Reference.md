@@ -17,6 +17,7 @@ contract.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| `Neural.Embedding` | `int32` indices, `float32` weight | same, resident computation | dense weight; stopped padding derivative |
 | numeric comparisons | all nine | `float32` | no, detached boolean output |
 | boolean equality, logic | booleans | booleans | no |
 | `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
@@ -136,3 +137,8 @@ parameter checkpoint remains separate and compatible.
 
 [CPU prefetch](BatchPrefetch.md): `BatchCursor(...,prefetch:N)`, eligibility through
 `Source.supports_prefetch()`, consumed snapshots, ordered errors and `close()`.
+
+
+## Embedding
+
+`Neural.Embedding(name, vocabulary_size, embedding_features, seed, padding_index:null)`: rank1/2 int32 indices, float32 table and dense gradient. Stopped padding derivative, explicit placement and CPU/GPU limits are detailed in the [guide](Embeddings.md).

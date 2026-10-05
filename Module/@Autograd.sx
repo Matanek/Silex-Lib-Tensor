@@ -18,6 +18,7 @@ enum AutogradRule {
     linear(AutogradInput, AutogradInput, LinearOperation)
     concatenate(AutogradInput, AutogradInput, int, int)
     gather(AutogradInput, Tensor, int)
+    embedding(AutogradInput, Tensor, int)
     convolution(AutogradInput, AutogradInput, int, int)
     pooling(AutogradInput, Tensor, int, int, int, PoolOperation)
     dropout(AutogradInput, float, int, int)
@@ -243,7 +244,7 @@ extend Tensor {
         return Tensor(autograd_mask_cpu(self, true), self.shape())
     }
 
-    module func autograd_gather_backward(gradient:Tensor, indices:Tensor, axis:int) Tensor {
+    module func autograd_gather_backward(gradient:Tensor, indices:Tensor, axis:int, padding_index:int = -1) Tensor {
         if self.is_gpu() {
             let compact_gradient = gradient.contiguous()
             var incoming = compact_gradient.autograd_gpu_storage()
@@ -251,7 +252,7 @@ extend Tensor {
             return Tensor.autograd_from_storage(
                 Storage.gpu(incoming.gather_backward(
                     index_storage, compact_gradient.autograd_layout(), indices.autograd_layout(),
-                    self.autograd_layout(), axis
+                    self.autograd_layout(), axis, padding_index
                 )),
                 Layout(self.shape())
             )
@@ -260,7 +261,7 @@ extend Tensor {
             gather_backward_cpu_values(
                 gradient.autograd_cpu_storage().float_values(), gradient.autograd_layout(),
                 indices.autograd_cpu_storage().int32_values(), indices.autograd_layout(),
-                self.autograd_layout(), axis
+                self.autograd_layout(), axis, padding_index
             ),
             self.shape()
         )
@@ -458,6 +459,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
         linear(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         concatenate(left, right, axis, left_size) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         gather(source, indices, axis) => { append_autograd_parent(source, result) }
+        embedding(source, indices, padding) => { append_autograd_parent(source, result) }
         convolution(input, kernel, stride, padding) => { append_autograd_parent(input, result); append_autograd_parent(kernel, result) }
         pooling(input, output, kernel_size, stride, padding, operation) => { append_autograd_parent(input, result) }
         dropout(input, probability, seed, iteration) => { append_autograd_parent(input, result) }
@@ -546,6 +548,7 @@ func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
         linear(left, right, operation) => backward_linear(left, right, operation, gradient)
         concatenate(left, right, axis, left_size) => backward_concatenate(left, right, axis, left_size, gradient)
         gather(source, indices, axis) => one_contribution(source, source.value.autograd_gather_backward(gradient, indices, axis))
+        embedding(source, indices, padding) => one_contribution(source, source.value.autograd_gather_backward(gradient.contiguous().reshape(indices.shape()), indices, 0, padding))
         convolution(input, kernel, stride, padding) => backward_convolution(input, kernel, stride, padding, gradient)
         pooling(input, output, kernel_size, stride, padding, operation) => one_contribution(
             input, input.value.autograd_pool_backward(gradient, output, kernel_size, stride, padding, operation)
@@ -786,14 +789,14 @@ func autograd_mask_cpu(input:Tensor, positive_only:bool) float[] {
 func gather_backward_cpu_values(
     gradient:float[], gradient_layout:Layout,
     indices:int32[], index_layout:Layout,
-    source:Layout, axis:int
+    source:Layout, axis:int, padding_index:int = -1
 ) float[] {
     var result = initialized_values<float>(source.count(), 0.0)
     let canonical_source = Layout(source.shape())
     var logical = 0
     while logical < index_layout.count() {
         let selected = indices[index_layout.flat_storage_index(logical)] as int
-        if selected >= 0 && selected < source.shape()[axis] {
+        if selected >= 0 && selected < source.shape()[axis] && selected != padding_index {
             let source_logical = gather_source_index(canonical_source, index_layout, axis, logical, selected)
             result[source_logical] += gradient[gradient_layout.flat_storage_index(logical)]
         }

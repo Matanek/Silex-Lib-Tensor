@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+func main() {var layer=Neural.Embedding("tokens",4,2,seed:7);layer.forward(Tensor.scalar(1 as int32))}

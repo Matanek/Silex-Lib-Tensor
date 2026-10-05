@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Apprenez des [vecteurs d’embedding avec padding](Embeddings.md).
 - Interrompez et [reprenez un entraînement complet](TrainingCheckpoint.md).
 
 - Normalisez un [lot dense ou NCHW et utilisez les statistiques en évaluation](BatchNorm.md).

@@ -1,0 +1,15 @@
+package func embedding_lookup(weight:Tensor, indices:Tensor, padding_index:int) Tensor {
+    if weight.dtype() != DType.float32() || weight.rank() != 2 {
+        panic("Tensor.Neural.Embedding requires a float32 table with rank 2")
+    }
+    if indices.dtype() != DType.int32() {panic("Tensor.Neural.Embedding indices must use dtype int32")}
+    if indices.rank() != 1 && indices.rank() != 2 {panic("Tensor.Neural.Embedding indices must have rank 1 or 2")}
+    if !weight.has_same_placement(indices) {panic("Tensor.Neural.Embedding requires matching placement and GPU device")}
+    let features=weight.shape()[1]
+    let expanded=indices.contiguous().reshape([indices.count()]).unsqueeze(1).expand([indices.count(),features])
+    let gathered=weight.autograd_detached().gather(0,expanded)
+    var shape=copy indices.shape()
+    shape.append(features)
+    let output=gathered.reshape(shape)
+    return autograd_record(output,AutogradRule.embedding(autograd_input(weight),expanded,padding_index))
+}

@@ -1,0 +1,78 @@
+{
+  "oracle": "Decimal 50 digits; direct row lookup and transpose of a fixed linear selection matrix",
+  "weights": [
+    "0.25",
+    "-0.5",
+    "1.5",
+    "2",
+    "-0.75",
+    "0.125",
+    "3",
+    "-2"
+  ],
+  "indices": [
+    2,
+    0,
+    2,
+    1
+  ],
+  "seed": [
+    "0.2",
+    "-0.3",
+    "0.4",
+    "0.5",
+    "-0.6",
+    "0.7",
+    "0.8",
+    "-0.9"
+  ],
+  "cases": [
+    {
+      "padding_index": null,
+      "output": [
+        "-0.75",
+        "0.125",
+        "0.25",
+        "-0.5",
+        "-0.75",
+        "0.125",
+        "1.5",
+        "2"
+      ],
+      "gradient": [
+        "0.4",
+        "0.5",
+        "0.8",
+        "-0.9",
+        "-0.4",
+        "0.4",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "padding_index": 2,
+      "output": [
+        "-0.75",
+        "0.125",
+        "0.25",
+        "-0.5",
+        "-0.75",
+        "0.125",
+        "1.5",
+        "2"
+      ],
+      "gradient": [
+        "0.4",
+        "0.5",
+        "0.8",
+        "-0.9",
+        "0",
+        "0",
+        "0",
+        "0"
+      ]
+    }
+  ],
+  "padding_contract": "The padding row is read normally; its declared first-order derivative is stopped."
+}

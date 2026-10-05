@@ -29,6 +29,7 @@ uint pair_component(uint4 first, uint4 second, uint index) {
 
 uint gathered_source_logical(uint logical, int selected) {
     if (selected < 0 || uint(selected) >= indexHeader.z) return 0xffffffff;
+    if (indexHeader.w != 0 && uint(selected) == indexHeader.w - 1) return 0xffffffff;
     uint remaining = logical;
     uint result = 0;
     uint sourceStride = 1;

@@ -1,0 +1,39 @@
+use Tensor
+use Tensor.embedding_lookup
+use STD.Randomizer
+
+public nocopy class Embedding:Layer {
+    private let vocabulary_size:int
+    private let embedding_features:int
+    private let padding_index:int
+    private var weight:Parameter
+
+    init(name:str, vocabulary_size:int, embedding_features:int, seed:int, padding_index:int? = null) {
+        if vocabulary_size<=0 || vocabulary_size>2147483648 || embedding_features<=0 {
+            panic("Tensor.Neural.Embedding requires a positive vocabulary inside the int32 index domain and positive feature count")
+        }
+        var padding = -1
+        if let requested=padding_index {
+            if requested<0 || requested>=vocabulary_size {panic("Tensor.Neural.Embedding padding_index must be inside the vocabulary")}
+            padding=requested
+        }
+        var randomizer=Randomizer(seed)
+        let initial=Tensor.uniform([vocabulary_size,embedding_features],randomizer,-1.0,1.0)
+        var values=initial.values()
+        if padding>=0 {
+            var feature=0
+            while feature<embedding_features {values[padding*embedding_features+feature]=0.0;feature++}
+        }
+        self.vocabulary_size=vocabulary_size
+        self.embedding_features=embedding_features
+        self.padding_index=padding
+        self.weight=Parameter(name+".weight",Tensor(values,[vocabulary_size,embedding_features]))
+        self.register_parameter(self.weight)
+    }
+    override package func checkpoint_configuration() str {
+        return "Embedding:$(self.vocabulary_size):$(self.embedding_features):$(self.padding_index)"
+    }
+    override func forward(input:Tensor) Tensor {
+        return embedding_lookup(self.weight.value(),input,self.padding_index)
+    }
+}

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.Embedding` apprend une table float32 seedée à partir d’indices int32 batch-first, avec gradients denses répétés et padding à dérivée arrêtée. Composition Layer, état/reprise et lookup résident CPU/Metal qualifiés ; voir le [guide](Docs/FR/Embeddings.md).
+
 - `Autograd.Operation` et `Autograd.apply` relient une règle extérieure composée de Tensor publics au graphe de premier ordre. Les gradients de feuilles sont préparés avant publication et les valeurs retenues libérées à la consommation/destruction. Voir le [guide](Docs/FR/CustomOperations.md).
 
 - `Data.BatchCursor(...,prefetch:N)` prépare des lots CPU détachés avec STD.Threading, conserve les snapshots consommés et l’ordre des erreurs, et rejoint les workers à la fermeture/destruction. Éligibilité explicite des sources, reprise de checkpoint qualifiée CPU/GPU et borne de lots documentée.

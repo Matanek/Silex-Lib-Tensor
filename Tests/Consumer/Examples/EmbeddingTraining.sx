@@ -1,0 +1,24 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+
+func main() {
+    var embedding=Neural.Embedding("tokens",4,2,seed:7,padding_index:0)
+    var ids:int32[]=[0,1,2,3]
+    let input=Tensor.vector(ids)
+    var targets:float[]=[0.0,0.0,0.2,-0.3,0.4,-0.5,0.6,-0.7]
+    let target=Tensor(targets,[4,2])
+    var optimizer=Optim.SGD(embedding.parameters(),learning_rate:0.2)
+    var step=0
+    while step<40 {
+        optimizer.zero_grad()
+        let difference=embedding.forward(input).subtract(target)
+        difference.multiply(difference).mean().backward()
+        optimizer.step()
+        step++
+    }
+    let weights=embedding.parameters()[0].value().detach().values()
+    assert(weights[0]==0.0 && weights[1]==0.0)
+    assert(embedding.forward(input).shape()[1]==2)
+    print("Embedding training: padding preserved")
+}

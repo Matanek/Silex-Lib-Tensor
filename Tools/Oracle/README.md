@@ -78,3 +78,15 @@ NCHW views. Normal tests do not run Python. Recheck the independent report with
 `python3 Tools/Oracle/batchnorm_decimal.py --check` and inspect report and fixture
 changes together after regeneration. Smooth central-difference tests provide a
 second derivative control outside constant regions.
+
+## Dense embedding oracle
+
+`python3 Tools/Oracle/embedding_decimal.py --check` checks the pinned
+`EMBEDDING_REPORT.json` and `Tests/Consumer/Tests/EmbeddingOracle.sx` without
+external frameworks. It uses Python Decimal at 50 digits to evaluate a fixed
+row selection and the transpose of that selection matrix, with and without
+stopped padding derivatives. Ordinary Silex tests use the generated fixture
+without Python. Weight conversion is direct row-major `[vocabulary,features]`
+float32; indices are exact int32 and no bias, transpose or gate reorder applies.
+Padding rows are read normally; their declared lookup derivative is zero.
+Finite-difference qualification excludes that deliberately stopped row.

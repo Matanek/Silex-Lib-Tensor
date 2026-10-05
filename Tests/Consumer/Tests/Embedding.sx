@@ -1,0 +1,163 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func embedding_near(actual:Tensor, expected:float[], tolerance:float = 0.00001) {
+    let values=actual.detach().cpu().values()
+    assert(values.count()==expected.count())
+    var i=0
+    while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<=tolerance);i++}
+}
+func embedding_table(padding:int? = null) Neural.Embedding {
+    var layer=Neural.Embedding("tokens",4,2,seed:7,padding_index:padding)
+    var values:float[]=[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
+    var parameters=layer.parameters();parameters[0].replace(Tensor(values,[4,2]))
+    return layer
+}
+func embedding_oracle(device:GPU.Device?, padding:int? = null) {
+    var layer=embedding_table(padding)
+    var parameters=layer.parameters()
+    var ids:int32[]=[0,2,2,1]
+    var seed_values:float[]=[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]
+    var indices=Tensor(ids,[2,2]);var seed=Tensor(seed_values,[2,2,2])
+    if let gpu=device {layer.to(gpu);indices=indices.to(gpu);seed=seed.to(gpu)}
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let output=layer.forward(indices)
+    var gradients=Autograd.grad(output,[parameters[0].value()],seed:seed)
+    assert(output.rank()==3 && output.shape()[0]==2 && output.shape()[1]==2 && output.shape()[2]==2)
+    assert(gradients[0].rank()==2 && gradients[0].shape()[0]==4 && parameters[0].gradient()==null)
+    if let stats=profile {assert(stats.snapshot().uploads==0 && stats.snapshot().downloads==0)}
+    embedding_near(output,[1.0,2.0,5.0,6.0,5.0,6.0,3.0,4.0])
+    if padding!=null {embedding_near(gradients[0],[1.0,2.0,7.0,8.0,0.0,0.0,0.0,0.0])}
+    else {embedding_near(gradients[0],[1.0,2.0,7.0,8.0,8.0,10.0,0.0,0.0])}
+    layer.forward(indices).sum().backward();layer.forward(indices).sum().backward()
+    if let gradient=parameters[0].gradient() {
+        if padding!=null {embedding_near(gradient,[2.0,2.0,2.0,2.0,0.0,0.0,0.0,0.0])}
+        else {embedding_near(gradient,[2.0,2.0,2.0,2.0,4.0,4.0,0.0,0.0])}
+    } else {panic("missing embedding gradient")}
+}
+test "Embedding CPU lookup and repeated dense gradients match the pinned linear oracle" {embedding_oracle(null);embedding_oracle(null,2)}
+test "Embedding Metal lookup padding and gradients stay resident" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));embedding_oracle(device);embedding_oracle(device,2)
+}
+func embedding_views(device:GPU.Device?) {
+    var layer=embedding_table()
+    var ids:int32[]=[0,1,2,3]
+    var indices=Tensor(ids,[2,2])
+    var empty_ids:int32[]=[]
+    var empty=Tensor(empty_ids,[2,0])
+    if let gpu=device {layer.to(gpu);indices=indices.to(gpu);empty=empty.to(gpu)}
+    let output=layer.forward(indices.transpose())
+    embedding_near(output,[1.0,2.0,5.0,6.0,3.0,4.0,7.0,8.0])
+    let vector=layer.forward(indices.select(0,1))
+    assert(vector.rank()==2 && vector.shape()[0]==2 && vector.shape()[1]==2)
+    embedding_near(vector,[5.0,6.0,7.0,8.0])
+    let vacant=layer.forward(empty)
+    assert(vacant.count()==0 && vacant.rank()==3 && vacant.shape()[0]==2 && vacant.shape()[1]==0)
+    var parameters=layer.parameters()
+    var gradients=Autograd.grad(vacant.sum(),[parameters[0].value()])
+    embedding_near(gradients[0],[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
+}
+test "Embedding preserves strided indices rank one and empty batches on CPU and Metal" {
+    embedding_views(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));embedding_views(device)}
+}
+test "Embedding full weight Jacobian without stopped padding passes finite differences" {
+    var original:float[]=[0.2,-0.3,0.4,0.5,-0.6,0.7]
+    var layer=Neural.Embedding("tokens",3,2,seed:7)
+    var parameters=layer.parameters()
+    var ids:int32[]=[2,0,2];let indices=Tensor.vector(ids)
+    var output_index=0;var checked=0
+    while output_index<6 {
+        parameters[0].replace(Tensor(original,[3,2]))
+        var seed_values:float[]=[0.0,0.0,0.0,0.0,0.0,0.0];seed_values[output_index]=1.0
+        var gradients=Autograd.grad(layer.forward(indices),[parameters[0].value()],seed:Tensor(seed_values,[3,2]))
+        let analytical=gradients[0].values()
+        var element=0
+        while element<6 {
+            var upper=copy original;var lower=copy original
+            upper[element]+=0.001;lower[element]-=0.001
+            parameters[0].replace(Tensor(upper,[3,2]));let high=layer.forward(indices).detach().values()[output_index]
+            parameters[0].replace(Tensor(lower,[3,2]));let low=layer.forward(indices).detach().values()[output_index]
+            assert(Math.abs(analytical[element]-(high-low)/0.002)<0.0001)
+            element++;checked++
+        }
+        output_index++
+    }
+    assert(checked==36)
+}
+test "Embedding seeds names freezing and shared composition follow Layer" {
+    var left=Neural.Embedding("tokens",4,2,seed:71,padding_index:0)
+    var right=Neural.Embedding("tokens",4,2,seed:71,padding_index:0)
+    var other=Neural.Embedding("tokens",4,2,seed:72,padding_index:0)
+    var parameters=left.parameters()
+    assert(parameters.count()==1 && parameters[0].name()=="tokens.weight" && left.buffers().is_empty())
+    let values=parameters[0].value().detach().values()
+    embedding_near(right.parameters()[0].value(),values)
+    assert(values[0]==0.0 && values[1]==0.0)
+    assert(other.parameters()[0].value().detach().values()[2]!=values[2])
+    var ids:int32[]=[0,1]
+    left.freeze();left.eval()
+    assert(!parameters[0].is_trainable() && !left.is_training())
+    assert(left.forward(Tensor.vector(ids)).count()==4 && parameters[0].gradient()==null)
+    left.unfreeze();left.train();left.forward(Tensor.vector(ids)).sum().backward()
+    assert(parameters[0].gradient()!=null && left.is_training())
+    left.zero_grad()
+    var layers:Neural.Layer[]=[left,Neural.Dense("project",2,1,seed:5)]
+    var model=Neural.Sequential(layers)
+    assert(model.parameters().count()==3 && model.forward(Tensor(ids,[1,2])).shape()[2]==1)
+}
+func embedding_loss(layer:Neural.Embedding, indices:Tensor, target:Tensor) Tensor {
+    let difference=layer.forward(indices).subtract(target)
+    return difference.multiply(difference).mean()
+}
+func embedding_train(device:GPU.Device?, optimizer_kind:int) {
+    var layer=Neural.Embedding("tokens",4,2,seed:7,padding_index:0)
+    var parameters=layer.parameters()
+    var ids:int32[]=[0,1,2,3]
+    var target_values:float[]=[0.0,0.0,0.2,-0.3,0.4,-0.5,0.6,-0.7]
+    var indices=Tensor.vector(ids);var target=Tensor(target_values,[4,2])
+    if let gpu=device {layer.to(gpu);indices=indices.to(gpu);target=target.to(gpu)}
+    var sgd=Optim.SGD(parameters,learning_rate:0.2,momentum:0.3,weight_decay:0.01)
+    var adam=Optim.Adam(parameters,learning_rate:0.05,weight_decay:0.01)
+    var adamw=Optim.AdamW(parameters,learning_rate:0.05,weight_decay:0.01)
+    let initial=embedding_loss(layer,indices,target).detach().cpu().item()
+    var step=0
+    while step<40 {
+        embedding_loss(layer,indices,target).backward()
+        if optimizer_kind==0 {sgd.step();sgd.zero_grad()}
+        else if optimizer_kind==1 {adam.step();adam.zero_grad()}
+        else {adamw.step();adamw.zero_grad()}
+        let values=parameters[0].value().detach().cpu().values()
+        assert(values[0]==0.0 && values[1]==0.0)
+        step++
+    }
+    assert(embedding_loss(layer,indices,target).detach().cpu().item()<initial*0.1)
+}
+test "Embedding training lowers synthetic loss and preserves zero padding with SGD Adam and AdamW" {
+    embedding_train(null,0);embedding_train(null,1);embedding_train(null,2)
+}
+test "Embedding Metal training preserves padding under momentum and weight decay" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    embedding_train(device,0);embedding_train(device,1);embedding_train(device,2)
+}
+test "Embedding invalid GPU indices produce NaN and never gradient valid rows" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var layer=embedding_table();layer.to(device)
+    var ids:int32[]=[-1,4,2147483647,-2147483648]
+    let input=Tensor.vector(ids).to(device)
+    var profile=Profile(device)
+    let output=layer.forward(input)
+    var parameters=layer.parameters();var gradients=Autograd.grad(output,[parameters[0].value()],seed:Tensor.ones([4,2]).to(device))
+    assert(profile.snapshot().downloads==0)
+    for value in output.detach().cpu().values() {assert(Math.is_nan(value))}
+    embedding_near(gradients[0],[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
+}
