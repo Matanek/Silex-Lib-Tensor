@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Data
+use GFX.GPU
+func main() {var first=GPU.Device(GPU.DeviceSettings(debug:true));var second=GPU.Device(GPU.DeviceSettings(debug:true));var source=Data.TensorSource(Tensor.ones([3,2]).to(first),Tensor.ones([3]).to(second))}

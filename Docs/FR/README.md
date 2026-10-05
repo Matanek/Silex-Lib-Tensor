@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Parcourez des [lots supervisés avec une collation personnalisée](SupervisedBatches.md).
 - Parcourez des [lots d’indices reproductibles et reprenez leur curseur](BatchSampling.md).
 - Propagez [mode, placement et gel du modèle](ModelState.md).
 - Enregistrez [l’état nommé et partagé des couches](Registration.md).

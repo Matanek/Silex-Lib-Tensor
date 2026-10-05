@@ -1,0 +1,42 @@
+use Tensor
+use Tensor.Data
+
+func same_values<T>(left:T[],right:T[]) bool {
+    if left.count()!=right.count() {return false}
+    var index=0
+    while index<left.count() {
+        if left[index]!=right[index] {return false}
+        index++
+    }
+    return true
+}
+
+nocopy class Samples:Data.Source {
+    init():super(3) {}
+    override func observation(index:int) Result<Data.Observation,str> {
+        if index < 0 || index >= self.count() {return Result<Data.Observation,str>.failure("sample index outside source")}
+        var shape:int[]=[index+1]
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.full(shape,(index+1) as float),target:Tensor.scalar(index)))
+    }
+}
+
+func padded_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var width=0
+    for observation in observations {if observation.input.count()>width {width=observation.input.count()}}
+    var padded:Data.Observation[]=[]
+    for observation in observations {
+        var padding_shape:int[]=[width-observation.input.count()]
+        var parts:Tensor[]=[observation.input,Tensor.zeros(padding_shape)]
+        padded.append(Data.Observation(input:Tensor.concatenate(parts,0),target:observation.target))
+    }
+    return Data.stack_batch(padded)
+}
+
+func main() {
+    var source=Samples()
+    var cursor=Data.BatchCursor(source,2,collate:padded_batch)
+    if let batch=try cursor.next() else error {panic(error)} {
+        var expected:float[]=[1.0,0.0,2.0,2.0]
+        assert(same_values(batch.input.shape(),[2,2]) && same_values(batch.input.values(),expected))
+    } else {panic("missing padded batch")}
+}

@@ -35,12 +35,14 @@ public nocopy class BatchSampler {
     }
 
     func next() int32[]? {
+        let result = self.peek()
+        self.consume()
+        return result
+    }
+
+    package func peek() int32[]? {
         let remaining = self.sample_count - self.current_position
-        if remaining == 0 { return null }
-        if self.drop_last && remaining < self.batch_size {
-            self.current_position = self.sample_count
-            return null
-        }
+        if remaining == 0 || (self.drop_last && remaining < self.batch_size) { return null }
         var size = self.batch_size
         if size > remaining { size = remaining }
         var result:int32[] = []
@@ -51,8 +53,13 @@ public nocopy class BatchSampler {
             else { result.append(position as int32) }
             offset++
         }
-        self.current_position += size
         return result
+    }
+
+    package func consume() {
+        let remaining = self.sample_count - self.current_position
+        if remaining <= self.batch_size { self.current_position = self.sample_count }
+        else { self.current_position += self.batch_size }
     }
 
     func set_epoch(epoch:int) {

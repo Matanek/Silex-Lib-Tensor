@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Tensor.Data.Source`, `TensorSource` et `BatchCursor` produisent des lots supervisés synchrones. Collation stack ou callback nommé avec erreurs récupérables, progression après réussite, reprise du prochain lot et placements/dtypes/gradients préservés. Voir le [guide](Docs/FR/SupervisedBatches.md).
+
 - Ajout de `Tensor.Data.BatchSampler` : lots int32 ordonnés ou mélangés, seed/époque explicites, dernier lot conservé par défaut et snapshot immuable reconstructible. Parcours ordonné sans permutation complète, métadonnées CPU sans travail GPU. Voir le [guide des lots](Docs/FR/BatchSampling.md).
 
 - Layer propage train/eval, placement, gel/dégel et zero_grad aux identités

@@ -67,4 +67,4 @@ without affecting later batches.
 
 This snapshot describes index traversal only. It does not save a source,
 collation, model, optimizer or dropout RNG; the existing parameter checkpoint
-retains its own contract. This API provides no supervised source or collation.
+retains its own contract. [Supervised sources and collation](SupervisedBatches.md) use these same guarantees in BatchCursor.

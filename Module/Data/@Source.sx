@@ -1,0 +1,81 @@
+use Tensor
+
+public struct Observation {
+    var input:Tensor
+    var target:Tensor
+}
+
+public struct Batch {
+    var input:Tensor
+    var target:Tensor
+}
+
+public nocopy class Source {
+    private let sample_count:int
+
+    protected init(count:int) {
+        if count < 0 || count > 2147483648 { panic("Tensor.Data.Source requires count in the int32 index domain") }
+        self.sample_count = count
+    }
+
+    func count() int { return self.sample_count }
+    func observation(index:int) Result<Observation,str> {
+        panic("Tensor.Data.Source.observation must be implemented by a concrete source")
+    }
+}
+
+public nocopy class TensorSource : Source {
+    private var inputs:Tensor
+    private var targets:Tensor
+
+    init(inputs:Tensor, targets:Tensor) : super(tensor_source_count(inputs,targets)) {
+        self.inputs = inputs
+        self.targets = targets
+    }
+
+    override func observation(index:int) Result<Observation,str> {
+        if index < 0 || index >= self.count() {
+            return Result<Observation,str>.failure("Tensor.Data.TensorSource index is outside the source")
+        }
+        return Result<Observation,str>.success(Observation(input:self.inputs.select(0,index),target:self.targets.select(0,index)))
+    }
+}
+
+func tensor_source_count(inputs:Tensor, targets:Tensor) int {
+    if inputs.rank() == 0 || targets.rank() == 0 { panic("Tensor.Data.TensorSource requires a leading sample axis") }
+    if inputs.shape()[0] != targets.shape()[0] { panic("Tensor.Data.TensorSource requires matching sample counts") }
+    if !inputs.has_same_placement(targets) { panic("Tensor.Data.TensorSource requires matching placements and GPU devices") }
+    return inputs.shape()[0]
+}
+
+public func stack_batch(observations:Observation[]) Result<Batch,str> {
+    if observations.is_empty() { return Result<Batch,str>.failure("Tensor.Data.stack_batch requires at least one observation") }
+    var inputs:Tensor[] = []
+    var targets:Tensor[] = []
+    for observation in observations { inputs.append(observation.input); targets.append(observation.target) }
+    try require_stack_column(inputs)
+    try require_stack_column(targets)
+    if !inputs[0].has_same_placement(targets[0]) {
+        return Result<Batch,str>.failure("Tensor.Data.stack_batch requires matching input/target placements and GPU devices")
+    }
+    return Result<Batch,str>.success(Batch(input:Tensor.stack(inputs),target:Tensor.stack(targets)))
+}
+
+func require_stack_column(values:Tensor[]) Result<void,str> {
+    let first = values[0]
+    for value in values {
+        if value.rank() != first.rank() { return Result<void,str>.failure("Tensor.Data.stack_batch requires matching observation shapes") }
+        var axis=0
+        while axis<first.rank() {
+            if value.shape()[axis] != first.shape()[axis] { return Result<void,str>.failure("Tensor.Data.stack_batch requires matching observation shapes") }
+            axis++
+        }
+        if value.dtype() != first.dtype() { return Result<void,str>.failure("Tensor.Data.stack_batch requires matching observation dtypes") }
+        if !value.has_same_placement(first) { return Result<void,str>.failure("Tensor.Data.stack_batch requires matching observation placements and GPU devices") }
+    }
+    let maximum:int = 9223372036854775807
+    if first.count() > maximum / values.count() { return Result<void,str>.failure("Tensor.Data.stack_batch cardinality overflows int") }
+    let count = first.count() * values.count()
+    if count > maximum / first.dtype().byte_width() { return Result<void,str>.failure("Tensor.Data.stack_batch byte size overflows int") }
+    return Result<void,str>.success()
+}

@@ -27,6 +27,7 @@ silex install Tensor
 - [French functional gradient guide](Docs/FR/Gradients.md) · [English](Docs/EN/Gradients.md)
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
+- [French supervised batch guide](Docs/FR/SupervisedBatches.md) · [English](Docs/EN/SupervisedBatches.md)
 - [French batch sampling guide](Docs/FR/BatchSampling.md) · [English](Docs/EN/BatchSampling.md)
 - [French model state guide](Docs/FR/ModelState.md) · [English](Docs/EN/ModelState.md)
 - [French layer registration guide](Docs/FR/Registration.md) · [English](Docs/EN/Registration.md)
@@ -39,4 +40,6 @@ silex install Tensor
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 
-The package requires Silex 0.44.1 or newer.
+The published baseline requires Silex 0.44.1 or newer. Unreleased supervised
+batches also require the compiler fix for `try` in mutating methods described
+in Silex’s Unreleased notes.

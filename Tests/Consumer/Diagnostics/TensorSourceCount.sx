@@ -1,0 +1,3 @@
+use Tensor
+use Tensor.Data
+func main() {var source=Data.TensorSource(Tensor.ones([3,2]),Tensor.ones([2]))}

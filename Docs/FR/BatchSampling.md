@@ -69,5 +69,5 @@ Les listes retournées peuvent être modifiées sans affecter les lots suivants.
 
 Ce snapshot décrit le seul parcours des indices. Il ne sauvegarde ni source,
 collation, modèle, optimiseur ou RNG d’un dropout ; le checkpoint de paramètres
-existant conserve son propre contrat. Aucune source supervisée ou collation
-n’est fournie par cette API.
+existant conserve son propre contrat. Les [sources et collations supervisées](SupervisedBatches.md)
+utilisent ces mêmes garanties dans BatchCursor.

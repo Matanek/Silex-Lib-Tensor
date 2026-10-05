@@ -160,3 +160,10 @@ configuration matching. `SamplerRestoreEpoch`, `SamplerRestorePositionNegative`,
 `SamplerRestorePositionBeyond`, and `SamplerRestorePositionBoundary` validate
 epochs and batch boundaries. `SamplerStateMutation` rejects an immutable field
 assignment. Each name refers to its `.sx` fixture.
+
+Supervised sources add `SourceCountNegative`, `SourceCountWidth`, and
+`SourceProtectedConstructor` for the source contract; `TensorSourceRank`,
+`TensorSourceCount`, `TensorSourcePlacement`, and `TensorSourceDevice` for aligned
+leading axes and placements; `CursorRestoreConfiguration` for sampler forwarding.
+Each name refers to its `.sx` fixture. Recoverable source/collation errors are
+asserted in `Tests/BatchCursor.sx`, including unchanged cursor state and retry.

@@ -1,0 +1,68 @@
+use Tensor
+
+public nocopy class BatchCursor {
+    private var source:Source
+    private let sample_count:int
+    private var sampler:BatchSampler
+    private var collate:func(Observation[]) Result<Batch,str>
+    private var reading:bool
+
+    init(source:Source, batch_size:int, shuffle:bool = false, seed:int = 0, drop_last:bool = false,
+        collate:func(Observation[]) Result<Batch,str> = stack_batch) {
+        self.source = source
+        self.sample_count = source.count()
+        self.sampler = BatchSampler(self.sample_count,batch_size,shuffle:shuffle,seed:seed,drop_last:drop_last)
+        self.collate = collate
+        self.reading = false
+    }
+
+    func next() Result<Batch?,str> {
+        if self.reading { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor cannot read recursively") }
+        self.reading = true
+        var result = self.read_next()
+        self.reading = false
+        return result
+    }
+
+    func state() BatchSamplerState { return self.sampler.state() }
+    func set_epoch(epoch:int) {
+        if self.reading { panic("Tensor.Data.BatchCursor cannot change epoch during a read") }
+        self.require_stable_source()
+        self.sampler.set_epoch(epoch)
+    }
+    func restore(state:BatchSamplerState) {
+        if self.reading { panic("Tensor.Data.BatchCursor cannot restore during a read") }
+        self.require_stable_source()
+        self.sampler.restore(state)
+    }
+
+    private func require_stable_source() {
+        if self.source.count() != self.sample_count { panic("Tensor.Data.BatchCursor requires a stable source count") }
+    }
+
+    private func read_next() Result<Batch?,str> {
+        if self.source.count() != self.sample_count { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor requires a stable source count") }
+        if let indices = self.sampler.peek() {
+            var observations:Observation[] = []
+            for index in indices {
+                var observation = try self.source.observation(index as int)
+                observations.append(observation)
+            }
+            var batch = try self.collate(observations)
+            if batch.input.rank() == 0 || batch.target.rank() == 0 {
+                return Result<Batch?,str>.failure("Tensor.Data.BatchCursor collation requires a leading batch axis")
+            }
+            if batch.input.shape()[0] != indices.count() || batch.target.shape()[0] != indices.count() {
+                return Result<Batch?,str>.failure("Tensor.Data.BatchCursor collation requires matching batch counts")
+            }
+            if !batch.input.has_same_placement(batch.target) {
+                return Result<Batch?,str>.failure("Tensor.Data.BatchCursor collation requires matching input/target placements and GPU devices")
+            }
+            if self.source.count() != self.sample_count { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor requires a stable source count") }
+            self.sampler.consume()
+            return Result<Batch?,str>.success(batch)
+        }
+        self.sampler.consume()
+        return Result<Batch?,str>.success(null)
+    }
+}

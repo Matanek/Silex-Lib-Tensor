@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Tensor.Data.Source`, `TensorSource`, and `BatchCursor` provide synchronous supervised batches. Stack or named callback collation has recoverable errors, advances after success, resumes the next batch, and preserves placement/dtypes/gradients. See the [guide](Docs/EN/SupervisedBatches.md).
+
 - Add `Tensor.Data.BatchSampler`: ordered or shuffled int32 batches, explicit seed/epoch, final partial batch kept by default, and immutable reconstructible cursor state. Ordered sampling avoids a full permutation; CPU metadata performs no GPU work. See the [batch guide](Docs/EN/BatchSampling.md).
 
 - Layer propagates train/eval, placement, freezing/unfreezing, and zero_grad to

@@ -1,0 +1,34 @@
+use Tensor
+use Tensor.Data
+
+func same_values<T>(left:T[],right:T[]) bool {
+    if left.count()!=right.count() {return false}
+    var index=0
+    while index<left.count() {
+        if left[index]!=right[index] {return false}
+        index++
+    }
+    return true
+}
+
+func main() {
+    var inputs:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    var labels:int32[] = [0 as int32,1 as int32,2 as int32]
+    var source = Data.TensorSource(Tensor(inputs,[3,2]),Tensor.vector(labels))
+    var cursor = Data.BatchCursor(source,2)
+    if let batch = try cursor.next() else error { panic(error) } {
+        assert(same_values(batch.input.shape(),[2,2]) && same_values(batch.target.shape(),[2]))
+        var expected:float[] = [1.0,2.0,3.0,4.0]
+        assert(same_values(batch.input.values(),expected))
+        var expected_labels:int32[] = [0 as int32,1 as int32]
+        assert(same_values(batch.target.int32_values(),expected_labels))
+    } else { panic("missing first supervised batch") }
+    let saved = cursor.state()
+    var resumed = Data.BatchCursor(source,2)
+    resumed.restore(saved)
+    if let batch = try resumed.next() else error { panic(error) } {
+        var expected:float[] = [5.0,6.0]
+        assert(same_values(batch.input.values(),expected) && batch.target.int32_item() == 2 as int32)
+    } else { panic("missing final supervised batch") }
+    assert((try resumed.next() else error { panic(error) }) == null)
+}

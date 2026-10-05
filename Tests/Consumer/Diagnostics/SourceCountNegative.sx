@@ -1,0 +1,3 @@
+use Tensor.Data
+nocopy class Invalid:Data.Source {init():super(-1) {}}
+func main() {var source=Invalid()}

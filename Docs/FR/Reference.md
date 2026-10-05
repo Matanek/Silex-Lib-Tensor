@@ -115,3 +115,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [État récursif du modèle](ModelState.md) : modes, hooks locaux, gel et transferts prévalidés.
 
 [Lots d’indices reproductibles](BatchSampling.md) : seed, époque, dernier lot et snapshot du curseur.
+
+[Lots supervisés](SupervisedBatches.md) : sources extérieures, collation, erreurs récupérables et placement.

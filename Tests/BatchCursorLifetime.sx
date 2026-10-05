@@ -1,0 +1,30 @@
+use Tensor
+use Tensor.Data
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func batch_cursor_cycle(device:GPU.Device) {
+    var variable=Autograd.Variable(Tensor.ones([5,2]).to(device))
+    var source=Data.TensorSource(variable.value(),Tensor.ones([5]).to(device))
+    var cursor=Data.BatchCursor(source,2,shuffle:true,seed:42)
+    if let batch=try cursor.next() else error {panic(error)} {batch.input.sum().backward()}
+    variable.zero_grad()
+    var resumed=Data.BatchCursor(source,2,shuffle:true,seed:42);resumed.restore(cursor.state())
+    if let batch=try resumed.next() else error {panic(error)} {assert(batch.input.is_gpu())}
+}
+
+test "supervised cursors snapshots batches and graphs release resources" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let before=autograd_performance_statistics()
+    var index=0
+    while index<32 {
+        batch_cursor_cycle(device)
+        let after=autograd_performance_statistics()
+        assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        index++
+    }
+}

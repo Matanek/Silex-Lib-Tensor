@@ -1,0 +1,275 @@
+use Tensor
+use Tensor.DType
+use Tensor.Data
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+
+func same_values<T>(left:T[],right:T[]) bool {
+    if left.count()!=right.count() {return false}
+    var index=0
+    while index<left.count() {
+        if left[index]!=right[index] {return false}
+        index++
+    }
+    return true
+}
+
+func batch_of(cursor:Data.BatchCursor) Data.Batch {
+    var reading = cursor
+    if let batch = try reading.next() else error {panic(error)} {return batch}
+    panic("missing supervised batch")
+}
+func failure_of(cursor:Data.BatchCursor) str {
+    var reading=cursor
+    match reading.next() {
+        failure(error) => {return error}
+        success(value) => {panic("expected recoverable batch error")}
+    }
+}
+
+nocopy class FlakySource:Data.Source {
+    var fail_once:bool
+    var reported_count:int
+    var change_count:bool
+    var calls:int
+    init(fail_once:bool = false, change_count:bool = false):super(5) {
+        self.fail_once=fail_once;self.reported_count=5;self.change_count=change_count;self.calls=0
+    }
+    override func count() int {return self.reported_count}
+    override func observation(index:int) Result<Data.Observation,str> {
+        self.calls++
+        if self.fail_once && index == 1 {self.fail_once=false;return Result<Data.Observation,str>.failure("temporary source failure")}
+        if self.change_count {self.reported_count=4}
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.scalar(index),target:Tensor.scalar(index*10)))
+    }
+}
+
+func scaled_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var batch = try Data.stack_batch(observations)
+    batch.input = batch.input.multiply(2)
+    return Result<Data.Batch,str>.success(batch)
+}
+func refused_batch(observations:Data.Observation[]) Result<Data.Batch,str> {return Result<Data.Batch,str>.failure("custom collation failed")}
+func scalar_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var shape:int[]=[observations.count()]
+    return Result<Data.Batch,str>.success(Data.Batch(input:Tensor.scalar(1),target:Tensor.ones(shape)))
+}
+func short_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var shape:int[]=[observations.count()]
+    return Result<Data.Batch,str>.success(Data.Batch(input:Tensor.ones([1]),target:Tensor.ones(shape)))
+}
+
+func misplaced_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var batch=try Data.stack_batch(observations)
+    batch.target=batch.target.cpu()
+    return Result<Data.Batch,str>.success(batch)
+}
+
+nocopy class RaggedSource:Data.Source {
+    init():super(3) {}
+    override func observation(index:int) Result<Data.Observation,str> {
+        var shape:int[]=[index+1]
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.full(shape,(index+1) as float),target:Tensor.scalar(index)))
+    }
+}
+func padded_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var width=0
+    for observation in observations {if observation.input.count()>width {width=observation.input.count()}}
+    var padded:Data.Observation[]=[]
+    for observation in observations {
+        var padding_shape:int[]=[width-observation.input.count()]
+        var parts:Tensor[]=[observation.input,Tensor.zeros(padding_shape)]
+        padded.append(Data.Observation(input:Tensor.concatenate(parts,0),target:observation.target))
+    }
+    return Data.stack_batch(padded)
+}
+
+test "external sources and named collators preserve aligned supervised order" {
+    var source=FlakySource();var cursor=Data.BatchCursor(source,2,collate:scaled_batch)
+    var first=batch_of(cursor);var expected:int[]=[0,2];var labels:int[]=[0,10]
+    assert(same_values(first.input.int64_values(),expected) && same_values(first.target.int64_values(),labels))
+    var second=batch_of(cursor);expected=[4,6];labels=[20,30]
+    assert(same_values(second.input.int64_values(),expected) && same_values(second.target.int64_values(),labels))
+    var final=batch_of(cursor);assert(final.input.int64_item()==8 && final.target.int64_item()==40)
+    assert((try cursor.next() else error {panic(error)})==null && source.calls==5)
+}
+
+test "source failures preserve cursor boundaries and allow retry" {
+    var source=FlakySource(fail_once:true);var cursor=Data.BatchCursor(source,2)
+    let before=cursor.state()
+    assert(failure_of(cursor)=="temporary source failure" && cursor.state()==before)
+    var batch=batch_of(cursor);var expected:int[]=[0,1]
+    assert(same_values(batch.input.int64_values(),expected) && cursor.state().position==2 && source.calls==4)
+    var alias=cursor;var second=batch_of(alias);assert(cursor.state().position==4 && second.input.int64_values()[0]==2)
+}
+
+test "changed source counts are rejected before cursor advancement" {
+    var source=FlakySource(change_count:true);var cursor=Data.BatchCursor(source,2)
+    let before=cursor.state()
+    assert(failure_of(cursor)=="Tensor.Data.BatchCursor requires a stable source count" && cursor.state()==before)
+    source.change_count=false;source.reported_count=5
+    assert(batch_of(cursor).input.int64_values()[0]==0 && cursor.state().position==2)
+    source.reported_count=4
+    let saved=cursor.state();let calls=source.calls
+    assert(failure_of(cursor)=="Tensor.Data.BatchCursor requires a stable source count" && cursor.state()==saved && source.calls==calls)
+}
+
+test "collation failures and output contracts leave the next batch intact" {
+    var source=FlakySource()
+    var refused=Data.BatchCursor(source,2,collate:refused_batch);let before=refused.state()
+    assert(failure_of(refused)=="custom collation failed" && refused.state()==before)
+    assert(failure_of(refused)=="custom collation failed" && refused.state()==before)
+    var scalar=Data.BatchCursor(source,2,collate:scalar_batch)
+    assert(failure_of(scalar)=="Tensor.Data.BatchCursor collation requires a leading batch axis" && scalar.state()==before)
+    var short=Data.BatchCursor(source,2,collate:short_batch)
+    assert(failure_of(short)=="Tensor.Data.BatchCursor collation requires matching batch counts" && short.state()==before)
+}
+
+test "ragged observations use explicit padding collation" {
+    var source=RaggedSource();var regular=Data.BatchCursor(source,2)
+    assert(failure_of(regular)=="Tensor.Data.stack_batch requires matching observation shapes" && regular.state().position==0)
+    var padded=Data.BatchCursor(source,2,collate:padded_batch);var batch=batch_of(padded)
+    var expected:float[]=[1.0,0.0,2.0,2.0];var labels:int[]=[0,1]
+    assert(same_values(batch.input.shape(),[2,2]) && same_values(batch.input.values(),expected) && same_values(batch.target.int64_values(),labels))
+}
+
+func check_dtype<T>(gpu:GPU.Device?) {
+    var values:T[]=[1 as T,2 as T,3 as T,4 as T,5 as T,6 as T]
+    var flags:bool[]=[true,false,true]
+    var inputs=Tensor(values,[3,2]);var targets=Tensor.vector(flags)
+    if let device=gpu {inputs=inputs.to(device);targets=targets.to(device)}
+    var source=Data.TensorSource(inputs,targets);var cursor=Data.BatchCursor(source,2)
+    var batch=batch_of(cursor)
+    assert(batch.input.dtype()==inputs.dtype() && batch.input.is_cpu()==inputs.is_cpu() && same_values(batch.input.shape(),[2,2]))
+    var expected:float[]=[1.0,2.0,3.0,4.0];var expected_flags:bool[]=[true,false]
+    assert(same_values(batch.input.cpu().cast(DType.float32()).values(),expected) && same_values(batch.target.cpu().bool_values(),expected_flags))
+    var final=batch_of(cursor);assert(same_values(final.input.shape(),[1,2]) && final.target.cpu().bool_item())
+}
+func dtype_family(gpu:GPU.Device?) {
+    check_dtype<float>(gpu);check_dtype<int8>(gpu);check_dtype<uint8>(gpu)
+    check_dtype<int16>(gpu);check_dtype<uint16>(gpu);check_dtype<int32>(gpu)
+    check_dtype<uint32>(gpu);check_dtype<int64>(gpu);check_dtype<uint64>(gpu)
+}
+
+test "Tensor sources stack every numeric storage dtype and bool on CPU" {dtype_family(null)}
+
+test "supervised resume matches continuous batches at every shuffled boundary" {
+    var values:int[]=[0,1,2,3,4,5,6]
+    var labels:int[]=[0,10,20,30,40,50,60]
+    var source=Data.TensorSource(Tensor.vector(values),Tensor.vector(labels))
+    for dropped in [false,true] {
+        var continuous=Data.BatchCursor(source,3,shuffle:true,seed:42,drop_last:dropped)
+        continuous.set_epoch(9)
+        while true {
+            let saved=continuous.state()
+            var resumed=Data.BatchCursor(source,3,shuffle:true,seed:42,drop_last:dropped);resumed.restore(saved)
+            var expected=try continuous.next() else error {panic(error)}
+            var actual=try resumed.next() else error {panic(error)}
+            if let batch=expected {
+                if let restored=actual {
+                    assert(same_values(batch.input.int64_values(),restored.input.int64_values()) && same_values(batch.target.int64_values(),restored.target.int64_values()))
+                    var index=0
+                    while index<restored.input.count() {assert(restored.target.int64_values()[index]==restored.input.int64_values()[index]*10);index++}
+                } else {panic("lost restored batch")}
+            } else {assert(actual==null);break}
+        }
+    }
+}
+
+test "empty dropped and strided Tensor sources retain batch shape" {
+    var empty=Data.TensorSource(Tensor.zeros([0,2]),Tensor.zeros([0]));var cursor=Data.BatchCursor(empty,2)
+    assert((try cursor.next() else error {panic(error)})==null)
+    var values:float[]=[0.0,1.0,2.0,3.0,4.0,5.0]
+    var source=Data.TensorSource(Tensor(values,[2,3]).transpose(),Tensor.arange(3))
+    var regular=Data.BatchCursor(source,2);var batch=batch_of(regular);var expected:float[]=[0.0,3.0,1.0,4.0]
+    assert(same_values(batch.input.shape(),[2,2]) && same_values(batch.input.values(),expected))
+    var dropping=Data.BatchCursor(source,4,drop_last:true)
+    assert((try dropping.next() else error {panic(error)})==null && dropping.state().position==3)
+}
+
+func source_gradient(device:GPU.Device?) {
+    var values:float[]=[1.0,2.0,3.0,4.0,5.0,6.0]
+    var tensor=Tensor(values,[3,2]);var targets=Tensor.ones([3])
+    if let gpu=device {tensor=tensor.to(gpu);targets=targets.to(gpu)}
+    var variable=Autograd.Variable(tensor)
+    var source=Data.TensorSource(variable.value(),targets);var cursor=Data.BatchCursor(source,2)
+    var batch=batch_of(cursor);batch.input.multiply(2.0).sum().backward()
+    if let gradient=variable.gradient() {
+        var expected:float[]=[2.0,2.0,2.0,2.0,0.0,0.0]
+        assert(same_values(gradient.cpu().values(),expected))
+    } else {panic("collation lost source gradient")}
+}
+
+test "default collation preserves source gradients on CPU" {source_gradient(null)}
+
+test "default collation stays GPU resident and preserves storage and gradients" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));dtype_family(device)
+    var source=Data.TensorSource(Tensor.ones([3,2]).to(device),Tensor.full([3],true).to(device))
+    var profile=Profile(device);var cursor=Data.BatchCursor(source,2,shuffle:true,seed:42)
+    var batch=batch_of(cursor)
+    assert(batch.input.is_gpu() && batch.target.is_gpu() && profile.snapshot().uploads==0 && profile.snapshot().downloads==0)
+    source_gradient(device)
+    var misplaced=Data.BatchCursor(source,2,collate:misplaced_batch)
+    let before=misplaced.state()
+    assert(failure_of(misplaced)=="Tensor.Data.BatchCursor collation requires matching input/target placements and GPU devices" && misplaced.state()==before)
+}
+
+test "default collation validates dtype placement and devices before GPU work" {
+    var first=Data.Observation(input:Tensor.ones([2]),target:Tensor.scalar(0))
+    var wrong=Data.Observation(input:Tensor.full([2],1),target:Tensor.scalar(1))
+    var observations:Data.Observation[]=[first,wrong]
+    match Data.stack_batch(observations) {
+        failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation dtypes")}
+        success(batch) => {panic("mixed dtype accepted")}
+    }
+    if !GPU.Device.is_supported() {return}
+    var left=GPU.Device(GPU.DeviceSettings(debug:true));var right=GPU.Device(GPU.DeviceSettings(debug:true))
+    first.input=first.input.to(left);first.target=first.target.to(left)
+    wrong.input=Tensor.ones([2]).to(right);wrong.target=wrong.target.to(right)
+    var profile=Profile(left);observations=[first,wrong]
+    match Data.stack_batch(observations) {
+        failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation placements and GPU devices")}
+        success(batch) => {panic("mixed devices accepted")}
+    }
+    assert(profile.snapshot().buffer_allocations==0 && profile.snapshot().uploads==0 && profile.snapshot().downloads==0)
+    wrong.input=Tensor.ones([2]);wrong.target=Tensor.scalar(0);observations=[first,wrong]
+    match Data.stack_batch(observations) {
+        failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation placements and GPU devices")}
+        success(batch) => {panic("mixed placements accepted")}
+    }
+}
+
+
+test "Tensor sources preserve int64 and uint64 extremes exactly" {
+    var signed:int[]=[-9223372036854775808,9223372036854775807]
+    var unsigned:uint[]=[0,18446744073709551615]
+    var source=Data.TensorSource(Tensor.vector(signed),Tensor.vector(unsigned))
+    var cursor=Data.BatchCursor(source,2);var batch=batch_of(cursor)
+    assert(same_values(batch.input.int64_values(),signed) && same_values(batch.target.uint64_values(),unsigned))
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var gpu_source=Data.TensorSource(Tensor.vector(signed).to(device),Tensor.vector(unsigned).to(device))
+    var gpu_cursor=Data.BatchCursor(gpu_source,2);var gpu_batch=batch_of(gpu_cursor)
+    assert(same_values(gpu_batch.input.cpu().int64_values(),signed) && same_values(gpu_batch.target.cpu().uint64_values(),unsigned))
+}
+
+nocopy class ReentrantSource:Data.Source {
+    var cursor:Data.BatchCursor?
+    init():super(2) {self.cursor=null}
+    override func observation(index:int) Result<Data.Observation,str> {
+        if let cursor=self.cursor {
+            var active=cursor
+            assert(failure_of(active)=="Tensor.Data.BatchCursor cannot read recursively")
+        }
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.scalar(index),target:Tensor.scalar(index)))
+    }
+}
+
+test "reentrant source reads fail without disrupting the outer batch" {
+    var source=ReentrantSource();var cursor=Data.BatchCursor(source,2);source.cursor=cursor
+    var batch=batch_of(cursor);var expected:int[]=[0,1]
+    assert(same_values(batch.input.int64_values(),expected) && cursor.state().position==2)
+    source.cursor=null
+}

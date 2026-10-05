@@ -115,3 +115,5 @@ graph consumption, and Jacobian checking.
 [Recursive model state](ModelState.md): modes, local hooks, freezing, and prevalidated transfers.
 
 [Reproducible index batches](BatchSampling.md): seed, epoch, final batch and cursor snapshot.
+
+[Supervised batches](SupervisedBatches.md): external sources, collation, recoverable errors and placement.

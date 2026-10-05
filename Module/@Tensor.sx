@@ -73,6 +73,13 @@ public struct Tensor {
     func is_gpu() bool { return !self.is_cpu() }
     func dtype() DType { return match self.current_storage { cpu(value) => value.dtype(); gpu(value) => value.dtype() } }
 
+    package func has_same_placement(other:Tensor) bool {
+        if self.is_cpu() != other.is_cpu() { return false }
+        if self.is_cpu() { return true }
+        var storage = self.gpu_storage()
+        return storage.same_device(other.gpu_storage())
+    }
+
     func values() float[] { self.require_extraction(DType.float32(), "values"); return gather_values<float>(self.cpu_storage().float_values(), self.current_layout) }
     func int8_values() int8[] { self.require_extraction(DType.int8(), "int8_values"); return gather_values<int8>(self.cpu_storage().int8_values(), self.current_layout) }
     func uint8_values() uint8[] { self.require_extraction(DType.uint8(), "uint8_values"); return gather_values<uint8>(self.cpu_storage().uint8_values(), self.current_layout) }
