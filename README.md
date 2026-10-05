@@ -43,6 +43,7 @@ silex install Tensor
 - [French extremum index guide](Docs/FR/IndexedReductions.md) · [English](Docs/EN/IndexedReductions.md)
 - [French sequence guide](Docs/FR/Sequences.md) · [English](Docs/EN/Sequences.md)
 - [French sequence visibility guide](Docs/FR/SequenceMasks.md) · [English](Docs/EN/SequenceMasks.md)
+- [French attention guide](Docs/FR/Attention.md) · [English](Docs/EN/Attention.md)
 - [French masked softmax guide](Docs/FR/MaskedSoftmax.md) · [English](Docs/EN/MaskedSoftmax.md)
 - [French mask guide](Docs/FR/Masks.md) · [English](Docs/EN/Masks.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)

@@ -1,0 +1,52 @@
+use Tensor
+use Tensor.DType
+use STD.Math
+
+public struct AttentionResult {
+    var output:Tensor
+    var weights:Tensor?
+}
+
+public func attention(query:Tensor, key:Tensor, value:Tensor, mask:Tensor? = null, scale:float? = null, return_weights:bool = false) AttentionResult {
+    if query.dtype()!=DType.float32() || key.dtype()!=DType.float32() || value.dtype()!=DType.float32() {
+        panic("Tensor.Neural.attention inputs must use dtype float32")
+    }
+    if (query.rank()!=3 && query.rank()!=4) || key.rank()!=query.rank() || value.rank()!=query.rank() {
+        panic("Tensor.Neural.attention requires matching rank 3 or rank 4 inputs")
+    }
+    if !query.has_same_placement(key) || !query.has_same_placement(value) {
+        panic("Tensor.Neural.attention inputs must share placement and GPU device")
+    }
+    let sequence_axis=query.rank()-2
+    let feature_axis=query.rank()-1
+    var axis=0
+    while axis<sequence_axis {
+        if query.shape()[axis]!=key.shape()[axis] || query.shape()[axis]!=value.shape()[axis] {
+            panic("Tensor.Neural.attention batch and head dimensions must match")
+        }
+        axis++
+    }
+    if query.shape()[feature_axis]<=0 || query.shape()[feature_axis]!=key.shape()[feature_axis] {
+        panic("Tensor.Neural.attention query and key features must be positive and equal")
+    }
+    if key.shape()[sequence_axis]!=value.shape()[sequence_axis] {
+        panic("Tensor.Neural.attention key and value sequence lengths must match")
+    }
+    var factor=1.0/Math.sqrt(query.shape()[feature_axis] as float)
+    if let requested=scale {
+        if !Math.is_finite(requested) {panic("Tensor.Neural.attention scale must be finite")}
+        factor=requested
+    }
+    let scores=query.matmul(transpose_attention_keys(key)).multiply(factor)
+    let visibility=mask ?? scores.autograd_constant(0.0).equal(0.0)
+    let weights=scores.masked_softmax(visibility,axis:feature_axis)
+    let output=weights.matmul(value)
+    var selected:Tensor?=null
+    if return_weights {selected=weights}
+    return AttentionResult(output:output,weights:selected)
+}
+
+local func transpose_attention_keys(key:Tensor) Tensor {
+    if key.rank()==3 {return key.permute([0,2,1])}
+    return key.permute([0,1,3,2])
+}

@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Appliquez une [attention self/cross aux valeurs](Attention.md).
 - Normalisez les [scores avec un softmax masqué stable](MaskedSoftmax.md).
 - Construisez les [masques de longueurs et de causalité](SequenceMasks.md).
 - Apprenez des [vecteurs d’embedding avec padding](Embeddings.md).

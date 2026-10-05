@@ -102,3 +102,14 @@ rows are zero. No external framework, weights, transpose or gate ordering.
 and absolute tolerance 0.000002. The generated CPU/Metal consumer is hermetic.
 Regenerate voluntarily with `python3 Tools/Oracle/masked_softmax_decimal.py`,
 then check with the same command plus `--check` and review both diffs.
+
+## Scaled attention Decimal fixture
+
+`attention_decimal.py` uses standard-library Decimal at 60 digits to compute
+small finite Q/K dot products, direct exp normalization, value aggregation and
+closed-form Q/K/V derivatives with a nonuniform output seed. Explicit and default
+scales, partial visibility and an empty row are pinned in `ATTENTION_REPORT.json`.
+Conversion is direct row-major, with no parameter transpose, bias or gate ordering.
+`AttentionOracle.sx` is a hermetic CPU/Metal consumer with absolute tolerance
+0.000002. Check with `python3 Tools/Oracle/attention_decimal.py --check`; review
+report and generated source together after deliberate regeneration.

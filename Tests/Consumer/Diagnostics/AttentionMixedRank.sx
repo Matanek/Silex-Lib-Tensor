@@ -1,0 +1,6 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func main() {let result=Neural.attention(Tensor.ones([1,2,2]),Tensor.ones([1,1,3,2]),Tensor.ones([1,3,1]))}

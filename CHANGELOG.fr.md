@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.attention` compose les produits Q/K/V et le softmax masqué en self/cross-attention batch-first de rang3/4. Poids optionnels différentiables, gradients partagés, formes vides et calcul CPU/Metal résident ; voir le [guide](Docs/FR/Attention.md).
+
 - `Tensor.masked_softmax(mask,axis)` normalise les scores visibles finis et définit des sorties/gradients nuls pour les positions et lignes entièrement masquées. Non-finis exclus ignorés, formes vides et calcul CPU/Metal résident qualifiés par oracle et gradcheck ; voir le [guide](Docs/FR/MaskedSoftmax.md).
 
 - Masques de séquence `Neural.sequence_mask` et `Neural.causal_mask` : booléens CPU, préfixes et positions exactes, offset explicite, composition et transfert GPU explicites ; gradients des sélections qualifiés CPU/Metal.

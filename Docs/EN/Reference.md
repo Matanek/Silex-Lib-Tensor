@@ -17,6 +17,7 @@ contract.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| `Neural.attention` | `float32`, rank3/4 | same, resident computation | Q/K/V and optional weights |
 | `Neural.Embedding` | `int32` indices, `float32` weight | same, resident computation | dense weight; stopped padding derivative |
 | `Neural.sequence_mask`, `Neural.causal_mask` | booleans built from `int` metadata | explicit transfer, resident logic | detached; `true` allows |
 | numeric comparisons | all nine | `float32` | no, detached boolean output |
@@ -152,3 +153,7 @@ parameter checkpoint remains separate and compatible.
 ## Masked softmax
 
 `tensor.masked_softmax(mask:Tensor,axis:int)`: boolean visibility broadcast to float32 scores, finite visible-value normalization, excluded positions/rows have zero output and gradient. Shapes, placements and limits in the [guide](MaskedSoftmax.md).
+
+## Attention
+
+`Neural.attention(query,key,value,mask:null,scale:null,return_weights:false)`: batch-first rank3/4 computation, finite scale, boolean visibility and optional weights. Empty shapes, shared gradients and placement in the [guide](Attention.md).

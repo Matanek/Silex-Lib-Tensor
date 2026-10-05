@@ -1,0 +1,124 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func attention_near(actual:Tensor, expected:float[], tolerance:float = 0.00001) {
+    let values=actual.detach().cpu().values()
+    assert(values.count()==expected.count())
+    var i=0;while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<=tolerance);i++}
+}
+func attention_witness(device:GPU.Device?) {
+    var queries:float[]=[1.0,0.0,0.0,1.0]
+    var keys:float[]=[1.0,0.0,0.0,1.0,1.0,1.0]
+    var values:float[]=[2.0,4.0,6.0,8.0,10.0,12.0]
+    var flags:bool[]=[false,false,false,true,true,false]
+    var q=Tensor(queries,[1,2,2]);var k=Tensor(keys,[1,3,2]);var v=Tensor(values,[1,3,2]);var mask=Tensor(flags,[1,2,3])
+    if let gpu=device {q=q.to(gpu);k=k.to(gpu);v=v.to(gpu);mask=mask.to(gpu)}
+    var query=Autograd.Variable(q);var key=Autograd.Variable(k);var value=Autograd.Variable(v)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let result=Neural.attention(query.value(),key.value(),value.value(),mask:mask,scale:0.0,return_weights:true)
+    var gradients=Autograd.grad(result.output.sum(),[query.value(),key.value(),value.value()])
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    attention_near(result.output,[0.0,0.0,4.0,6.0])
+    if let weights=result.weights {attention_near(weights,[0.0,0.0,0.0,0.5,0.5,0.0])}
+    else {panic("expected attention weights")}
+    attention_near(gradients[0],[0.0,0.0,0.0,0.0]);attention_near(gradients[1],[0.0,0.0,0.0,0.0,0.0,0.0]);attention_near(gradients[2],[0.5,0.5,0.5,0.5,0.0,0.0])
+    if let p=profile {p.reset()}
+    let plain=Neural.attention(q,k,v,scale:0.0)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    assert(plain.weights==null)
+    attention_near(plain.output,[6.0,8.0,6.0,8.0])
+}
+test "cross attention zero scale optional weights and all false row have exact CPU values and gradients" {attention_witness(null)}
+test "cross attention zero scale optional weights and all false row stay resident on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));attention_witness(device)
+}
+
+func attention_function(inputs:Tensor[]) Tensor {
+    var flags:bool[]=[false,false,false,true,false,true]
+    return Neural.attention(inputs[0],inputs[1],inputs[2],mask:Tensor(flags,[1,2,3]),scale:0.5).output
+}
+test "attention full QKV Jacobian agrees with finite differences" {
+    var q:float[]=[0.125,-0.5,0.75,0.25]
+    var k:float[]=[0.5,1.25,-0.75,0.125,0.25,-0.5]
+    var v:float[]=[1.5,-0.25,0.5,0.75,-1.25,2.0]
+    let check=Autograd.gradcheck(attention_function,[Tensor(q,[1,2,2]),Tensor(k,[1,3,2]),Tensor(v,[1,3,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==64)
+}
+func attention_shared_function(inputs:Tensor[]) Tensor {
+    let result=Neural.attention(inputs[0],inputs[0],inputs[0],scale:-0.5,return_weights:true)
+    if let weights=result.weights {return result.output.sum().add(weights.multiply(weights).sum())}
+    panic("expected attention weights")
+}
+test "shared QKV and returned weights contribute to one differentiable loss" {
+    var values:float[]=[0.125,-0.5,0.75,0.25]
+    let check=Autograd.gradcheck(attention_shared_function,[Tensor(values,[1,2,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==4)
+    var device:GPU.Device?=null
+    if GPU.Device.is_supported() {device=GPU.Device(GPU.DeviceSettings(debug:true))}
+    var run=0
+    while run<2 {
+        var tensor=Tensor(values,[1,2,2])
+        if run==1 {if let gpu=device {tensor=tensor.to(gpu)} else {return}}
+        var input=Autograd.Variable(tensor)
+        let result=Neural.attention(input.value(),input.value(),input.value(),scale:0.0)
+        var gradients=Autograd.grad(result.output.sum(),[input.value()])
+        attention_near(gradients[0],[1.0,1.0,1.0,1.0]);run++
+    }
+}
+func attention_heads(device:GPU.Device?) {
+    var values:float[]=[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0]
+    var q=Tensor.zeros([2,2,2,2]).permute([0,2,1,3])
+    var k=Tensor.zeros([2,3,2,2]).permute([0,2,1,3])
+    var v=Tensor(values,[2,2,3,1])
+    var mask=Neural.sequence_mask([2,3],3).reshape([2,1,1,3]).logical_and(Neural.causal_mask(2,3,query_offset:1))
+    if let gpu=device {q=q.to(gpu);k=k.to(gpu);v=v.to(gpu);mask=mask.to(gpu)}
+    var query=Autograd.Variable(q);var key=Autograd.Variable(k);var value=Autograd.Variable(v)
+    let result=Neural.attention(query.value(),key.value(),value.value(),mask:mask,return_weights:true)
+    assert(result.output.rank()==4 && result.output.shape()[0]==2 && result.output.shape()[1]==2 && result.output.shape()[2]==2 && result.output.shape()[3]==1)
+    var gradients=Autograd.grad(result.output.sum(),[query.value(),key.value(),value.value()])
+    attention_near(result.output,[1.5,1.5,4.5,4.5,7.5,8.0,10.5,11.0])
+    attention_near(gradients[2],[1.0,1.0,0.0,1.0,1.0,0.0,5.0/6.0,5.0/6.0,1.0/3.0,5.0/6.0,5.0/6.0,1.0/3.0])
+    assert(gradients[0].abs().sum().cpu().values()[0]==0.0 && gradients[1].abs().sum().cpu().values()[0]==0.0)
+}
+test "rank four attention composes causal and length masks with strided keys on CPU and Metal" {
+    attention_heads(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));attention_heads(device)}
+}
+func attention_empty(device:GPU.Device?, qshape:int[], kshape:int[], vshape:int[]) {
+    var q=Tensor.zeros(qshape);var k=Tensor.zeros(kshape);var v=Tensor.zeros(vshape)
+    if let gpu=device {q=q.to(gpu);k=k.to(gpu);v=v.to(gpu)}
+    var query=Autograd.Variable(q);var key=Autograd.Variable(k);var value=Autograd.Variable(v)
+    let result=Neural.attention(query.value(),key.value(),value.value(),return_weights:true)
+    var gradients=Autograd.grad(result.output.sum(),[query.value(),key.value(),value.value()])
+    var axis=0
+    while axis<qshape.count() {
+        var expected=qshape[axis]
+        if axis==qshape.count()-1 {expected=vshape[axis]}
+        assert(result.output.shape()[axis]==expected)
+        assert(gradients[0].shape()[axis]==qshape[axis] && gradients[1].shape()[axis]==kshape[axis] && gradients[2].shape()[axis]==vshape[axis]);axis++
+    }
+    if let weights=result.weights {
+        var count=kshape[kshape.count()-2];var i=0
+        while i<qshape.count()-1 {count*=qshape[i];i++}
+        assert(weights.count()==count)
+    } else {panic("expected attention weights")}
+    assert(result.output.abs().sum().detach().cpu().values()[0]==0.0)
+    assert(gradients[0].abs().sum().cpu().values()[0]==0.0 && gradients[1].abs().sum().cpu().values()[0]==0.0 && gradients[2].abs().sum().cpu().values()[0]==0.0)
+}
+func attention_empty_cases(device:GPU.Device?) {
+    attention_empty(device,[0,2,2],[0,3,2],[0,3,1])
+    attention_empty(device,[1,0,2],[1,3,2],[1,3,1])
+    attention_empty(device,[1,2,2],[1,0,2],[1,0,1])
+    attention_empty(device,[1,0,2,2],[1,0,3,2],[1,0,3,1])
+    attention_empty(device,[1,2,2],[1,3,2],[1,3,0])
+}
+test "empty batch heads queries and keys preserve output and all gradient shapes on CPU and Metal" {
+    attention_empty_cases(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));attention_empty_cases(device)}
+}
