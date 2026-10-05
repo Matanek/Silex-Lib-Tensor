@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([2]).repeat([9223372036854775807]); print(result.count()) }

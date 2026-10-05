@@ -110,6 +110,74 @@ public struct Tensor {
         let result = Tensor.from_storage(self.current_storage, self.current_layout.reshaped(shape))
         return autograd_record_reshape(result, self)
     }
+    func unsqueeze(axis:int) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.unsqueezed(axis))
+        return autograd_record_reshape(result, self)
+    }
+    func squeeze(axis:int) Tensor {
+        let result = Tensor.from_storage(self.current_storage, self.current_layout.squeezed(axis))
+        return autograd_record_reshape(result, self)
+    }
+    func squeeze() Tensor {
+        var result = self
+        var axis = self.rank() - 1
+        while axis >= 0 {
+            if result.shape()[axis] == 1 { result = result.squeeze(axis) }
+            axis--
+        }
+        return result
+    }
+    func expand(shape:int[]) Tensor {
+        let layout = self.current_layout.expanded(shape)
+        let size = checked_byte_count(layout.count(), self.dtype().byte_width())
+        let result = Tensor.from_storage(self.current_storage, layout)
+        return autograd_record_expand(result, self)
+    }
+    func repeat(repeats:int[]) Tensor {
+        if repeats.count() < self.rank() { panic("Tensor.repeat requires at least one factor per input axis") }
+        let missing = repeats.count() - self.rank()
+        var shape:int[] = []
+        var axis = 0
+        while axis < repeats.count() {
+            if repeats[axis] < 0 { panic("Tensor.repeat factors must be non-negative") }
+            var dimension = 1
+            if axis >= missing { dimension = self.shape()[axis - missing] }
+            shape.append(checked_product(dimension, repeats[axis], "Tensor.repeat axis size overflows int"))
+            axis++
+        }
+        let layout = Layout(shape)
+        let size = checked_byte_count(layout.count(), self.dtype().byte_width())
+        var result = self
+        axis = 0
+        while axis < missing { result = result.unsqueeze(0); axis++ }
+        // Validate every factor before any materialization. Empty repetitions retain provenance.
+        axis = 0
+        while axis < repeats.count() {
+            if repeats[axis] == 0 { result = result.narrow(axis, 0, 0) }
+            axis++
+        }
+        if result.is_empty() { return result.materialized().reshape(shape) }
+        result = result.materialized()
+        axis = 0
+        while axis < repeats.count() {
+            var remaining = repeats[axis] - 1
+            var tile = result
+            while remaining > 0 {
+                if remaining % 2 == 1 { result = result.concatenate_pair(tile, axis) }
+                remaining /= 2
+                if remaining > 0 { tile = tile.concatenate_pair(tile, axis) }
+            }
+            axis++
+        }
+        return result
+    }
+    private func materialized() Tensor {
+        let result = match self.current_storage {
+            cpu(value) => Tensor.from_storage(Storage.cpu(value.materialized(self.current_layout)), Layout(self.shape()))
+            gpu(value) => Tensor.from_storage(Storage.gpu(value.contiguous(self.current_layout)), Layout(self.shape()))
+        }
+        return autograd_record_contiguous(result, self)
+    }
     func flatten() Tensor { return self.reshape(vector_shape(self.count())) }
     func permute(axes:int[]) Tensor {
         let result = Tensor.from_storage(self.current_storage, self.current_layout.permuted(axes))

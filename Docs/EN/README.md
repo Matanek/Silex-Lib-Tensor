@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Adapt [shapes to batches](Shapes.md) through views or repetition.
 - Calculate and [check functional gradients](Gradients.md) without changing slots.
 - Select [values with masks](Masks.md), with branch gradients.
 - Observe [GPU costs by period](Profiling.md) before optimizing a chain.

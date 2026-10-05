@@ -7,6 +7,7 @@ enum AutogradRule {
     scalar(AutogradInput, float, BinaryOperation)
     unary(AutogradInput, Tensor, UnaryOperation)
     reshape(AutogradInput)
+    expand(AutogradInput)
     permute(AutogradInput, int[])
     select(AutogradInput, int, int)
     narrow(AutogradInput, int, int, int)
@@ -346,6 +347,10 @@ func autograd_record_reshape(result:Tensor, input:Tensor) Tensor {
     return autograd_record(result, AutogradRule.reshape(autograd_input(input)))
 }
 
+func autograd_record_expand(result:Tensor, input:Tensor) Tensor {
+    return autograd_record(result, AutogradRule.expand(autograd_input(input)))
+}
+
 func autograd_record_permute(result:Tensor, input:Tensor, axes:int[]) Tensor {
     return autograd_record(result, AutogradRule.permute(autograd_input(input), copy axes))
 }
@@ -421,6 +426,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
         scalar(input, value, operation) => { append_autograd_parent(input, result) }
         unary(input, output, operation) => { append_autograd_parent(input, result) }
         reshape(input) => { append_autograd_parent(input, result) }
+        expand(input) => { append_autograd_parent(input, result) }
         permute(input, axes) => { append_autograd_parent(input, result) }
         select(input, axis, index) => { append_autograd_parent(input, result) }
         narrow(input, axis, start, count) => { append_autograd_parent(input, result) }
@@ -505,7 +511,8 @@ func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
         binary(left, right, operation) => backward_binary(left, right, operation, gradient)
         scalar(input, value, operation) => backward_scalar(input, value, operation, gradient)
         unary(input, output, operation) => backward_unary(input, output, operation, gradient)
-        reshape(input) => one_contribution(input, gradient.reshape(input.value.shape()))
+        reshape(input) => one_contribution(input, gradient.contiguous().reshape(input.value.shape()))
+        expand(input) => one_contribution(input, reduce_autograd_shape(gradient, input.value.shape()))
         permute(input, axes) => one_contribution(input, gradient.permute(inverse_axes(axes)))
         select(input, axis, index) => one_contribution(input, backward_select(input.value, gradient, axis, index))
         narrow(input, axis, start, count) => one_contribution(input, backward_narrow(input.value, gradient, axis, start, count))

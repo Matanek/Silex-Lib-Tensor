@@ -1,0 +1,198 @@
+use Tensor
+use Tensor.Autograd
+
+func repeat_loss(inputs:Tensor[]) Tensor { return inputs[0].transpose().repeat([2,3]).multiply(inputs[0].transpose().repeat([2,3])).sum() }
+
+test "unit dimensions preserve noncontiguous shape strides and offsets" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let view = Tensor(data,[2,3]).transpose().narrow(0,1,2)
+    let expanded = view.unsqueeze(1)
+    assert(expanded.shape()[0] == 2 && expanded.shape()[1] == 1 && expanded.shape()[2] == 2)
+    assert(expanded.offset() == 1 && expanded.strides()[0] == 1 && expanded.strides()[2] == 3)
+    let restored = expanded.squeeze(1)
+    assert(restored.values()[0] == 2.0 && restored.values()[3] == 6.0 && !restored.is_contiguous())
+    assert(Tensor.scalar(2.0).unsqueeze(0).unsqueeze(0).squeeze().rank() == 0)
+    assert(Tensor.zeros([0,1,2]).squeeze().shape()[0] == 0)
+}
+
+test "expansion uses zero strides including leading axes and empty domains" {
+    var data:float[] = [1.0,2.0,3.0]
+    let input = Tensor.vector(data)
+    let expanded = input.expand([2,3])
+    assert(expanded.strides()[0] == 0 && expanded.strides()[1] == 1 && !expanded.is_contiguous())
+    assert(expanded.values()[0] == 1.0 && expanded.values()[3] == 1.0 && expanded.values()[5] == 3.0)
+    assert(expanded.contiguous().reshape([6]).values()[4] == 2.0)
+    assert(Tensor.scalar(4.0).expand([2,3]).values()[5] == 4.0)
+    assert(Tensor.ones([1,3]).expand([0,3]).count() == 0)
+    assert(Tensor.zeros([0,3]).expand([2,0,3]).count() == 0)
+}
+
+test "repeat tiles logical values and materializes zero and unit factors" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let input = Tensor(data,[2,3]).transpose()
+    let repeated = input.repeat([2,3])
+    assert(repeated.shape()[0] == 6 && repeated.shape()[1] == 6 && repeated.is_contiguous())
+    let values = repeated.values()
+    var row = 0
+    while row < 6 {
+        var col = 0
+        while col < 6 { assert(values[row*6+col] == data[(col%2)*3+row%3]); col++ }
+        row++
+    }
+    assert(input.repeat([1,1]).is_contiguous())
+    assert(input.repeat([0,3]).shape()[1] == 6 && input.repeat([0,3]).count() == 0)
+    assert(Tensor.scalar(4.0).repeat([]).item() == 4.0)
+    assert(Tensor.scalar(4.0).repeat([2,3]).values()[5] == 4.0)
+    assert(Tensor.vector(data).repeat([2,1]).shape()[0] == 2)
+}
+
+test "expanded and repeated branches reduce gradients without slot writes" {
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    var gradients = Autograd.grad(input.value().expand([2,3]).sum().add(input.value().repeat([4]).sum()),[input.value()])
+    assert(gradients[0].values()[0] == 6.0 && gradients[0].values()[2] == 6.0 && input.gradient() == null)
+    var empty = Autograd.grad(input.value().unsqueeze(0).expand([0,3]).sum(),[input.value()])
+    assert(empty[0].values()[1] == 0.0)
+    var zero = Autograd.grad(input.value().repeat([0]).sum(),[input.value()])
+    assert(zero[0].values()[2] == 0.0)
+}
+
+func views_loss(inputs:Tensor[]) Tensor { return inputs[0].transpose().unsqueeze(0).expand([2,3,2]).multiply(inputs[0].transpose().unsqueeze(0).expand([2,3,2])).sum() }
+test "shape gradients match independent central differences" {
+    var data:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let views = Autograd.gradcheck(views_loss,[Tensor(data,[2,3])],epsilon:0.01,absolute_tolerance:0.03,relative_tolerance:0.002)
+    let repeated = Autograd.gradcheck(repeat_loss,[Tensor(data,[2,3])],epsilon:0.01,absolute_tolerance:0.04,relative_tolerance:0.003)
+    assert(views.passed && repeated.passed)
+}
+
+test "shape backward accepts noncontiguous seeds" {
+    var input = Autograd.Variable(Tensor.ones([2,3]))
+    var seed_values:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let output = input.value().transpose().unsqueeze(0)
+    let seed = Tensor(seed_values,[2,3]).transpose().unsqueeze(0)
+    var gradients = Autograd.grad(output,[input.value()],seed:seed)
+    assert(gradients[0].values()[4] == 5.0)
+}
+
+use Tensor.DType
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func verify_shape_dtype(input:Tensor) {
+    let output = input.transpose().unsqueeze(0).expand([2,3,2]).repeat([1,1,2])
+    assert(output.dtype() == input.dtype() && output.is_contiguous())
+    let host = output.cpu()
+    if input.dtype().is_boolean() {
+        let actual = host.bool_values()
+        let source = input.cpu().bool_values()
+        var i = 0
+        while i < actual.count() { assert(actual[i] == source[(i%2)*3+(i/4)%3]); i++ }
+    } else {
+        let actual = host.cast(DType.float32()).values()
+        let source = input.cpu().cast(DType.float32()).values()
+        var i = 0
+        while i < actual.count() { assert(actual[i] == source[(i%2)*3+(i/4)%3]); i++ }
+    }
+}
+
+test "shape adaptation preserves all CPU dtypes and boolean values" {
+    var values:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    var types:DType[] = [DType.float32(),DType.int8(),DType.uint8(),DType.int16(),DType.uint16(),DType.int32(),DType.uint32(),DType.int64(),DType.uint64()]
+    for dtype in types { verify_shape_dtype(Tensor(values,[2,3]).cast(dtype)) }
+    var flags:bool[] = [true,false,false,true,true,false]
+    verify_shape_dtype(Tensor(flags,[2,3]))
+    var limits:uint64[] = [18446744073709551615,18446744073709551614]
+    let exact = Tensor.vector(limits).unsqueeze(0).expand([3,2]).repeat([2,1]).uint64_values()
+    assert(exact[0] == limits[0] && exact[11] == limits[1])
+}
+
+test "repeat factors beyond powers of two preserve full tiles" {
+    var values:float[] = [1.0,2.0]
+    var factor = 1
+    while factor < 10 {
+        let result = Tensor.vector(values).repeat([factor]).values()
+        var i = 0
+        while i < result.count() { assert(result[i] == values[i%2]); i++ }
+        factor++
+    }
+    assert(Tensor.zeros([0,2]).repeat([3,4]).shape()[1] == 8)
+}
+
+test "shape views emit no GPU commands or buffers" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let source = Tensor.ones([2,3]).to(device)
+    var profile = Profile(device)
+    let view = source.transpose().unsqueeze(0).expand([4,3,2]).unsqueeze(1).squeeze(1)
+    let snapshot = profile.snapshot()
+    assert(snapshot.buffer_allocations == 0 && snapshot.uploads == 0 && snapshot.downloads == 0 && snapshot.submissions == 0)
+    assert(view.is_gpu() && view.strides()[0] == 0)
+}
+
+test "GPU shape tiling keeps numeric and boolean dtypes exact" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    var types:DType[] = [DType.float32(),DType.int8(),DType.uint8(),DType.int16(),DType.uint16(),DType.int32(),DType.uint32(),DType.int64(),DType.uint64()]
+    for dtype in types { verify_shape_dtype(Tensor(values,[2,3]).cast(dtype).to(device)) }
+    var flags:bool[] = [true,false,false,true,true,false]
+    verify_shape_dtype(Tensor(flags,[2,3]).to(device))
+    var limits:uint64[] = [18446744073709551615,18446744073709551614]
+    let exact = Tensor.vector(limits).to(device).unsqueeze(0).expand([3,2]).repeat([2,1]).cpu().uint64_values()
+    assert(exact[0] == limits[0] && exact[11] == limits[1])
+}
+
+test "GPU shape gradients remain resident and match analytical derivatives" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var data:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(data).to(device))
+    var profile = Profile(device)
+    let view = input.value().unsqueeze(0).expand([2,3])
+    let output = view.repeat([3,2]).multiply(view.repeat([3,2])).sum()
+    var gradients = Autograd.grad(output,[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    let actual = gradients[0].cpu().values()
+    assert(Math.abs(actual[0]-24.0) < 0.003 && Math.abs(actual[1]-48.0) < 0.003 && Math.abs(actual[2]-72.0) < 0.003)
+    assert(input.gradient() == null)
+}
+
+test "GPU empty repeats produce correct shapes and zero resident gradients" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var input = Autograd.Variable(Tensor.ones([2,3]).to(device))
+    var profile = Profile(device)
+    let output = input.value().repeat([0,4])
+    assert(output.shape()[0] == 0 && output.shape()[1] == 12)
+    var gradients = Autograd.grad(output.sum(),[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    let actual = gradients[0].cpu().values()
+    for value in actual { assert(value == 0.0) }
+}
+
+test "unit repeat allocates materialized GPU storage" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let source = Tensor.ones([2,3]).to(device)
+    var profile = Profile(device)
+    let result = source.repeat([1,1])
+    assert(result.is_gpu() && result.is_contiguous())
+    assert(profile.snapshot().buffer_allocations == 1 && profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+}
+
+test "expanded rank five gradients and GPU strided seeds preserve placement" {
+    var data:float[] = [1.0,2.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    var gradients = Autograd.grad(input.value().expand([2,2,2,2,2]).sum(),[input.value()])
+    assert(gradients[0].values()[0] == 16.0 && gradients[0].values()[1] == 16.0)
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var gpu = Autograd.Variable(Tensor.ones([2,3]).to(device))
+    var values:float[] = [1.0,2.0,3.0,4.0,5.0,6.0]
+    let seed = Tensor(values,[2,3]).to(device).transpose().unsqueeze(0)
+    var profile = Profile(device)
+    var actual = Autograd.grad(gpu.value().transpose().unsqueeze(0),[gpu.value()],seed:seed)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(actual[0].cpu().values()[4] == 5.0)
+}

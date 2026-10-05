@@ -114,3 +114,10 @@ Functional gradients add the following fixtures:
 - `GradcheckShape`: the callback keeps a stable output shape.
 
 Each name refers to the corresponding `.sx` file.
+
+Shape adaptation adds `UnsqueezeAxis`, `UnsqueezeNegative`, `SqueezeAxis`, and
+`SqueezeDimension` for valid nonnegative axes and unit dimensions;
+`ExpandRank`, `ExpandDimension`, `ExpandEmpty`, and `ExpandNegative` for exact
+broadcast views; `ExpandOverflow` and `ExpandBytes` for logical sizes;
+`RepeatRank`, `RepeatNegative`, `RepeatOverflow`, and `RepeatBytes` for checked
+tiling factors and sizes. Each name refers to its `.sx` fixture.

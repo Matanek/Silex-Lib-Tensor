@@ -98,6 +98,40 @@ struct Layout {
         return result
     }
 
+    func unsqueezed(axis:int) Layout {
+        if axis < 0 || axis > self.rank() { panic("Tensor.unsqueeze axis is outside the result rank") }
+        var shape = self.dimensions
+        var strides = self.stride_values
+        shape.insert(axis, 1)
+        strides.insert(axis, 0)
+        return Layout(shape, strides, self.start)
+    }
+
+    func squeezed(axis:int) Layout {
+        require_axis(axis, self.rank(), "squeeze")
+        if self.dimensions[axis] != 1 { panic("Tensor.squeeze requires a unit dimension") }
+        return self.selected(axis, 0)
+    }
+
+    func expanded(shape:int[]) Layout {
+        let count = shape_product(shape)
+        if shape.count() < self.rank() { panic("Tensor.expand requires a shape with at least the input rank") }
+        var strides:int[] = []
+        let missing = shape.count() - self.rank()
+        var axis = 0
+        while axis < shape.count() {
+            if axis < missing { strides.append(0) }
+            else {
+                let source = axis - missing
+                if self.dimensions[source] == shape[axis] { strides.append(self.stride_values[source]) }
+                elif self.dimensions[source] == 1 { strides.append(0) }
+                else { panic("Tensor.expand dimensions must match or expand a unit dimension") }
+            }
+            axis++
+        }
+        return Layout(shape, strides, self.start)
+    }
+
     func reshaped(requested:int[]) Layout {
         if !self.is_contiguous() {
             panic("Tensor.reshape requires a contiguous tensor; call contiguous().reshape(shape)")

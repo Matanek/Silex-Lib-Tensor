@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.ones([2]).squeeze(0); print(result.count()) }

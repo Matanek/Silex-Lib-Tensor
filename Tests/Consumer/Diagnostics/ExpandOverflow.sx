@@ -1,0 +1,2 @@
+use Tensor
+func main() { let result = Tensor.scalar(1.0).expand([9223372036854775807,2]); print(result.count()) }

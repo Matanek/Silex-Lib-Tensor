@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Adaptez les [formes aux lots](Shapes.md) par vues ou répétitions.
 - Commencez ici pour construire, transformer, calculer, dériver et entraîner.
 - Consultez la [référence de compatibilité](Reference.md) pour les dtypes,
   placements, opérations, erreurs et tolérances.

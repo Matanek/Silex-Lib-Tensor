@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Ajout de `squeeze`, `unsqueeze` et `expand` en vues exactes, et `repeat` en
+  tuiles matérialisées, sur les neuf dtypes numériques et booléens CPU/GPU.
+  Gradients float32 résidents, axes/facteurs/formes validés et domaines vides
+  définis. Le backward de reshape accepte les seeds non contiguës. Voir le
+  [guide des formes](Docs/FR/Shapes.md).
+
 - `Tensor.Autograd.grad` retourne des gradients détachés CPU/GPU sans modifier
   les slots, avec seed explicite et zéro optionnel pour les entrées inutilisées.
   Le graphe est consommé après réussite. `Autograd.gradcheck` contrôle le Jacobien

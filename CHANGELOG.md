@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Add exact `squeeze`, `unsqueeze`, and `expand` views, and materialized
+  `repeat` tiles, for all nine numeric dtypes and booleans on CPU/GPU. Resident
+  float32 gradients, validated axes/factors/shapes, and defined empty domains.
+  Reshape backward accepts noncontiguous seeds. See the [shape guide](Docs/EN/Shapes.md).
+
 - `Tensor.Autograd.grad` returns detached CPU/GPU gradients without changing
   slots, with an explicit seed and optional zeros for unused inputs. The graph
   is consumed after success. `Autograd.gradcheck` checks a deterministic function’s

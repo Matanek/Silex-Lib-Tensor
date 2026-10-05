@@ -21,6 +21,7 @@ contract.
 | boolean equality, logic | booleans | booleans | no |
 | `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
 | `masked_select` | all nine + booleans | explicit rejection | `float32` source |
+| unit dimensions, `expand`, `repeat` | all nine + booleans | all nine + booleans | float32 |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
@@ -96,3 +97,5 @@ Model and checkpoint limits are summarized in the
 
 The [functional gradient guide](Gradients.md) explains preserved slots, seeds,
 graph consumption, and Jacobian checking.
+
+[Shapes, views, and tiles](Shapes.md): axes, empty dimensions, and gradients.

@@ -1,0 +1,15 @@
+use Tensor
+use Tensor.Autograd
+
+func main() {
+    var values:float[] = [1.0,2.0,3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    let batch = input.value().unsqueeze(0).expand([2,3])
+    let tiled = batch.repeat([2,1])
+    assert(batch.strides()[0] == 0 && tiled.is_contiguous())
+    var gradients = Autograd.grad(tiled.multiply(tiled).sum(),[input.value()])
+    let actual = gradients[0].values()
+    assert(actual[0] == 8.0 && actual[1] == 16.0 && actual[2] == 24.0)
+    assert(input.gradient() == null)
+    assert(input.value().unsqueeze(0).squeeze(0).rank() == 1)
+}
