@@ -1,0 +1,42 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+use STD.Math
+use Tensor.Profile
+use GFX.GPU
+
+nocopy class RegisteredResidual:Neural.Layer {
+    private var block:Neural.Dense
+    private var scale:Neural.Buffer
+    init(block:Neural.Dense, scale:Neural.Buffer) {
+        self.block = block
+        self.scale = scale
+        self.register_child("block",block)
+        self.register_buffer(scale)
+    }
+    override func forward(input:Tensor) Tensor { return input.add(self.block.forward(input).multiply(self.scale.value())) }
+}
+
+func main() {
+    var block = Neural.Dense("shared",1,1,seed:0)
+    var weights = block.parameters()
+    weights[0].replace(Tensor.full([1,1],2.0)); weights[1].replace(Tensor.full([1],1.0))
+    var scale = Neural.Buffer("scale",Tensor.scalar(1.0))
+    var left = RegisteredResidual(block,scale)
+    var right = RegisteredResidual(block,scale)
+    var branches:Neural.Layer[] = [left,right]
+    var model = Neural.Sequential(branches)
+    assert(model.parameters().count() == 2 && model.buffers().count() == 1)
+    assert(model.parameters()[0] == weights[0] && model.buffers()[0] == scale)
+    assert(GPU.Device.is_supported())
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    block.to(device); scale.to(device)
+    let input = Tensor.ones([1,1]).to(device)
+    var profile = Profile(device)
+    var optimizer = Optim.SGD(model.parameters(),learning_rate:0.1)
+    left.forward(input).add(right.forward(input)).sum().backward()
+    optimizer.step()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(Math.abs(weights[0].value().detach().cpu().item()-1.8) < 0.00001)
+    assert(scale.value().cpu().item() == 1.0)
+}

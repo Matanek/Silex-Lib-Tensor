@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Les couches enregistrent explicitement paramètres, buffers et enfants nommés.
+  La collecte héritée conserve ordre et noms, déduplique les identités partagées,
+  refuse cycles et collisions ; Sequential collecte l’état partagé une fois
+  tout en exécutant la couche à chaque occurrence. Hooks d’état encore explicites. Voir le
+  [guide du registre](Docs/FR/Registration.md).
+
 - Ajout de `Neural.Buffer` détaché, nommé et partagé, avec remplacement contrôlé
   et transferts exacts CPU/GPU. `Parameter.freeze/unfreeze/is_trainable` suspend
   les nouveaux gradients, mises à jour, décroissance, clipping et états SGD/Adam,

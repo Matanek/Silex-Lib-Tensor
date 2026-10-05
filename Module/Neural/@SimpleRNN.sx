@@ -26,6 +26,9 @@ public nocopy class SimpleRNN:Layer {
             nn_xavier([hidden_features, hidden_features], hidden_features, hidden_features, randomizer)
         )
         self.bias = Parameter(name + ".bias", Tensor.zeros([hidden_features]))
+        self.register_parameter(self.input_weight)
+        self.register_parameter(self.recurrent_weight)
+        self.register_parameter(self.bias)
     }
 
     override func forward(input:Tensor) Tensor { return self.forward(input, null) }
@@ -58,9 +61,6 @@ public nocopy class SimpleRNN:Layer {
         return state
     }
 
-    override func parameters() Parameter[] {
-        return [self.input_weight, self.recurrent_weight, self.bias]
-    }
     override func to(device:GPU.Device) {
         self.input_weight.to(device)
         self.recurrent_weight.to(device)

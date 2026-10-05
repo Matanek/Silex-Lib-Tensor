@@ -76,6 +76,7 @@ avec leurs contrôles habituels de gradient vide, dtype, forme et placement.
 Pour observer sa valeur GPU, utilisez `parameter.value().detach().cpu()`.
 
 La [composition des couches](Composition.md) présente les hooks à relayer
-manuellement. Ces primitives n’enregistrent pas automatiquement l’état d’une
-couche ; le checkpoint actuel sauvegarde uniquement ses paramètres, sans
+manuellement. Le [registre des couches](Registration.md)
+collecte explicitement les objets enregistrés ; le checkpoint actuel sauvegarde
+uniquement ses paramètres, sans
 buffers, état de gel ni moments d’optimiseur.

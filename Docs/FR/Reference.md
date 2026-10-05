@@ -109,3 +109,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Progressions et grilles](Sequences.md) : bornes, pas, cardinalité et dtypes.
 
 [Buffers et gel des paramètres](State.md) : détachement, identité, transferts et état conservé des optimiseurs.
+
+[Registre des couches](Registration.md) : enfants nommés, ordre, identités, cycles et collisions.

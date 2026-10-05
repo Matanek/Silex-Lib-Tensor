@@ -109,3 +109,5 @@ graph consumption, and Jacobian checking.
 [Progressions and grids](Sequences.md): bounds, steps, cardinality, and dtypes.
 
 [Buffers and parameter freezing](State.md): detachment, identity, transfers, and retained optimizer state.
+
+[Layer registration](Registration.md): named children, order, identities, cycles, and collisions.

@@ -7,16 +7,9 @@ public nocopy class Sequential:Layer {
     init(layers:Layer[]) {
         if layers.is_empty() { panic("Tensor.Neural.Sequential requires at least one layer") }
         self.layers = layers
-        var parameters = self.parameters()
         var index = 0
-        while index < parameters.count() {
-            var previous = 0
-            while previous < index {
-                if parameters[previous].name() == parameters[index].name() {
-                    panic("Tensor.Neural.Sequential requires unique parameter names; duplicate '$(parameters[index].name())'")
-                }
-                previous++
-            }
+        for layer in layers {
+            self.register_child("layer$(index)",layer)
             index++
         }
     }
@@ -25,16 +18,6 @@ public nocopy class Sequential:Layer {
         var result = input
         var layers = self.layers
         for var layer in layers { result = layer.forward(result) }
-        return result
-    }
-
-    override func parameters() Parameter[] {
-        var result:Parameter[] = []
-        var layers = self.layers
-        for var layer in layers {
-            var parameters = layer.parameters()
-            for parameter in parameters { result.append(parameter) }
-        }
         return result
     }
 

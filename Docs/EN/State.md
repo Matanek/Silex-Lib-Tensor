@@ -75,6 +75,7 @@ usual empty-gradient, dtype, shape, and placement checks. To observe its GPU
 value, use `parameter.value().detach().cpu()`.
 
 The [layer composition guide](Composition.md) explains the hooks to forward
-manually. These primitives do not automatically register a layer’s state; the
-current checkpoint only saves its parameters, without buffers, frozen state,
+manually. [Layer registration](Registration.md)
+collects explicitly registered objects; the current checkpoint only saves its
+parameters, without buffers, frozen state,
 or optimizer moments.

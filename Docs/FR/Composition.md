@@ -70,9 +70,10 @@ sans remplir leurs slots. Sur GPU, les calculs restent résidents ; seuls
 `to(device)` et `cpu()` demandés effectuent les transferts.
 
 Transmettre une couche existante à plusieurs parents conserve son identité.
-Pour l’optimiseur, collectez chaque Parameter partagé une seule fois ; le
-Sequential actuel exige encore des noms uniques dans sa collecte. L’enregistrement
-récursif automatique reste à relayer manuellement. Le [guide des buffers et du gel](State.md)
+Pour l’optimiseur, collectez chaque Parameter partagé une seule fois.
+Sequential déduplique désormais les identités partagées et refuse deux objets
+différents portant le même nom. Le [registre des couches](Registration.md)
+permet d’hériter de cette collecte plutôt que de redéfinir parameters(). Le [guide des buffers et du gel](State.md)
 explique les primitives d’état disponibles.
 La [recette d’entraînement](Recipes/Training.md) explique la boucle existante,
 et le [guide des gradients](Gradients.md) détaille les slots et la consommation

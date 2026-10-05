@@ -1,0 +1,46 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+nocopy class LifetimeRegistry:Neural.Layer {
+    init(weight:Neural.Parameter, buffer:Neural.Buffer) {
+        self.register_parameter(weight)
+        self.register_buffer(buffer)
+    }
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+func registry_lifetime_cycle(device:GPU.Device) {
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0).to(device))
+    var buffer = Neural.Buffer("buffer",Tensor.scalar(3.0).to(device))
+    var shared = LifetimeRegistry(weight,buffer)
+    var first = LifetimeRegistry(weight,buffer); var second = LifetimeRegistry(weight,buffer)
+    first.attach("shared",shared); second.attach("shared",shared)
+    var root = LifetimeRegistry(weight,buffer); root.attach("first",first); root.attach("second",second)
+    var pass = 0
+    while pass < 16 {
+        var parameters = root.parameters(); var buffers = root.buffers(); var children = root.children()
+        assert(parameters.count() == 1 && buffers.count() == 1 && children.count() == 2)
+        parameters[0].value().multiply(buffers[0].value()).backward()
+        parameters[0].zero_grad()
+        pass++
+    }
+}
+
+test "registered shared graphs and collection snapshots release resident resources" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics(); var profile = Profile(device)
+    var cycle = 0
+    while cycle < 32 {
+        registry_lifetime_cycle(device)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        cycle++
+    }
+}

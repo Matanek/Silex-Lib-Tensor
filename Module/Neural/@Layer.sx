@@ -1,15 +1,144 @@
 use GFX.GPU
 use Tensor
 
+class LayerState {
+    var layers:Layer[]
+    var parameters:Parameter[]
+    var buffers:Buffer[]
+    init() { self.layers = []; self.parameters = []; self.buffers = [] }
+
+    func add_parameter(parameter:Parameter) {
+        for existing in self.parameters {
+            if existing == parameter { return }
+            if existing.name() == parameter.name() { panic("Tensor.Neural.Layer duplicate state name '$(parameter.name())'") }
+        }
+        for buffer in self.buffers {
+            if buffer.name() == parameter.name() { panic("Tensor.Neural.Layer duplicate state name '$(parameter.name())'") }
+        }
+        self.parameters.append(parameter)
+    }
+    func add_buffer(buffer:Buffer) {
+        for existing in self.buffers {
+            if existing == buffer { return }
+            if existing.name() == buffer.name() { panic("Tensor.Neural.Layer duplicate state name '$(buffer.name())'") }
+        }
+        for parameter in self.parameters {
+            if parameter.name() == buffer.name() { panic("Tensor.Neural.Layer duplicate state name '$(buffer.name())'") }
+        }
+        self.buffers.append(buffer)
+    }
+}
+
 public nocopy class Layer {
-    protected init() {}
+    private var own_parameters:Parameter[]
+    private var own_buffers:Buffer[]
+    private var child_names:str[]
+    private var child_layers:Layer[]
+
+    protected init() {
+        self.own_parameters = []
+        self.own_buffers = []
+        self.child_names = []
+        self.child_layers = []
+    }
+
+    protected func register_parameter(parameter:Parameter) {
+        var state = self.collect_state()
+        state.add_parameter(parameter)
+        for existing in self.own_parameters { if existing == parameter { return } }
+        self.own_parameters.append(parameter)
+    }
+
+    protected func register_buffer(buffer:Buffer) {
+        var state = self.collect_state()
+        state.add_buffer(buffer)
+        for existing in self.own_buffers { if existing == buffer { return } }
+        self.own_buffers.append(buffer)
+    }
+
+    protected func register_child(name:str, child:Layer) {
+        if name == "" { panic("Tensor.Neural.Layer requires a non-empty child name") }
+        var index = 0
+        while index < self.child_names.count() {
+            if self.child_names[index] == name {
+                if self.child_layers[index] == child { return }
+                panic("Tensor.Neural.Layer duplicate child name '$(name)'")
+            }
+            index++
+        }
+        if child.reaches(self,[]) { panic("Tensor.Neural.Layer cannot register a cycle") }
+        var state = self.collect_state()
+        for parameter in child.parameters() { state.add_parameter(parameter) }
+        for buffer in child.buffers() { state.add_buffer(buffer) }
+        self.child_names.append(name)
+        self.child_layers.append(child)
+    }
+
+    func children() Layer[] {
+        var result:Layer[] = []
+        for child in self.child_layers {
+            var found = false
+            for existing in result { if existing == child { found = true } }
+            if !found { result.append(child) }
+        }
+        return result
+    }
+
+    func child(name:str) Layer? {
+        var index = 0
+        while index < self.child_names.count() {
+            if self.child_names[index] == name { return self.child_layers[index] }
+            index++
+        }
+        return null
+    }
 
     func forward(input:Tensor) Tensor {
         panic("Tensor.Neural.Layer.forward must be implemented by a concrete layer")
     }
-    func parameters() Parameter[] { return [] }
+    func parameters() Parameter[] {
+        if !self.has_registration() { return [] }
+        return self.collect_state().parameters
+    }
+    func buffers() Buffer[] {
+        if !self.has_registration() { return [] }
+        return self.collect_state().buffers
+    }
     func train() {}
     func eval() {}
     func to(device:GPU.Device) {}
     func cpu() {}
+
+    private func has_registration() bool {
+        return !self.own_parameters.is_empty() || !self.own_buffers.is_empty() || !self.child_layers.is_empty()
+    }
+
+    private func collect_state() LayerState {
+        var state = LayerState()
+        self.append_state(state,true)
+        return state
+    }
+
+    private func append_state(state:LayerState, root:bool) {
+        var collected = state
+        for visited in collected.layers { if visited == self { return } }
+        collected.layers.append(self)
+        if !root && !self.has_registration() {
+            for parameter in self.parameters() { collected.add_parameter(parameter) }
+            for buffer in self.buffers() { collected.add_buffer(buffer) }
+            return
+        }
+        for parameter in self.own_parameters { collected.add_parameter(parameter) }
+        for buffer in self.own_buffers { collected.add_buffer(buffer) }
+        for child in self.child_layers { child.append_state(collected,false) }
+    }
+
+    private func reaches(target:Layer, visited:Layer[]) bool {
+        if self == target { return true }
+        for previous in visited { if previous == self { return false } }
+        var next = visited
+        next.append(self)
+        for child in self.child_layers { if child.reaches(target,next) { return true } }
+        return false
+    }
 }

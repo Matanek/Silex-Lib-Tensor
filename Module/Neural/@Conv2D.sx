@@ -31,6 +31,8 @@ public nocopy class Conv2D:Layer {
             )
         )
         self.bias = Parameter(name + ".bias", Tensor.zeros([output_channels]))
+        self.register_parameter(self.weight)
+        self.register_parameter(self.bias)
     }
 
     override func forward(input:Tensor) Tensor {
@@ -43,7 +45,6 @@ public nocopy class Conv2D:Layer {
         )
     }
 
-    override func parameters() Parameter[] { return [self.weight, self.bias] }
     override func to(device:GPU.Device) { self.weight.to(device); self.bias.to(device) }
     override func cpu() { self.weight.cpu(); self.bias.cpu() }
 }

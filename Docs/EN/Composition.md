@@ -69,9 +69,9 @@ On GPU, computation remains resident; only explicitly requested `to(device)`
 and `cpu()` perform transfers.
 
 Passing an existing layer to several parents retains its identity. For the
-optimizer, collect each shared Parameter once; current Sequential still requires
-unique names in its collection. Automatic recursive registration
-still requires manual forwarding. The [buffer and freezing guide](State.md)
+optimizer, collect each shared Parameter once. Sequential now deduplicates shared
+identities and rejects distinct objects with the same name. [Layer registration](Registration.md)
+lets you inherit collection instead of overriding parameters(). The [buffer and freezing guide](State.md)
 explains the available state primitives. The [training recipe](Recipes/Training.md)
 explains the existing loop; the [gradient guide](Gradients.md) details slots and
 graph consumption.

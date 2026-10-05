@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Register [named and shared layer state](Registration.md).
 - Keep a [buffer and freeze a parameter](State.md).
 - Compose an [external layer and share its parameters](Composition.md).
 - Select the [best elements and their gradients](TopK.md).

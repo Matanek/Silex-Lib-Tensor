@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Layers explicitly register parameters, buffers, and named children. Inherited
+  collection preserves order and names, deduplicates shared identities, and rejects
+  cycles and collisions; Sequential collects shared state once while executing
+  the layer at each occurrence. State hooks remain explicit. See the
+  [registration guide](Docs/EN/Registration.md).
+
 - Add detached, named and shared `Neural.Buffer` values with checked replacement
   and exact CPU/GPU transfers. `Parameter.freeze/unfreeze/is_trainable` suspend
   new gradients, updates, decay, clipping and SGD/Adam state, even when a graph

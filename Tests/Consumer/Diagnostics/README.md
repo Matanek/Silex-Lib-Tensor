@@ -138,3 +138,10 @@ State primitives add `BufferName` for a nonempty name, `BufferDType`,
 `BufferOptimizer` for the distinct Buffer/Parameter types, and
 `ParameterFreezeGradient`/`ParameterUnfreezeGradient` for an empty slot before
 changing trainability. Each name refers to its `.sx` fixture.
+
+Layer registration adds `RegistryChildName`, `RegistryChildCollision`,
+`RegistryDirectCycle`, `RegistryIndirectCycle`, `RegistryParameterCollision`,
+`RegistryBufferCollision`, `RegistryMixedCollision`, `RegistryTransitiveCollision`,
+and `RegistryLaterCollision` for nonempty local aliases, unique names, acyclic
+registered edges, and unique state names even after child changes. Each name
+refers to its `.sx` fixture.

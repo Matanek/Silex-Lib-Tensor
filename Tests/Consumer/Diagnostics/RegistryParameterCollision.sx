@@ -1,0 +1,12 @@
+use Tensor
+use Tensor.Neural
+
+nocopy class RegistryNode:Neural.Layer {
+    init() {}
+    func add_child(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+func main() { var root = RegistryNode(); root.add_parameter(Neural.Parameter("weight",Tensor.scalar(1.0))); root.add_parameter(Neural.Parameter("weight",Tensor.scalar(2.0))) }

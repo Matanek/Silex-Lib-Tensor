@@ -1,0 +1,128 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.File
+use STD.FileSystem
+use STD.Math
+use STD.Text
+
+nocopy class RegistryNode:Neural.Layer {
+    init() {}
+    func add_child(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+nocopy class LegacyParameterLayer:Neural.Layer {
+    private var weight:Neural.Parameter
+    init(weight:Neural.Parameter) { self.weight = weight }
+    override func parameters() Neural.Parameter[] { return [self.weight] }
+    override func forward(input:Tensor) Tensor { return input.multiply(self.weight.value()) }
+}
+
+func registry_diamond(shared:Neural.Layer) RegistryNode {
+    var left = RegistryNode(); var right = RegistryNode(); var root = RegistryNode()
+    left.add_child("shared",shared); right.add_child("shared",shared)
+    root.add_child("left",left); root.add_child("right",right)
+    return root
+}
+
+test "registered state preserves insertion order and shared identities" {
+    var root = RegistryNode(); var leaf = RegistryNode()
+    var leaf_base:Neural.Layer = leaf
+    var first = Neural.Parameter("first",Tensor.scalar(1.0))
+    var second = Neural.Parameter("second",Tensor.scalar(2.0))
+    var buffer = Neural.Buffer("counter",Tensor.scalar(3.0))
+    root.add_parameter(first); leaf.add_parameter(second); leaf.add_parameter(first)
+    leaf.add_buffer(buffer); root.add_child("leaf",leaf); root.add_child("alias",leaf)
+    root.add_parameter(first); root.add_buffer(buffer); root.add_child("leaf",leaf)
+    var parameters = root.parameters(); var buffers = root.buffers()
+    assert(parameters.count() == 2 && parameters[0] == first && parameters[1] == second)
+    assert(parameters[0].name() == "first" && buffers.count() == 1 && buffers[0] == buffer)
+    assert(root.children().count() == 1 && root.children()[0] == leaf_base)
+    if let child = root.child("alias") { assert(child == leaf_base) } else { panic("missing named alias") }
+    assert(root.child("missing") == null)
+    parameters.clear(); buffers.clear()
+    assert(root.parameters().count() == 2 && root.buffers().count() == 1)
+}
+
+test "registered diamond collects each layer parameter and buffer once" {
+    var shared = RegistryNode()
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0))
+    var buffer = Neural.Buffer("scale",Tensor.scalar(3.0))
+    shared.add_parameter(weight); shared.add_buffer(buffer)
+    var root = registry_diamond(shared)
+    assert(root.children().count() == 2 && root.parameters().count() == 1 && root.buffers().count() == 1)
+    assert(root.parameters()[0] == weight && root.buffers()[0] == buffer)
+    var optimizer = Optim.SGD(root.parameters(),learning_rate:0.1)
+    weight.value().multiply(buffer.value()).add(weight.value().multiply(buffer.value())).backward()
+    optimizer.step()
+    assert(Math.abs(weight.value().item()-1.4) < 0.00001 && buffer.value().item() == 3.0)
+}
+
+test "registered state observes later child registration without caching" {
+    var root = RegistryNode(); var child = RegistryNode(); root.add_child("child",child)
+    assert(root.parameters().is_empty() && root.buffers().is_empty())
+    var weight = Neural.Parameter("later",Tensor.scalar(2.0)); var buffer = Neural.Buffer("count",Tensor.scalar(1.0))
+    child.add_parameter(weight); child.add_buffer(buffer)
+    assert(root.parameters()[0] == weight && root.buffers()[0] == buffer)
+}
+
+test "registered collection preserves legacy manual parameter overrides" {
+    var weight = Neural.Parameter("legacy",Tensor.scalar(2.0))
+    var leaf = LegacyParameterLayer(weight); var root = registry_diamond(leaf)
+    assert(root.parameters().count() == 1 && root.parameters()[0] == weight)
+    var branches:Neural.Layer[] = [leaf,leaf]; var sequence = Neural.Sequential(branches)
+    assert(sequence.parameters().count() == 1 && sequence.children().count() == 1)
+    sequence.forward(Tensor.scalar(3.0)).backward()
+    if let gradient = weight.gradient() { assert(gradient.item() == 12.0) } else { panic("shared legacy gradient missing") }
+}
+
+test "builtin parameter names and order remain stable after registration" {
+    var dense = Neural.Dense("dense",2,3,seed:1)
+    var conv = Neural.Conv2D("conv",1,2,3,seed:2)
+    var norm = Neural.LayerNorm("norm",[3])
+    var rnn = Neural.SimpleRNN("rnn",2,3,seed:3)
+    assert(dense.parameters()[0].name() == "dense.weight" && dense.parameters()[1].name() == "dense.bias")
+    assert(conv.parameters()[0].name() == "conv.weight" && norm.parameters()[1].name() == "norm.bias")
+    assert(rnn.parameters().count() == 3 && rnn.parameters()[0].name() == "rnn.input_weight" && rnn.parameters()[2].name() == "rnn.bias")
+    var layers:Neural.Layer[] = [dense,dense]; var sequence = Neural.Sequential(layers)
+    assert(sequence.parameters().count() == 2)
+}
+
+test "registered shared parameters preserve the existing checkpoint schema" {
+    let path = "/private/tmp/tensor-registry-checkpoint.sxtc"
+    let ignored = FileSystem.remove_file(path)
+    var shared = RegistryNode(); var weight = Neural.Parameter("shared",Tensor.scalar(2.0))
+    var buffer = Neural.Buffer("counter",Tensor.scalar(3.0)); shared.add_parameter(weight); shared.add_buffer(buffer)
+    var root = registry_diamond(shared)
+    Neural.Checkpoint.save(root,path)
+    match File.read_text(path,10000) {
+        success(document) => { assert(Text.starts_with(document,"SILEX_TENSOR_CHECKPOINT\t1\n1\n")) }
+        failure(error) => { panic(error.detail) }
+    }
+    weight.replace(Tensor.scalar(9.0)); buffer.replace(Tensor.scalar(8.0))
+    Neural.Checkpoint.load(root,path)
+    assert(weight.value().item() == 2.0 && root.parameters()[0] == weight && buffer.value().item() == 8.0)
+    match FileSystem.remove_file(path) {
+        success => {}
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "registered collection and shared resident gradients require no transfers" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var shared = RegistryNode(); var weight = Neural.Parameter("weight",Tensor.scalar(2.0).to(device))
+    var buffer = Neural.Buffer("scale",Tensor.scalar(3.0).to(device)); shared.add_parameter(weight); shared.add_buffer(buffer)
+    var root = registry_diamond(shared); var profile = Profile(device)
+    var optimizer = Optim.SGD(root.parameters(),learning_rate:0.1)
+    assert(root.buffers()[0] == buffer && root.parameters()[0] == weight)
+    weight.value().multiply(buffer.value()).add(weight.value().multiply(buffer.value())).backward(); optimizer.step()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(Math.abs(weight.value().detach().cpu().item()-1.4) < 0.00001)
+}
