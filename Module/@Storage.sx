@@ -125,6 +125,7 @@ nocopy class GPUKernelCache {
     private var elementwise_pipeline:GPU.ComputePipeline? = null
     private var masks_pipeline:GPU.ComputePipeline? = null
     private var binary_pipeline:GPU.ComputePipeline? = null
+    private var topk_pipeline:GPU.ComputePipeline? = null
     private var index_reduction_pipeline:GPU.ComputePipeline? = null
     private var reduction_pipeline:GPU.ComputePipeline? = null
     private var linear_pipeline:GPU.ComputePipeline? = null
@@ -186,6 +187,18 @@ nocopy class GPUKernelCache {
             "Tensor float32 reduction"
         )
         self.reduction_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
+        return pipeline
+    }
+
+    func topk() GPU.ComputePipeline {
+        if var pipeline = self.topk_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/TopK.hlsl"),
+            "Tensor float32 top-k indices"
+        )
+        self.topk_pipeline = pipeline
         GPUKernelCache.compilation_count++
         self.profile_state.compile_pipeline()
         return pipeline
@@ -757,6 +770,32 @@ nocopy class GPUStorage {
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
     }
 
+    func topk(layout:Layout, k:int, axis:int, largest:bool, output_shape:int[]) GPUStorage {
+        require_gpu_layout(layout)
+        require_gpu_layout(Layout(output_shape))
+        let count = shape_product(output_shape)
+        if count == 0 { return GPUStorage.empty(self.current_device,self.kernel_cache,DType.int32()) }
+        let groups = layout.count() / layout.shape()[axis]
+        var metadata = topk_metadata(layout,k,axis,largest,groups)
+        var output = GPUStorage.allocate_buffer(self.current_device,checked_byte_count(count,4),"Tensor int32 top-k indices")
+        var pipeline = self.kernel_cache.topk()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0,@metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
+        compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
+        compute.storage_buffer(0,self.required_buffer())
+        compute.dispatch(groups)
+        self.kernel_cache.profile_state.dispatch()
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
+        return GPUStorage(self.current_device,self.kernel_cache,output,null,completed,self,null,DType.int32(),count)
+    }
+
     func index_reduction(
         layout:Layout, axes:int[], keep_dimensions:bool, maximum:bool, output_shape:int[]
     ) GPUStorage {
@@ -1218,6 +1257,27 @@ func binary_metadata(
     while words.count() < 24 { words.append(0 as uint32) }
     append_padded_broadcast_strides(words, right, output_shape.count())
     while words.count() < 32 { words.append(0 as uint32) }
+    return uint32_bytes(words)
+}
+
+func topk_metadata(layout:Layout, k:int, axis:int, largest:bool, groups:int) uint8[] {
+    let inner = trailing_product(layout.shape(),axis+1)
+    require_gpu_uint32(groups,"top-k group count")
+    require_gpu_uint32(inner,"top-k inner count")
+    var words:uint32[] = []
+    if largest { words.append(1 as uint32) }
+    else { words.append(0 as uint32) }
+    words.append(axis as uint32)
+    words.append(layout.rank() as uint32)
+    words.append(groups as uint32)
+    words.append(layout.shape()[axis] as uint32)
+    words.append(layout.offset() as uint32)
+    words.append(k as uint32)
+    words.append(inner as uint32)
+    append_padded_shape(words,layout.shape())
+    while words.count() < 16 { words.append(1 as uint32) }
+    append_padded_strides(words,layout.strides(),layout.shape(),layout.rank())
+    while words.count() < 24 { words.append(0 as uint32) }
     return uint32_bytes(words)
 }
 

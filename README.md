@@ -27,6 +27,7 @@ silex install Tensor
 - [French functional gradient guide](Docs/FR/Gradients.md) · [English](Docs/EN/Gradients.md)
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
+- [French top-k guide](Docs/FR/TopK.md) · [English](Docs/EN/TopK.md)
 - [French extremum index guide](Docs/FR/IndexedReductions.md) · [English](Docs/EN/IndexedReductions.md)
 - [French sequence guide](Docs/FR/Sequences.md) · [English](Docs/EN/Sequences.md)
 - [French mask guide](Docs/FR/Masks.md) · [English](Docs/EN/Masks.md)

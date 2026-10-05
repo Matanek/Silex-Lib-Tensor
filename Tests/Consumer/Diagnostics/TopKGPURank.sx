@@ -1,0 +1,3 @@
+use Tensor
+use GFX.GPU
+func main() { var device = GPU.Device(); Tensor.ones([1,1,1,1,1,1]).to(device).topk(1,axis:0) }

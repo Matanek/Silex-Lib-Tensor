@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add `Tensor.topk` with explicit axis, ordered values and detached int32
+  indices in `TopKResult`. Exact CPU numeric comparisons and resident float32
+  GPU selection preserve first-index ties and NaN ordering; selected values
+  differentiate through `gather`. k0 and empty outputs are defined, with checked
+  shapes, sizes and indices. See the [top-k guide](Docs/EN/TopK.md).
+
 - Add `argmin` and `argmax`: detached int32 indices in logical order, exact
   CPU integer comparisons and resident float32 GPU input. Ties and NaNs retain
   their first index; axes/domains/index widths are validated. Selected values

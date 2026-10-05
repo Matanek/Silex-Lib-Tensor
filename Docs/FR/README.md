@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Sélectionnez les [meilleurs éléments et leurs gradients](TopK.md).
 - Trouvez les [indices des extrema](IndexedReductions.md) et sélectionnez leurs valeurs.
 - Construisez des [indices et grilles numériques](Sequences.md).
 - Mesurez la [dispersion avec correction explicite](Statistics.md).

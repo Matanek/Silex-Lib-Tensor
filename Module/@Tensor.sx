@@ -509,6 +509,30 @@ public struct Tensor {
         return autograd_record_unary(result, self, operation)
     }
 
+    module func topk_indices(k:int, axis:int, largest:bool) Tensor {
+        if self.dtype().is_boolean() { panic("Tensor.topk does not accept dtype boolean") }
+        require_axis(axis, self.rank(), "topk")
+        let domain = self.shape()[axis]
+        if k < 0 || k > domain { panic("Tensor.topk k must be between zero and the axis size") }
+        if domain > 0 && domain - 1 > 2147483647 { panic("Tensor.topk indices exceed int32") }
+        var shape:int[] = []
+        var index = 0
+        while index < self.rank() {
+            if index == axis { shape.append(k) }
+            else { shape.append(self.shape()[index]) }
+            index++
+        }
+        let output_layout = Layout(shape)
+        checked_byte_count(output_layout.count(), 4)
+        checked_byte_count(output_layout.count(), self.dtype().byte_width())
+        if self.is_gpu() {
+            self.require_gpu_float_compute("topk")
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(Storage.gpu(storage.topk(self.current_layout,k,axis,largest,shape)),output_layout)
+        }
+        return Tensor.from_storage(Storage.cpu(topk_cpu_storage(self.cpu_storage(),self.current_layout,k,axis,largest,shape)),output_layout)
+    }
+
     module func index_reduction(axis:int?, keep_dimensions:bool, maximum:bool) Tensor {
         var name = "argmin"
         if maximum { name = "argmax" }

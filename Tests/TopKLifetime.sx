@@ -1,0 +1,28 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func topk_cycle(device:GPU.Device) {
+    var values:float[] = [2.0,7.0,3.0,1.0,5.0,5.0]
+    var input = Autograd.Variable(Tensor(values,[2,3]).to(device))
+    let selected = input.value().transpose().topk(1,axis:1)
+    var gradients = Autograd.grad(selected.values.sum(),[input.value()])
+    assert(gradients[0].is_gpu() && selected.indices.is_gpu() && input.gradient() == null)
+}
+
+test "top-k graphs release all GPU buffers and retained edges" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics()
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 32 {
+        topk_cycle(device)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        iteration++
+    }
+}

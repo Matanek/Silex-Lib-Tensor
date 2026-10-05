@@ -1,0 +1,3 @@
+use Tensor
+use GFX.GPU
+func main() { Tensor.scalar(1.0).topk(1,axis:0) }

@@ -1,0 +1,71 @@
+public struct TopKResult {
+    var values:Tensor
+    var indices:Tensor
+}
+
+extend Tensor {
+    func topk(k:int, axis:int, largest:bool = true) TopKResult {
+        let indices = self.topk_indices(k, axis, largest)
+        return TopKResult(values:self.gather(axis, indices), indices:indices)
+    }
+}
+
+func topk_precedes<T>(left:T, left_index:int, right:T, right_index:int, largest:bool) bool {
+    if left != left {
+        if right == right { return true }
+        return left_index < right_index
+    }
+    if right != right { return false }
+    if left == right { return left_index < right_index }
+    if largest { return left > right }
+    return left < right
+}
+
+func topk_cpu_storage(storage:CPUStorage, layout:Layout, k:int, axis:int, largest:bool, output_shape:int[]) CPUStorage {
+    let dtype = storage.dtype()
+    if dtype == DType.float32() { return CPUStorage(topk_index_values<float>(storage.float_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.int8() { return CPUStorage(topk_index_values<int8>(storage.int8_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.uint8() { return CPUStorage(topk_index_values<uint8>(storage.uint8_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.int16() { return CPUStorage(topk_index_values<int16>(storage.int16_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.uint16() { return CPUStorage(topk_index_values<uint16>(storage.uint16_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.int32() { return CPUStorage(topk_index_values<int32>(storage.int32_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.uint32() { return CPUStorage(topk_index_values<uint32>(storage.uint32_values(),layout,k,axis,largest,output_shape)) }
+    if dtype == DType.int64() { return CPUStorage(topk_index_values<int64>(storage.int64_values(),layout,k,axis,largest,output_shape)) }
+    return CPUStorage(topk_index_values<uint64>(storage.uint64_values(),layout,k,axis,largest,output_shape))
+}
+
+func topk_index_values<T>(values:T[], layout:Layout, k:int, axis:int, largest:bool, output_shape:int[]) int32[] {
+    var result = initialized_values<int32>(shape_product(output_shape), 0 as int32)
+    if k == 0 || layout.count() == 0 { return result }
+    let domain = layout.shape()[axis]
+    let groups = layout.count() / domain
+    let inner = trailing_product(layout.shape(), axis + 1)
+    var group = 0
+    while group < groups {
+        let base = (group / inner) * domain * inner + group % inner
+        var previous_index = -1
+        var previous_value = 0 as T
+        var rank = 0
+        while rank < k {
+            var best_index = -1
+            var best_value = 0 as T
+            var term = 0
+            while term < domain {
+                let value = values[layout.flat_storage_index(base + term * inner)]
+                let eligible = rank == 0 || topk_precedes<T>(previous_value,previous_index,value,term,largest)
+                if eligible && (best_index < 0 || topk_precedes<T>(value,term,best_value,best_index,largest)) {
+                    best_index = term
+                    best_value = value
+                }
+                term++
+            }
+            let output = (group / inner) * k * inner + rank * inner + group % inner
+            result[output] = best_index as int32
+            previous_index = best_index
+            previous_value = best_value
+            rank++
+        }
+        group++
+    }
+    return result
+}
