@@ -1,0 +1,6 @@
+use Tensor.Data
+func main() {
+    var sampler = Data.BatchSampler(5,2)
+    var snapshot = sampler.state()
+    snapshot.position = 1
+}

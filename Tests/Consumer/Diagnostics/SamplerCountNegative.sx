@@ -1,0 +1,2 @@
+use Tensor.Data
+func main() { var sampler = Data.BatchSampler(-1,2) }

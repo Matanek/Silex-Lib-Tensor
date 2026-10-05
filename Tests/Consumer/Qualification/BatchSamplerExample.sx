@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.Data
+
+func main() {
+    var values:float[] = [10.0,20.0,30.0,40.0,50.0]
+    let source = Tensor.vector(values)
+    var sampler = Data.BatchSampler(5,2)
+    if let indices = sampler.next() {
+        let batch = source.gather(0,Tensor.vector(indices))
+        assert(batch.values()[0] == 10.0 && batch.values()[1] == 20.0)
+    } else { panic("missing first batch") }
+    let saved = sampler.state()
+    var resumed = Data.BatchSampler(5,2)
+    resumed.restore(saved)
+    if let indices = resumed.next() {
+        let batch = source.gather(0,Tensor.vector(indices))
+        assert(batch.values()[0] == 30.0 && batch.values()[1] == 40.0)
+    } else { panic("missing resumed batch") }
+    if let final = resumed.next() { assert(final.count() == 1 && final[0] == 4 as int32) }
+    else { panic("missing final partial batch") }
+    assert(resumed.next() == null && resumed.state().position == 5)
+}

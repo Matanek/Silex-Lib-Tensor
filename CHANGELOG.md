@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add `Tensor.Data.BatchSampler`: ordered or shuffled int32 batches, explicit seed/epoch, final partial batch kept by default, and immutable reconstructible cursor state. Ordered sampling avoids a full permutation; CPU metadata performs no GPU work. See the [batch guide](Docs/EN/BatchSampling.md).
+
 - Layer propagates train/eval, placement, freezing/unfreezing, and zero_grad to
   unique registered identities, including shared diamonds. Protected local
   mode/placement hooks and shared is_training with Dropout; names/gradients/devices

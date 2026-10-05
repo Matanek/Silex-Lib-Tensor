@@ -151,3 +151,12 @@ Recursive state adds `LayerFreezeGradient`, `LayerUnfreezeGradient`,
 `LayerCrossDeviceBuffer`/`LayerCrossDeviceParameter` for explicit CPU staging;
 `LayerModeCollision` for collecting and validating all names before a mode hook.
 Each name refers to its `.sx` fixture.
+
+Batch sampling adds `SamplerCountNegative`/`SamplerCountWidth` for the int32
+coordinate domain, `SamplerBatchSize` for positive batch size, `SamplerEpoch`
+for nonnegative epochs, and `SamplerRestoreCount`, `SamplerRestoreBatchSize`,
+`SamplerRestoreShuffle`, `SamplerRestoreSeed`, `SamplerRestoreDropLast` for exact
+configuration matching. `SamplerRestoreEpoch`, `SamplerRestorePositionNegative`,
+`SamplerRestorePositionBeyond`, and `SamplerRestorePositionBoundary` validate
+epochs and batch boundaries. `SamplerStateMutation` rejects an immutable field
+assignment. Each name refers to its `.sx` fixture.

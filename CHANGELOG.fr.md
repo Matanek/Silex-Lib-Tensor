@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Ajout de `Tensor.Data.BatchSampler` : lots int32 ordonnés ou mélangés, seed/époque explicites, dernier lot conservé par défaut et snapshot immuable reconstructible. Parcours ordonné sans permutation complète, métadonnées CPU sans travail GPU. Voir le [guide des lots](Docs/FR/BatchSampling.md).
+
 - Layer propage train/eval, placement, gel/dégel et zero_grad aux identités
   enregistrées uniques, y compris en diamant partagé. Hooks locaux protégés de
   mode/placement, is_training commun avec Dropout ; noms/gradients/devices

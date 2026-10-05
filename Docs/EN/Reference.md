@@ -113,3 +113,5 @@ graph consumption, and Jacobian checking.
 [Layer registration](Registration.md): named children, order, identities, cycles, and collisions.
 
 [Recursive model state](ModelState.md): modes, local hooks, freezing, and prevalidated transfers.
+
+[Reproducible index batches](BatchSampling.md): seed, epoch, final batch and cursor snapshot.

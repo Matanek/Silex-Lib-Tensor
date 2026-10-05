@@ -1,0 +1,5 @@
+use Tensor.Data
+func main() {
+    var sampler = Data.BatchSampler(5,2,shuffle:true,seed:42)
+    sampler.restore(Data.BatchSamplerState(count:5,batch_size:2,shuffle:true,seed:43,drop_last:false,epoch:0,position:0))
+}

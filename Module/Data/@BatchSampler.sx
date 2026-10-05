@@ -1,0 +1,115 @@
+use STD.Randomizer
+
+public struct BatchSamplerState {
+    let count:int
+    let batch_size:int
+    let shuffle:bool
+    let seed:int
+    let drop_last:bool
+    let epoch:int
+    let position:int
+}
+
+public nocopy class BatchSampler {
+    private let sample_count:int
+    private let batch_size:int
+    private let shuffled:bool
+    private let seed:int
+    private let drop_last:bool
+    private var current_epoch:int
+    private var current_position:int
+    private var order:int32[]
+
+    init(count:int, batch_size:int, shuffle:bool = false, seed:int = 0, drop_last:bool = false) {
+        if count < 0 || count > 2147483648 { panic("Tensor.Data.BatchSampler requires count in the int32 index domain") }
+        if batch_size <= 0 { panic("Tensor.Data.BatchSampler requires positive batch_size") }
+        self.sample_count = count
+        self.batch_size = batch_size
+        self.shuffled = shuffle
+        self.seed = seed
+        self.drop_last = drop_last
+        self.current_epoch = 0
+        self.current_position = 0
+        self.order = []
+        self.order = self.build_order(0)
+    }
+
+    func next() int32[]? {
+        let remaining = self.sample_count - self.current_position
+        if remaining == 0 { return null }
+        if self.drop_last && remaining < self.batch_size {
+            self.current_position = self.sample_count
+            return null
+        }
+        var size = self.batch_size
+        if size > remaining { size = remaining }
+        var result:int32[] = []
+        var offset = 0
+        while offset < size {
+            let position = self.current_position + offset
+            if self.shuffled { result.append(self.order[position]) }
+            else { result.append(position as int32) }
+            offset++
+        }
+        self.current_position += size
+        return result
+    }
+
+    func set_epoch(epoch:int) {
+        if epoch < 0 { panic("Tensor.Data.BatchSampler requires a non-negative epoch") }
+        let next_order = self.build_order(epoch)
+        self.order = next_order
+        self.current_epoch = epoch
+        self.current_position = 0
+    }
+
+    func state() BatchSamplerState {
+        return BatchSamplerState(
+            count:self.sample_count,batch_size:self.batch_size,shuffle:self.shuffled,
+            seed:self.seed,drop_last:self.drop_last,epoch:self.current_epoch,position:self.current_position
+        )
+    }
+
+    func restore(state:BatchSamplerState) {
+        if state.count != self.sample_count || state.batch_size != self.batch_size ||
+            state.shuffle != self.shuffled || state.seed != self.seed || state.drop_last != self.drop_last {
+            panic("Tensor.Data.BatchSampler.restore requires matching sampler configuration")
+        }
+        if state.epoch < 0 { panic("Tensor.Data.BatchSampler.restore requires a non-negative epoch") }
+        if state.position < 0 || state.position > self.sample_count ||
+            (state.position != self.sample_count && state.position % self.batch_size != 0) {
+            panic("Tensor.Data.BatchSampler.restore requires a valid batch boundary")
+        }
+        let next_order = self.build_order(state.epoch)
+        self.order = next_order
+        self.current_epoch = state.epoch
+        self.current_position = state.position
+    }
+
+    private func mixed_seed(epoch:int) int {
+        let minimum:int = -9223372036854775808
+        var bits:uint
+        if self.seed < 0 { bits = ((self.seed - minimum) as uint) + 0x8000000000000000 }
+        else { bits = self.seed as uint }
+        bits = bits ^ (epoch as uint)
+        if bits >= 0x8000000000000000 { return minimum + ((bits - 0x8000000000000000) as int) }
+        return bits as int
+    }
+
+    private func build_order(epoch:int) int32[] {
+        var result:int32[] = []
+        if !self.shuffled { return result }
+        var index = 0
+        while index < self.sample_count { result.append(index as int32); index++ }
+        var randomizer = Randomizer(self.mixed_seed(epoch))
+        index = self.sample_count - 1
+        while index > 0 {
+            let chosen = randomizer.get_int(0,index + 1)
+            let previous = result[index]
+            result[index] = result[chosen]
+            result[chosen] = previous
+            index--
+        }
+        return result
+    }
+}

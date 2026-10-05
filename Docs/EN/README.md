@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Iterate [reproducible index batches and resume their cursor](BatchSampling.md).
 - Propagate [model mode, placement, and freezing](ModelState.md).
 - Register [named and shared layer state](Registration.md).
 - Keep a [buffer and freeze a parameter](State.md).

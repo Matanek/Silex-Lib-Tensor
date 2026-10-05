@@ -113,3 +113,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Registre des couches](Registration.md) : enfants nommés, ordre, identités, cycles et collisions.
 
 [État récursif du modèle](ModelState.md) : modes, hooks locaux, gel et transferts prévalidés.
+
+[Lots d’indices reproductibles](BatchSampling.md) : seed, époque, dernier lot et snapshot du curseur.

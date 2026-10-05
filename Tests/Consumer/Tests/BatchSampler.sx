@@ -1,0 +1,126 @@
+use Tensor
+use Tensor.Data
+use Tensor.Profile
+use GFX.GPU
+
+func same_indices(left:int32[], right:int32[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}
+func required_batch(batch:int32[]?) int32[] {
+    if let values = batch { return values }
+    panic("missing sampler batch")
+}
+func all_indices(sampler:Data.BatchSampler) int32[] {
+    var cursor = sampler
+    var result:int32[] = []
+    while true {
+        if let batch = cursor.next() { for index in batch { result.append(index) } }
+        else { return result }
+    }
+    return result
+}
+func oracle(count:int,seed:int,epoch:int,expected:int32[]) {
+    var sampler = Data.BatchSampler(count,3,shuffle:true,seed:seed)
+    sampler.set_epoch(epoch)
+    assert(same_indices(all_indices(sampler),expected))
+}
+
+test "shuffle permutations match pinned independent integer oracles" {
+    var zero_seed:int32[] = [7 as int32,9 as int32,6 as int32,4 as int32,2 as int32,8 as int32,1 as int32,5 as int32,3 as int32,0 as int32]
+    oracle(10,0,0,zero_seed)
+    var seed42_epoch0:int32[] = [6 as int32,4 as int32,9 as int32,2 as int32,5 as int32,7 as int32,0 as int32,8 as int32,1 as int32,3 as int32]
+    oracle(10,42,0,seed42_epoch0)
+    var seed42_epoch1:int32[] = [3 as int32,6 as int32,7 as int32,8 as int32,0 as int32,9 as int32,5 as int32,2 as int32,1 as int32,4 as int32]
+    oracle(10,42,1,seed42_epoch1)
+    var negative_seed:int32[] = [6 as int32,5 as int32,13 as int32,8 as int32,16 as int32,14 as int32,1 as int32,15 as int32,2 as int32,7 as int32,12 as int32,4 as int32,11 as int32,3 as int32,9 as int32,10 as int32,0 as int32]
+    oracle(17,-1,7,negative_seed)
+    var minimum_seed:int32[] = [4 as int32,8 as int32,9 as int32,11 as int32,0 as int32,6 as int32,5 as int32,3 as int32,1 as int32,2 as int32,12 as int32,10 as int32,7 as int32]
+    oracle(13,-9223372036854775808,9223372036854775807,minimum_seed)
+    var maximum_seed:int32[] = [10 as int32,7 as int32,1 as int32,8 as int32,9 as int32,5 as int32,6 as int32,3 as int32,4 as int32,2 as int32,0 as int32]
+    oracle(11,9223372036854775807,3,maximum_seed)
+}
+
+test "ordered batches keep the final partial batch by default" {
+    var sampler = Data.BatchSampler(5,2)
+    var expected:int32[] = [0 as int32,1 as int32]
+    assert(same_indices(required_batch(sampler.next()),expected))
+    var alias = sampler
+    var second:int32[] = [2 as int32,3 as int32]
+    assert(same_indices(required_batch(alias.next()),second) && sampler.state().position == 4)
+    var final:int32[] = [4 as int32]
+    assert(same_indices(required_batch(sampler.next()),final) && sampler.state().position == 5)
+    assert(sampler.next() == null && sampler.next() == null)
+    sampler.set_epoch(12); assert(sampler.state().epoch == 12 && sampler.state().position == 0)
+    assert(same_indices(required_batch(sampler.next()),expected))
+}
+
+test "empty single oversized and dropped batches have explicit boundaries" {
+    var empty = Data.BatchSampler(0,3,shuffle:true); assert(empty.next() == null && empty.state().position == 0)
+    var single = Data.BatchSampler(1,3,shuffle:true); assert(required_batch(single.next())[0] == 0 as int32 && single.next() == null)
+    var dropping = Data.BatchSampler(5,2,drop_last:true)
+    assert(required_batch(dropping.next()).count() == 2 && required_batch(dropping.next()).count() == 2)
+    assert(dropping.next() == null && dropping.state().position == 5)
+    var all_dropped = Data.BatchSampler(2,3,drop_last:true)
+    assert(all_dropped.next() == null && all_dropped.state().position == 2)
+}
+
+func restored_tail(count:int,batch_size:int,shuffle:bool,drop_last:bool,epoch:int) {
+    var uninterrupted = Data.BatchSampler(count,batch_size,shuffle:shuffle,seed:-17,drop_last:drop_last)
+    uninterrupted.set_epoch(epoch)
+    while true {
+        let saved = uninterrupted.state()
+        var resumed = Data.BatchSampler(count,batch_size,shuffle:shuffle,seed:-17,drop_last:drop_last)
+        resumed.restore(saved)
+        var continuous = Data.BatchSampler(count,batch_size,shuffle:shuffle,seed:-17,drop_last:drop_last)
+        continuous.set_epoch(epoch)
+        let whole_epoch = all_indices(continuous)
+        var expected_tail:int32[] = []
+        var index = saved.position
+        while index < whole_epoch.count() { expected_tail.append(whole_epoch[index]); index++ }
+        assert(same_indices(all_indices(resumed),expected_tail))
+        assert(saved == uninterrupted.state())
+        if let next = uninterrupted.next() {}
+        else { return }
+    }
+}
+
+test "restoration reconstructs every next batch boundary and epoch exactly" {
+    for count in [0,1,5,10,17] {
+        restored_tail(count,3,false,false,0); restored_tail(count,3,true,false,9)
+        restored_tail(count,3,true,true,9); restored_tail(count,30,true,true,9)
+    }
+}
+
+test "batch lists and state snapshots are independent from cursor mutations" {
+    var sampler = Data.BatchSampler(7,3,shuffle:true,seed:42)
+    let initial = sampler.state()
+    var first = required_batch(sampler.next()); first[0] = -1 as int32; first.clear()
+    sampler.set_epoch(1)
+    assert(initial.position == 0 && initial.epoch == 0)
+    sampler.restore(initial)
+    var reference = Data.BatchSampler(7,3,shuffle:true,seed:42)
+    assert(same_indices(required_batch(sampler.next()),required_batch(reference.next())))
+}
+
+test "ordered sampling is lazy over the entire int32 coordinate domain" {
+    var sampler = Data.BatchSampler(2147483648,1)
+    let state = Data.BatchSamplerState(count:2147483648,batch_size:1,shuffle:false,seed:0,drop_last:false,epoch:0,position:2147483647)
+    sampler.restore(state)
+    assert(required_batch(sampler.next())[0] == 2147483647 as int32)
+    assert(sampler.state().position == 2147483648 && sampler.next() == null)
+}
+
+test "sampling metadata performs no Tensor GPU work" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true)); var profile = Profile(device)
+    var sampler = Data.BatchSampler(17,4,shuffle:true,seed:42)
+    let values = all_indices(sampler); sampler.restore(sampler.state()); sampler.set_epoch(2)
+    assert(values.count() == 17)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && profile.snapshot().dispatches == 0 && profile.snapshot().buffer_allocations == 0)
+}
