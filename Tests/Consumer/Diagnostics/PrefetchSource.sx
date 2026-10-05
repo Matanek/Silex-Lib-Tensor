@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.Data
+nocopy class Samples:Data.Source {
+    init():super(3) {}
+    override func observation(index:int) Result<Data.Observation,str> {return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.scalar(index),target:Tensor.scalar(index)))}
+}
+func main() {var cursor=Data.BatchCursor(Samples(),2,prefetch:1)}

@@ -1,0 +1,94 @@
+use STD.Threading
+
+// One job owns every source/collation call while preparing an ordered block.
+// The outer cursor only advances when a result is consumed.
+struct PrepareBatches:Threading.Job {
+    var cursor:BatchCursor
+    let limit:int
+    var records:Result<Batch?,str>?[]
+
+    func execute() {
+        var index = 0
+        while index < self.limit {
+            let result = self.cursor.read_cpu_batch()
+            self.records.append(result)
+            match result {
+                failure(error) => { return }
+                success(batch) => { if batch == null { return } }
+            }
+            index++
+        }
+    }
+}
+
+nocopy class BatchPrefetch {
+    private var cursor:BatchCursor
+    private let limit:int
+    private var executor:Threading.Executor?
+    private var pending:Threading.JobHandle<PrepareBatches>? = null
+    private var records:Result<Batch?,str>?[] = []
+    private var index:int = 0
+    private var exhausted:bool = false
+
+    init(cursor:BatchCursor, limit:int) {
+        self.cursor = cursor
+        self.limit = limit
+        self.executor = Threading.Executor(1)
+        self.start()
+    }
+
+    private func start() {
+        if var executor = self.executor {
+            self.pending = executor.submit(PrepareBatches(cursor:self.cursor,limit:self.limit,records:[]))
+        }
+    }
+
+    func join() {
+        if var pending = self.pending {
+            var completed = pending.complete()
+            self.records = completed.records
+            self.index = 0
+            self.pending = null
+        }
+    }
+
+    func next() Result<Batch?,str> {
+        if self.exhausted { return Result<Batch?,str>.success(null) }
+        if self.pending == null && self.records.is_empty() { self.start() }
+        self.join()
+        let prepared = self.records[self.index]
+        self.records[self.index] = null
+        self.index++
+        if self.index == self.records.count() { self.records = []; self.index = 0 }
+        if let result = prepared {
+            match result {
+                failure(error) => { return Result<Batch?,str>.failure(error) }
+                success(batch) => {
+                    if batch == null { self.exhausted = true }
+                    else if self.records.is_empty() { self.start() }
+                    return Result<Batch?,str>.success(batch)
+                }
+            }
+        }
+        panic("Tensor.Data.BatchCursor missing prepared batch")
+    }
+
+    func discard() {
+        self.join()
+        self.records = []
+        self.index = 0
+        self.exhausted = false
+    }
+
+    func restore(state:BatchSamplerState) {
+        self.cursor.checkpoint_restore(state)
+        self.exhausted = false
+        self.start()
+    }
+
+    func close() {
+        self.discard()
+        self.executor = null
+    }
+    drop { self.close() }
+}

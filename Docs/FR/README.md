@@ -10,6 +10,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 - Normalisez un [lot dense ou NCHW et utilisez les statistiques en évaluation](BatchNorm.md).
 - Parcourez des [lots supervisés avec une collation personnalisée](SupervisedBatches.md).
+- Préparez les [lots CPU en avance et reprenez leur progression](BatchPrefetch.md).
 - Parcourez des [lots d’indices reproductibles et reprenez leur curseur](BatchSampling.md).
 - Propagez [mode, placement et gel du modèle](ModelState.md).
 - Enregistrez [l’état nommé et partagé des couches](Registration.md).

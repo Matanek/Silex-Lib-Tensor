@@ -132,3 +132,6 @@ state, supervised cursor, step/schedule, modes, trainability and dropout togethe
 on CPU. Exact versioned format for every storage dtype; recoverable save/load,
 complete validation before mutation and explicit GPU transfers. The historical
 parameter checkpoint remains separate and compatible.
+
+[CPU prefetch](BatchPrefetch.md): `BatchCursor(...,prefetch:N)`, eligibility through
+`Source.supports_prefetch()`, consumed snapshots, ordered errors and `close()`.

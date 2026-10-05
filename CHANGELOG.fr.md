@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Data.BatchCursor(...,prefetch:N)` prépare des lots CPU détachés avec STD.Threading, conserve les snapshots consommés et l’ordre des erreurs, et rejoint les workers à la fermeture/destruction. Éligibilité explicite des sources, reprise de checkpoint qualifiée CPU/GPU et borne de lots documentée.
+
 - `Neural.TrainingCheckpoint` sauvegarde et restaure exactement le modèle enregistré, SGD/Adam/AdamW, le curseur, l’étape/calendrier, les modes, le gel et le dropout. Chargement CPU prévalidé avec erreurs récupérables ; les snapshots d’optimiseur exposent un déplacement GPU explicite.
 
 - BatchNorm normalise les lots denses ou NCHW sur CPU/GPU, avec gradients, affine facultatif, statistiques courantes détachées et compteur int64 CPU exact. Conventions population/non biaisée et modes train/eval documentés dans le [guide](Docs/FR/BatchNorm.md).

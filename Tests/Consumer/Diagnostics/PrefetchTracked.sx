@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Data
+use Tensor.Autograd
+func main() {var variable=Autograd.Variable(Tensor.ones([3,2]));var cursor=Data.BatchCursor(Data.TensorSource(variable.value(),Tensor.ones([3])),2,prefetch:1)}

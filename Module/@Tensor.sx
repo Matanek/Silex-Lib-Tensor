@@ -73,6 +73,8 @@ public struct Tensor {
     func is_gpu() bool { return !self.is_cpu() }
     func dtype() DType { return match self.current_storage { cpu(value) => value.dtype(); gpu(value) => value.dtype() } }
 
+    package func is_detached() bool { return self.current_provenance == null }
+
     package func has_same_placement(other:Tensor) bool {
         if self.is_cpu() != other.is_cpu() { return false }
         if self.is_cpu() { return true }

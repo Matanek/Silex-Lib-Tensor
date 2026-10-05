@@ -1,0 +1,175 @@
+use Tensor
+use Tensor.Data
+use Tensor.Autograd
+use GFX.GPU
+
+func same_values<T>(left:T[],right:T[]) bool {
+    if left.count()!=right.count() {return false}
+    var index=0
+    while index<left.count() {if left[index]!=right[index] {return false} index++}
+    return true
+}
+func batch_of(cursor:Data.BatchCursor) Data.Batch {
+    var reading=cursor
+    if let batch=try reading.next() else error {panic(error)} {return batch}
+    panic("missing batch")
+}
+func failure_of(cursor:Data.BatchCursor) str {
+    var reading=cursor
+    match reading.next() {failure(error)=>{return error};success(batch)=>{panic("expected failure")}}
+}
+nocopy class Samples:Data.Source {
+    var calls:int=0
+    var trace:int[]=[]
+    private var fail_once:bool
+    private var changed:bool
+    private var reported:int=9
+    init(fail_once:bool=false,changed:bool=false):super(9) {self.fail_once=fail_once;self.changed=changed}
+    override func supports_prefetch() bool {return true}
+    override func count() int {return self.reported}
+    override func observation(index:int) Result<Data.Observation,str> {
+        self.calls++;self.trace.append(index)
+        if self.fail_once && index==3 {self.fail_once=false;return Result<Data.Observation,str>.failure("temporary sample failure")}
+        if self.changed {self.reported=8}
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.scalar(index),target:Tensor.scalar(index*10)))
+    }
+}
+func scaled_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    var batch=try Data.stack_batch(observations)
+    batch.input=batch.input.multiply(2)
+    return Result<Data.Batch,str>.success(batch)
+}
+func refused_batch(observations:Data.Observation[]) Result<Data.Batch,str> {return Result<Data.Batch,str>.failure("custom collation failure")}
+func scalar_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
+    return Result<Data.Batch,str>.success(Data.Batch(input:Tensor.scalar(1),target:Tensor.ones([observations.count()])))
+}
+
+func compare_cursors(prefetch:int,shuffle:bool,drop_last:bool) {
+    var source=Samples();var prepared_source=Samples()
+    var sync=Data.BatchCursor(source,2,shuffle:shuffle,seed:-9223372036854775808,drop_last:drop_last,collate:scaled_batch)
+    var prepared=Data.BatchCursor(prepared_source,2,shuffle:shuffle,seed:-9223372036854775808,drop_last:drop_last,collate:scaled_batch,prefetch:prefetch)
+    var epoch=0
+    while epoch<3 {
+        sync.set_epoch(epoch);prepared.set_epoch(epoch)
+        assert(sync.state()==prepared.state())
+        while true {
+            let left=try sync.next() else error {panic(error)}
+            let right=try prepared.next() else error {panic(error)}
+            assert(sync.state()==prepared.state())
+            if let expected=left {
+                if let actual=right {
+                    assert(same_values(expected.input.int64_values(),actual.input.int64_values()))
+                    assert(same_values(expected.target.int64_values(),actual.target.int64_values()))
+                } else {panic("early prefetch exhaustion")}
+            } else {assert(right==null);break}
+        }
+        assert((try prepared.next() else error {panic(error)})==null)
+        epoch++
+    }
+    sync.close();prepared.close()
+    // Preparation of an abandoned initial block is allowed before set_epoch.
+    assert(prepared_source.calls>=source.calls)
+}
+test "prefetch preserves ordered shuffled complete and dropped batches over epochs" {
+    for limit in [1,2,4,20] {compare_cursors(limit,false,false);compare_cursors(limit,true,false);compare_cursors(limit,true,true)}
+}
+
+test "source error appears in consumed order and retries the same full batch" {
+    var source=Samples(fail_once:true);var prepared_source=Samples(fail_once:true)
+    var sync=Data.BatchCursor(source,2);var prepared=Data.BatchCursor(prepared_source,2,prefetch:4)
+    assert(same_values(batch_of(sync).input.int64_values(),batch_of(prepared).input.int64_values()))
+    let saved=prepared.state()
+    assert(failure_of(sync)=="temporary sample failure" && failure_of(prepared)=="temporary sample failure")
+    assert(prepared.state()==saved && sync.state()==saved)
+    while true {
+        let left=try sync.next() else error {panic(error)};let right=try prepared.next() else error {panic(error)}
+        assert(sync.state()==prepared.state())
+        if let expected=left {if let actual=right {assert(same_values(expected.input.int64_values(),actual.input.int64_values()))} else {panic("early end")}}
+        else {assert(right==null);break}
+    }
+    prepared.close();sync.close()
+    assert(same_values(source.trace,prepared_source.trace))
+}
+
+test "collation failures and unstable counts do not advance consumed state" {
+    var source=Samples();var prepared=Data.BatchCursor(source,2,collate:refused_batch,prefetch:3)
+    let before=prepared.state();assert(failure_of(prepared)=="custom collation failure" && prepared.state()==before)
+    assert(failure_of(prepared)=="custom collation failure" && prepared.state()==before);prepared.close()
+    var scalar=Data.BatchCursor(Samples(),2,collate:scalar_batch,prefetch:2)
+    assert(failure_of(scalar)=="Tensor.Data.BatchCursor collation requires a leading batch axis" && scalar.state().position==0);scalar.close()
+    var unstable=Data.BatchCursor(Samples(changed:true),2,prefetch:4)
+    assert(failure_of(unstable)=="Tensor.Data.BatchCursor requires a stable source count" && unstable.state().position==0)
+    assert(failure_of(unstable)=="Tensor.Data.BatchCursor requires a stable source count");unstable.close()
+}
+
+test "prefetch snapshots record only consumption and restore discards prepared state" {
+    var source=Samples();var prepared=Data.BatchCursor(source,2,shuffle:true,seed:42,prefetch:3)
+    let initial=prepared.state();assert(initial.position==0)
+    let first=batch_of(prepared);let saved=prepared.state();assert(saved.position==2)
+    let second=batch_of(prepared);prepared.restore(saved)
+    assert(same_values(batch_of(prepared).input.int64_values(),second.input.int64_values()))
+    prepared.restore(initial);assert(same_values(batch_of(prepared).input.int64_values(),first.input.int64_values()))
+    prepared.set_epoch(9);var oracle=Data.BatchCursor(Samples(),2,shuffle:true,seed:42);oracle.set_epoch(9)
+    assert(same_values(batch_of(prepared).input.int64_values(),batch_of(oracle).input.int64_values()))
+    prepared.close();oracle.close()
+}
+
+test "close and destruction join accepted bounded work without consuming it" {
+    var source=Samples();var prepared=Data.BatchCursor(source,1,prefetch:3)
+    assert(prepared.state().position==0);prepared.close();prepared.close()
+    assert(source.calls==3 && prepared.state().position==0)
+    assert(failure_of(prepared)=="Tensor.Data.BatchCursor is closed")
+    var dropped_source=Samples()
+    {var abandoned=Data.BatchCursor(dropped_source,1,prefetch:2)}
+    assert(dropped_source.calls==2)
+    var active_source=Samples();var active=Data.BatchCursor(active_source,1,prefetch:2)
+    let first=batch_of(active);let second=batch_of(active);assert(first.input.int64_item()==0 && second.input.int64_item()==1)
+    active.close();assert(active_source.calls==4 && active.state().position==2)
+}
+
+test "TensorSource eligibility rejects GPU and autograd instead of detaching inputs" {
+    var plain=Data.TensorSource(Tensor.ones([3,2]),Tensor.ones([3]));assert(plain.supports_prefetch())
+    var tracked=Autograd.Variable(Tensor.ones([3,2]));var attached=Data.TensorSource(tracked.value(),Tensor.ones([3]));assert(!attached.supports_prefetch())
+    var sync=Data.BatchCursor(attached,2);batch_of(sync).input.sum().backward();assert(tracked.gradient()!=null)
+    if GPU.Device.is_supported() {
+        var device=GPU.Device(GPU.DeviceSettings(debug:true));var gpu=Data.TensorSource(Tensor.ones([3,2]).to(device),Tensor.ones([3]).to(device))
+        assert(!gpu.supports_prefetch())
+    }
+}
+
+test "empty CPU prefetch and typed immutable data preserve values" {
+    var empty=Data.BatchCursor(Data.TensorSource(Tensor.ones([0,2]),Tensor.ones([0])),2,prefetch:2)
+    assert((try empty.next() else error {panic(error)})==null && empty.state().position==0);empty.close()
+    var integers:int64[]=[-9223372036854775808,9223372036854775807];var flags:bool[]=[true,false]
+    var typed=Data.BatchCursor(Data.TensorSource(Tensor.vector(integers),Tensor.vector(flags)),2,prefetch:1)
+    let batch=batch_of(typed);assert(same_values(batch.input.int64_values(),integers) && same_values(batch.target.bool_values(),flags));typed.close()
+}
+
+nocopy class ClaimedCPU:Data.Source {
+    private var input:Tensor
+    init(input:Tensor):super(2) {self.input=input}
+    override func supports_prefetch() bool {return true}
+    override func observation(index:int) Result<Data.Observation,str> {
+        return Result<Data.Observation,str>.success(Data.Observation(input:self.input,target:Tensor.scalar(index)))
+    }
+}
+test "a falsely eligible source cannot send GPU or tracked observations to default collation" {
+    var tracked=Autograd.Variable(Tensor.ones([2]));var cursor=Data.BatchCursor(ClaimedCPU(tracked.value()),2,prefetch:1)
+    assert(failure_of(cursor)=="Tensor.Data.BatchCursor prefetch requires CPU detached observations" && cursor.state().position==0);cursor.close()
+    if GPU.Device.is_supported() {
+        var device=GPU.Device(GPU.DeviceSettings(debug:true));var gpu=Tensor.ones([2]).to(device)
+        var reading=Data.BatchCursor(ClaimedCPU(gpu),2,prefetch:1)
+        assert(failure_of(reading)=="Tensor.Data.BatchCursor prefetch requires CPU detached observations" && reading.state().position==0);reading.close()
+    }
+}
+test "prefetch preserves uint64 extremes and logical values of noncontiguous inputs" {
+    var values:uint64[]=[18446744073709551615,0,9223372036854775808];var target:int8[]=[-128,0,127]
+    var typed=Data.BatchCursor(Data.TensorSource(Tensor.vector(values),Tensor.vector(target)),2,prefetch:2)
+    let first=batch_of(typed);var expected:uint64[]=[18446744073709551615,0];var labels:int8[]=[-128,0]
+    assert(same_values(first.input.uint64_values(),expected) && same_values(first.target.int8_values(),labels))
+    let last=batch_of(typed);assert(last.input.uint64_item()==9223372036854775808 && last.target.int8_item()==127);typed.close()
+    var storage:float[]=[1.0,2.0,3.0,4.0,5.0,6.0];let input=Tensor(storage,[2,3]).transpose()
+    var strided=Data.BatchCursor(Data.TensorSource(input,Tensor.ones([3])),2,prefetch:3)
+    let batch=batch_of(strided);var expected_float:float[]=[1.0,4.0,2.0,5.0]
+    assert(same_values(batch.input.values(),expected_float));strided.close()
+}

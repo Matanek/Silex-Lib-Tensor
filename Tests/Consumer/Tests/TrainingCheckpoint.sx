@@ -45,7 +45,7 @@ func checkpoint_remove(path:str) {
     match FileSystem.remove_file(path) {success=>{}
         failure(error)=>{panic("checkpoint temporary file cleanup failed")}}
 }
-func checkpoint_resume(device:GPU.Device?) {
+func checkpoint_resume(device:GPU.Device?,prefetch:int = 0) {
     let left_path="/private/tmp/tensor-training-checkpoint-left.sxtc"
     let right_path="/private/tmp/tensor-training-checkpoint-right.sxtc"
     var boundary=0
@@ -59,7 +59,8 @@ func checkpoint_resume(device:GPU.Device?) {
         var step=0
         while step<boundary {progress=checkpoint_step(left,optimizer,cursor,progress,device);step++}
         try Neural.TrainingCheckpoint.save(left,optimizer,cursor,progress,left_path) else error {panic(error)}
-        var right=checkpoint_model(93);var resumed_cursor=Data.BatchCursor(source,2,shuffle:true,seed:-9223372036854775808)
+        var right=checkpoint_model(93);var resumed_source=checkpoint_source()
+        var resumed_cursor=Data.BatchCursor(resumed_source,2,shuffle:true,seed:-9223372036854775808,prefetch:prefetch)
         var resumed=Optim.AdamW(right.parameters(),learning_rate:1.0)
         var restored=try Neural.TrainingCheckpoint.load(right,resumed,resumed_cursor,left_path) else error {panic(error)}
         assert(restored.step==progress.step && resumed_cursor.state()==cursor.state())
@@ -86,4 +87,10 @@ test "complete checkpoint resumes CPU BatchNorm dropout AdamW shuffled epochs an
 test "complete checkpoint resumes GPU training with explicit model and moment uploads exactly at six boundaries" {
     if !GPU.Device.is_supported() {return}
     var device=GPU.Device(GPU.DeviceSettings(debug:true));checkpoint_resume(device)
+}
+
+test "complete checkpoint resumes prefetched CPU data with the synchronous training state exactly" {checkpoint_resume(null,prefetch:3)}
+test "complete checkpoint resumes prefetched CPU data with explicit GPU training transfers exactly" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));checkpoint_resume(device,prefetch:3)
 }

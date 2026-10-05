@@ -151,5 +151,6 @@ allocations de collation. Les lots GPU restent résidents : ni upload d’indice
 ni download caché. Les callbacks personnalisés choisissent explicitement leurs
 calculs et transferts. Lire un lot GPU nécessite `cpu()` comme tout Tensor.
 Le curseur conserve la source et callback ; ses snapshots ne les conservent pas.
-Le parcours s’arrête sans worker ou travail différé à nettoyer. Le préchargement
-et le checkpoint d’entraînement complet ne sont pas fournis par cette API.
+Le chemin synchrone ne crée aucun worker. Le [préchargement CPU facultatif](BatchPrefetch.md)
+conserve la progression consommée et se ferme explicitement avec `close()`. Le
+[checkpoint complet](TrainingCheckpoint.md) restaure l’entraînement et ce curseur.

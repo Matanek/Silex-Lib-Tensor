@@ -1,0 +1,3 @@
+use Tensor
+use Tensor.Data
+func main() {var cursor=Data.BatchCursor(Data.TensorSource(Tensor.ones([3,2]),Tensor.ones([3])),2,prefetch:1);let saved=cursor.state();cursor.close();cursor.restore(saved)}

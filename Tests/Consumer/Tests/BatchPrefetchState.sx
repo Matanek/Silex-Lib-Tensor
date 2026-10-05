@@ -1,0 +1,51 @@
+use STD.File
+use STD.FileSystem
+use STD.Text
+use Tensor
+use Tensor.Data
+use Tensor.Neural
+use Tensor.Optim
+
+func read_checkpoint(path:str) str {return try File.read_text(path,1024*1024) else error {panic(error.detail)}}
+func require_failure(result:Result<Neural.TrainingProgress,str>) {
+    match result {failure(error)=>{};success(progress)=>{panic("expected checkpoint failure")}}
+}
+test "checkpoint rejection preserves consumed position and already prepared next batch" {
+    let path="/private/tmp/tensor-prefetch-state.sxtc";let corrupt="/private/tmp/tensor-prefetch-corrupt.sxtc"
+    var data:float[]=[1.0,2.0,3.0,4.0,5.0,6.0]
+    var source=Data.TensorSource(Tensor(data,[6,1]),Tensor.ones([6,1]))
+    var cursor=Data.BatchCursor(source,2,prefetch:3)
+    var model=Neural.Dense("dense",1,1,seed:42);var optimizer=Optim.SGD(model.parameters(),learning_rate:0.01)
+    let progress=Neural.TrainingProgress(step:0,schedule:null)
+    if let first=try cursor.next() else error {panic(error)} {assert(first.input.values()[0]==1.0)} else {panic("missing first batch")}
+    try Neural.TrainingCheckpoint.save(model,optimizer,cursor,progress,path) else error {panic(error)}
+    let before=read_checkpoint(path);let state=cursor.state();assert(state.position==2)
+    try File.write_all(corrupt,before+"invalid trailing record\n") else error {panic(error.detail)}
+    require_failure(Neural.TrainingCheckpoint.load(model,optimizer,cursor,corrupt))
+    assert(cursor.state()==state)
+    try Neural.TrainingCheckpoint.save(model,optimizer,cursor,progress,path) else error {panic(error)}
+    assert(read_checkpoint(path)==before)
+    var lines=Text.split(before,"\n");var index=0
+    while index<lines.count() {
+        let fields=Text.split(lines[index],"\t")
+        if fields[0]=="optimizer" {
+            let rates=Text.split(fields[2],",")
+            lines[index]="optimizer\tSGD\t00000000,"+rates[1]+","+rates[2]
+        }
+        index++
+    }
+    var bad_rate="";index=0
+    while index<lines.count() {if index>0 {bad_rate+="\n"} bad_rate+=lines[index];index++}
+    try File.write_all(corrupt,bad_rate) else error {panic(error.detail)}
+    require_failure(Neural.TrainingCheckpoint.load(model,optimizer,cursor,corrupt))
+    assert(cursor.state()==state)
+    try Neural.TrainingCheckpoint.save(model,optimizer,cursor,progress,path) else error {panic(error)}
+    assert(read_checkpoint(path)==before)
+    if let next=try cursor.next() else error {panic(error)} {assert(next.input.values()[0]==3.0)} else {panic("prepared batch lost")}
+    let restored=try Neural.TrainingCheckpoint.load(model,optimizer,cursor,path) else error {panic(error)}
+    assert(restored.step==0 && cursor.state()==state)
+    if let next=try cursor.next() else error {panic(error)} {assert(next.input.values()[0]==3.0)} else {panic("restored batch lost")}
+    cursor.close();require_failure(Neural.TrainingCheckpoint.load(model,optimizer,cursor,path))
+    try FileSystem.remove_file(path) else error {panic("cleanup checkpoint")}
+    try FileSystem.remove_file(corrupt) else error {panic("cleanup corrupt checkpoint")}
+}

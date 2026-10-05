@@ -1,0 +1,49 @@
+use Tensor
+use Tensor.Data
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func prefetch_training_cycle(device:GPU.Device,early:bool) {
+    var source=Data.TensorSource(Tensor.ones([8,2]),Tensor.ones([8,2]))
+    var cursor=Data.BatchCursor(source,2,prefetch:3)
+    var model=Neural.Dense("dense",2,2,seed:42);model.to(device)
+    var optimizer=Optim.AdamW(model.parameters())
+    var step=0
+    while step<2 {
+        if let batch=try cursor.next() else error {panic(error)} {
+            let difference=model.forward(batch.input.to(device)).subtract(batch.target.to(device))
+            difference.multiply(difference).mean().backward();optimizer.step();optimizer.zero_grad()
+        } else {panic("missing prepared training batch")}
+        step++
+    }
+    let saved=cursor.state();cursor.restore(saved);cursor.set_epoch(1)
+    if early {cursor.close()}
+}
+
+test "prefetch CPU workers coexist with GPU training and release graph and device resources" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let before=autograd_performance_statistics();var cycle=0
+    while cycle<32 {
+        prefetch_training_cycle(device,cycle%2==0)
+        let after=autograd_performance_statistics();let buffers=profile.snapshot()
+        assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+        assert(buffers.live_buffers==0 && buffers.active_bytes==0)
+        cycle++
+    }
+}
+
+test "CPU prefetch never creates autograd nodes or device transfers" {
+    var source=Data.TensorSource(Tensor.ones([8,2]),Tensor.ones([8,2]));var cursor=Data.BatchCursor(source,2,prefetch:3)
+    let before=autograd_performance_statistics()
+    var count=0
+    while true {
+        if let batch=try cursor.next() else error {panic(error)} {assert(batch.input.is_cpu() && batch.target.is_cpu());count++}
+        else {break}
+    }
+    cursor.close();let after=autograd_performance_statistics()
+    assert(count==4 && after.node_allocations==before.node_allocations && after.retained_edges==before.retained_edges)
+}

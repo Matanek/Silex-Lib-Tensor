@@ -19,6 +19,8 @@ public nocopy class Source {
     }
 
     func count() int { return self.sample_count }
+    func supports_prefetch() bool { return false }
+
     func observation(index:int) Result<Observation,str> {
         panic("Tensor.Data.Source.observation must be implemented by a concrete source")
     }
@@ -31,6 +33,10 @@ public nocopy class TensorSource : Source {
     init(inputs:Tensor, targets:Tensor) : super(tensor_source_count(inputs,targets)) {
         self.inputs = inputs
         self.targets = targets
+    }
+
+    override func supports_prefetch() bool {
+        return self.inputs.is_cpu() && self.targets.is_cpu() && self.inputs.is_detached() && self.targets.is_detached()
     }
 
     override func observation(index:int) Result<Observation,str> {

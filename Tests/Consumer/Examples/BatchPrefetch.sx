@@ -1,0 +1,23 @@
+use Tensor
+use Tensor.Data
+
+nocopy class Samples:Data.Source {
+    init():super(5) {}
+    override func supports_prefetch() bool {return true}
+    override func observation(index:int) Result<Data.Observation,str> {
+        return Result<Data.Observation,str>.success(Data.Observation(input:Tensor.scalar(index),target:Tensor.scalar(index*10)))
+    }
+}
+func main() {
+    var source=Samples()
+    var cursor=Data.BatchCursor(source,2,prefetch:2)
+    assert(cursor.state().position==0)
+    if let first=try cursor.next() else error {panic(error)} {assert(first.input.int64_values()[0]==0)}
+    let saved=cursor.state()
+    assert(saved.position==2)
+    if let second=try cursor.next() else error {panic(error)} {assert(second.input.int64_values()[0]==2)}
+    cursor.restore(saved)
+    if let repeated=try cursor.next() else error {panic(error)} {assert(repeated.input.int64_values()[0]==2)}
+    cursor.close()
+    print("Prefetched batches resume from consumed position $(saved.position)")
+}

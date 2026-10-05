@@ -132,3 +132,6 @@ curseur supervisé, étape/calendrier, modes, gel et dropout ensemble sur CPU.
 Format versionné exact pour tous les dtypes de stockage ; save/load récupérables,
 validation complète avant mutation, transferts GPU explicites. Le checkpoint de
 paramètres historique reste distinct et compatible.
+
+[Préchargement CPU](BatchPrefetch.md) : `BatchCursor(...,prefetch:N)`, éligibilité
+`Source.supports_prefetch()`, snapshots consommés, erreurs ordonnées et `close()`.

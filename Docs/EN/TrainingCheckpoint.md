@@ -84,6 +84,10 @@ step; the restored schedule supplies the next rate. The cursor is captured at
 its current position: save between completed batches, after `zero_grad()`, to
 resume at the next batch.
 
+A cursor can enable [CPU prefetch](BatchPrefetch.md): the checkpoint preserves
+consumed progress without serializing prepared batches. Rebuild the same sampler
+configuration with or without prefetch.
+
 ## Preconditions and recoverable errors
 
 The target model has matching registered names and order, shapes, dtypes,

@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Data
+use GFX.GPU
+func main() {var device=GPU.Device();var cursor=Data.BatchCursor(Data.TensorSource(Tensor.ones([3,2]).to(device),Tensor.ones([3]).to(device)),2,prefetch:1)}

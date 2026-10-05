@@ -6,17 +6,26 @@ public nocopy class BatchCursor {
     private var sampler:BatchSampler
     private var collate:func(Observation[]) Result<Batch,str>
     private var reading:bool
+    private var preloading:BatchPrefetch? = null
+    private var closed:bool = false
 
     init(source:Source, batch_size:int, shuffle:bool = false, seed:int = 0, drop_last:bool = false,
-        collate:func(Observation[]) Result<Batch,str> = stack_batch) {
+        collate:func(Observation[]) Result<Batch,str> = stack_batch, prefetch:int = 0) {
         self.source = source
         self.sample_count = source.count()
         self.sampler = BatchSampler(self.sample_count,batch_size,shuffle:shuffle,seed:seed,drop_last:drop_last)
         self.collate = collate
         self.reading = false
+        if prefetch < 0 { panic("Tensor.Data.BatchCursor requires prefetch >= 0") }
+        if prefetch > 0 {
+            if !source.supports_prefetch() { panic("Tensor.Data.BatchCursor prefetch requires an eligible CPU source with detached data") }
+            var worker = BatchCursor(source,batch_size,shuffle:shuffle,seed:seed,drop_last:drop_last,collate:collate)
+            self.preloading = BatchPrefetch(worker,prefetch)
+        }
     }
 
     func next() Result<Batch?,str> {
+        if self.closed { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor is closed") }
         if self.reading { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor cannot read recursively") }
         self.reading = true
         var result = self.read_next()
@@ -27,19 +36,44 @@ public nocopy class BatchCursor {
     func state() BatchSamplerState { return self.sampler.state() }
     func set_epoch(epoch:int) {
         if self.reading { panic("Tensor.Data.BatchCursor cannot change epoch during a read") }
+        self.prepare_change()
         self.require_stable_source()
         self.sampler.set_epoch(epoch)
+        self.reset_prefetch()
     }
     func restore(state:BatchSamplerState) {
         if self.reading { panic("Tensor.Data.BatchCursor cannot restore during a read") }
+        self.prepare_change()
         self.require_stable_source()
         self.sampler.restore(state)
+        self.reset_prefetch()
     }
 
-    package func checkpoint_restore(state:BatchSamplerState) {self.sampler.restore(state)}
+    func close() {
+        if self.reading { panic("Tensor.Data.BatchCursor cannot close during a read") }
+        if var preloading = self.preloading { preloading.close() }
+        self.preloading = null
+        self.closed = true
+    }
+
+    private func prepare_change() {
+        if self.closed { panic("Tensor.Data.BatchCursor is closed") }
+        if var preloading = self.preloading { preloading.discard() }
+    }
+    private func reset_prefetch() {
+        if var preloading = self.preloading { preloading.restore(self.sampler.state()) }
+    }
+
+    package func checkpoint_restore(state:BatchSamplerState) {
+        if var preloading = self.preloading { preloading.discard() }
+        self.sampler.restore(state)
+        self.reset_prefetch()
+    }
 
     package func validate_restore(state:BatchSamplerState) Result<void,str> {
+        if self.closed {return Result<void,str>.failure("Tensor.Data.BatchCursor is closed")}
         if self.reading {return Result<void,str>.failure("Tensor.Data.BatchCursor cannot restore during a read")}
+        if var preloading = self.preloading { preloading.join() }
         if self.source.count()!=self.sample_count {return Result<void,str>.failure("Tensor.Data.BatchCursor requires a stable source count")}
         return self.sampler.validate_restore(state)
     }
@@ -49,14 +83,33 @@ public nocopy class BatchCursor {
     }
 
     private func read_next() Result<Batch?,str> {
+        if var preloading = self.preloading {
+            let batch = try preloading.next()
+            self.sampler.consume()
+            return Result<Batch?,str>.success(batch)
+        }
+        return self.read_sync()
+    }
+
+    package func read_cpu_batch() Result<Batch?,str> { return self.read_sync(cpu_only:true) }
+
+    private func read_sync(cpu_only:bool = false) Result<Batch?,str> {
         if self.source.count() != self.sample_count { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor requires a stable source count") }
         if let indices = self.sampler.peek() {
             var observations:Observation[] = []
             for index in indices {
                 var observation = try self.source.observation(index as int)
+                if cpu_only && (!observation.input.is_cpu() || !observation.target.is_cpu() ||
+                    !observation.input.is_detached() || !observation.target.is_detached()) {
+                    return Result<Batch?,str>.failure("Tensor.Data.BatchCursor prefetch requires CPU detached observations")
+                }
                 observations.append(observation)
             }
             var batch = try self.collate(observations)
+            if cpu_only && (!batch.input.is_cpu() || !batch.target.is_cpu() ||
+                !batch.input.is_detached() || !batch.target.is_detached()) {
+                return Result<Batch?,str>.failure("Tensor.Data.BatchCursor prefetch requires CPU detached collation output")
+            }
             if batch.input.rank() == 0 || batch.target.rank() == 0 {
                 return Result<Batch?,str>.failure("Tensor.Data.BatchCursor collation requires a leading batch axis")
             }

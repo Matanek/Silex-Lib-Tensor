@@ -84,6 +84,10 @@ dernier pas effectué ; le calendrier chargé produit le prochain taux. Le curse
 est capturé à sa position courante : sauvegardez entre deux lots terminés, après
 `zero_grad()`, afin de retrouver le prochain lot.
 
+Un curseur peut activer le [préchargement CPU](BatchPrefetch.md) : le checkpoint
+conserve sa progression consommée, sans sérialiser les lots préparés. La même
+configuration peut être reconstruite avec ou sans préchargement.
+
 ## Conditions et erreurs récupérables
 
 Le modèle cible possède les mêmes noms et ordre enregistrés, formes, dtypes,

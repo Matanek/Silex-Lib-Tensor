@@ -28,6 +28,7 @@ silex install Tensor
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
 - [French supervised batch guide](Docs/FR/SupervisedBatches.md) · [English](Docs/EN/SupervisedBatches.md)
+- [French CPU prefetch guide](Docs/FR/BatchPrefetch.md) · [English](Docs/EN/BatchPrefetch.md)
 - [French batch sampling guide](Docs/FR/BatchSampling.md) · [English](Docs/EN/BatchSampling.md)
 - [French optimizer updates guide](Docs/FR/OptimizerUpdates.md) · [English](Docs/EN/OptimizerUpdates.md)
 - [French optimizer restoration guide](Docs/FR/OptimizerState.md) · [English](Docs/EN/OptimizerState.md)

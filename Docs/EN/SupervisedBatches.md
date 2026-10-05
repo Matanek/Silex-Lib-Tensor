@@ -147,6 +147,6 @@ Shapes, dtypes, and placements of both columns are checked before collation
 allocations. GPU batches remain resident, without index uploads or hidden
 downloads. Custom callbacks explicitly choose computations and transfers.
 Reading GPU values requires `cpu()` as for any Tensor. The cursor retains its
-source and callback; snapshots do not retain them. Traversal ends without a
-worker or deferred work to clean up. Prefetch and complete training checkpoints
-are not provided by this API.
+source and callback; snapshots do not retain them. The synchronous path creates
+no worker. Optional [CPU prefetch](BatchPrefetch.md) preserves consumed progress and supports explicit `close()`. The
+[complete checkpoint](TrainingCheckpoint.md) restores training and its cursor.
