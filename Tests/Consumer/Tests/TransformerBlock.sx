@@ -1,0 +1,146 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.Optim
+use GFX.GPU
+use STD.Math
+
+func transformer_near(actual:Tensor,expected:Tensor,tolerance:float = 0.00001) {
+    let data=actual.detach().cpu().values();let wanted=expected.detach().cpu().values()
+    assert(data.count()==wanted.count())
+    var i=0;while i<data.count() {assert(Math.is_finite(data[i]) && Math.abs(data[i]-wanted[i])<tolerance);i++}
+}
+func transformer_zero_branches(model:Neural.TransformerBlock) {
+    for parameter in model.parameters() {
+        var p=parameter
+        if p.name()=="block.attention_norm.weight" || p.name()=="block.feed_forward_norm.weight" {p.replace(Tensor.ones(p.value().shape()))}
+        else {p.replace(Tensor.zeros(p.value().shape()))}
+    }
+}
+func transformer_norm_witness(device:GPU.Device?) {
+    for norm_first in [true,false] {
+        var model=Neural.TransformerBlock("block",4,2,6,seed:17,norm_first:norm_first,epsilon:0.001)
+        transformer_zero_branches(model)
+        assert(model.parameters().count()==16 && model.children().count()==4)
+        var data:float[]=[0.125,-0.5,0.75,0.25,0.5,1.25,-0.75,0.125]
+        var x=Tensor(data,[1,2,4]);var mask=Tensor.scalar(false)
+        var expected=x
+        if !norm_first {expected=x.layer_norm(1,0.001).layer_norm(1,0.001)}
+        if let gpu=device {model.to(gpu);x=x.to(gpu);mask=mask.to(gpu)}
+        var input=Autograd.Variable(x);var profile:Profile?=null
+        if let gpu=device {profile=Profile(gpu)}
+        let result=model.encode(input.value(),mask:mask,return_weights:true)
+        var gradients=Autograd.grad(result.output,[input.value()],seed:x)
+        if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+        transformer_near(result.output,expected)
+        if norm_first {transformer_near(gradients[0],x)}
+        if let weights=result.weights {for value in weights.detach().cpu().values() {assert(value==0.0)}} else {panic("expected Transformer weights")}
+        assert(model.encode(x).weights==null)
+        transformer_near(model.forward(x),model.encode(x).output)
+    }
+}
+test "Transformer zero branches distinguish pre and post norm on CPU" {transformer_norm_witness(null)}
+test "Transformer zero branches keep CPU and Metal contracts without transfers" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));transformer_norm_witness(device)
+}
+
+func transformer_pre_function(inputs:Tensor[]) Tensor {
+    var model=Neural.TransformerBlock("block",4,2,6,seed:31,epsilon:0.01)
+    return model.encode(inputs[0],mask:Neural.causal_mask(2,2)).output
+}
+func transformer_post_function(inputs:Tensor[]) Tensor {
+    var model=Neural.TransformerBlock("block",4,2,6,seed:31,norm_first:false,epsilon:0.01)
+    return model.encode(inputs[0],mask:Neural.causal_mask(2,2)).output
+}
+test "pre and post Transformer input Jacobians agree with finite differences" {
+    var values:float[]=[0.125,-0.5,0.75,0.25,0.5,1.25,-0.75,0.125]
+    var inputs:Tensor[]=[Tensor(values,[1,2,4])]
+    let pre=Autograd.gradcheck(transformer_pre_function,inputs,epsilon:0.001,absolute_tolerance:0.0006,relative_tolerance:0.006)
+    let post=Autograd.gradcheck(transformer_post_function,inputs,epsilon:0.001,absolute_tolerance:0.0006,relative_tolerance:0.006)
+    assert(pre.passed && post.passed && pre.checked_derivatives==64 && post.checked_derivatives==64)
+}
+func transformer_causality(device:GPU.Device?) {
+    for norm_first in [true,false] {
+        var model=Neural.TransformerBlock("block",4,2,6,seed:17,norm_first:norm_first)
+        var values:float[]=[0.125,-0.5,0.75,0.25,0.5,1.25,-0.75,0.125,0.25,-0.5,1.5,-0.25]
+        var future:float[]=[0.125,-0.5,0.75,0.25,0.5,1.25,-0.75,0.125,8.0,-7.0,6.0,-5.0]
+        var left=Tensor(values,[1,3,4]);var right=Tensor(future,[1,3,4]);var mask=Neural.causal_mask(3,3)
+        if let gpu=device {model.to(gpu);left=left.to(gpu);right=right.to(gpu);mask=mask.to(gpu)}
+        let first=model.encode(left,mask:mask).output.detach().cpu().values()
+        let changed=model.encode(right,mask:mask).output.detach().cpu().values()
+        var i=0;while i<8 {assert(Math.abs(first[i]-changed[i])<0.00001);i++}
+    }
+}
+test "Transformer causal visibility prevents future input from changing earlier outputs on CPU and Metal" {
+    transformer_causality(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));transformer_causality(device)}
+}
+func transformer_dropout(device:GPU.Device?) {
+    var model=Neural.TransformerBlock("block",4,2,8,seed:4294967295,dropout_probability:0.5)
+    // Constant feature rows normalize to zero and cannot witness dropout changes.
+    var input=Tensor.linspace(-0.7,0.9,32).reshape([2,4,4])
+    if let gpu=device {model.to(gpu);input=input.to(gpu)}
+    let first=model.encode(input,iteration:7).output
+    transformer_near(first,model.encode(input,iteration:7).output,0.0000001)
+    let a=first.detach().cpu().values();let b=model.encode(input,iteration:8).output.detach().cpu().values()
+    var different=false
+    var i=0
+    while i<a.count() {
+        if a[i]!=b[i] {different=true}
+        i++
+    }
+    assert(different)
+    model.eval();for child in model.children() {assert(!child.is_training())}
+    transformer_near(model.encode(input,iteration:0).output,model.encode(input,iteration:4294967295).output,0.0000001)
+    model.train();for child in model.children() {assert(child.is_training())}
+    for value in model.encode(input,iteration:4294967295).output.detach().cpu().values() {assert(Math.is_finite(value))}
+}
+test "Transformer probability and residual dropout follow explicit iteration and recursive eval on CPU and Metal" {
+    transformer_dropout(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));transformer_dropout(device)}
+}
+func transformer_empty(device:GPU.Device?) {
+    for norm_first in [true,false] {
+        for empty_batch in [true,false] {
+            var shape:int[]=[2,0,4];if empty_batch {shape=[0,2,4]}
+            var model=Neural.TransformerBlock("block",4,2,6,seed:17,norm_first:norm_first,dropout_probability:0.25)
+            var x=Tensor.zeros(shape)
+            if let gpu=device {model.to(gpu);x=x.to(gpu)}
+            var input=Autograd.Variable(x)
+            let output=model.encode(input.value()).output;assert(output.shape()[0]==shape[0] && output.shape()[1]==shape[1] && output.shape()[2]==4)
+            output.sum().backward()
+            if let gradient=input.gradient() {assert(gradient.count()==0)} else {panic("missing empty Transformer input gradient")}
+            for parameter in model.parameters() {
+                if let gradient=parameter.gradient() {for value in gradient.cpu().values() {assert(value==0.0)}}
+                else {panic("missing empty Transformer parameter gradient")}
+            }
+        }
+    }
+}
+test "empty Transformer batches and queries preserve all gradients on CPU and Metal" {
+    transformer_empty(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));transformer_empty(device)}
+}
+func transformer_shared(device:GPU.Device?) {
+    var model=Neural.TransformerBlock("block",4,2,6,seed:17)
+    transformer_zero_branches(model)
+    var layers:Neural.Layer[]=[model,model];var root=Neural.Sequential(layers)
+    assert(root.parameters().count()==16 && root.children().count()==1)
+    var x=Tensor.ones([1,2,4])
+    if let gpu=device {root.to(gpu);x=x.to(gpu)}
+    var input=Autograd.Variable(x);root.forward(input.value()).sum().backward()
+    var optimizer=Optim.SGD(root.parameters(),learning_rate:0.01);optimizer.step();optimizer.zero_grad()
+    for parameter in root.parameters() {
+        if parameter.name()=="block.feed_forward.output.bias" {for value in parameter.value().detach().cpu().values() {assert(Math.abs(value+0.04)<0.000001)}}
+    }
+    root.freeze();var frozen_input=Autograd.Variable(x);root.forward(frozen_input.value()).sum().backward()
+    assert(frozen_input.gradient()!=null)
+    for parameter in root.parameters() {assert(!parameter.is_trainable() && parameter.gradient()==null)}
+    root.zero_grad();root.unfreeze();assert(model.parameters()[0].is_trainable())
+}
+test "shared Transformer has one parameter collection and update and preserves frozen input gradients on CPU and Metal" {
+    transformer_shared(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));transformer_shared(device)}
+}

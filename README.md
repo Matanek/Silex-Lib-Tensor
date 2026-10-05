@@ -43,6 +43,7 @@ silex install Tensor
 - [French extremum index guide](Docs/FR/IndexedReductions.md) · [English](Docs/EN/IndexedReductions.md)
 - [French sequence guide](Docs/FR/Sequences.md) · [English](Docs/EN/Sequences.md)
 - [French sequence visibility guide](Docs/FR/SequenceMasks.md) · [English](Docs/EN/SequenceMasks.md)
+- [French causal Transformer guide](Docs/FR/Transformer.md) · [English](Docs/EN/Transformer.md)
 - [French multi-head attention guide](Docs/FR/MultiHeadAttention.md) · [English](Docs/EN/MultiHeadAttention.md)
 - [French attention guide](Docs/FR/Attention.md) · [English](Docs/EN/Attention.md)
 - [French masked softmax guide](Docs/FR/MaskedSoftmax.md) · [English](Docs/EN/MaskedSoftmax.md)

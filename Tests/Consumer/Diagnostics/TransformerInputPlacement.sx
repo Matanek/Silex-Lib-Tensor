@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+func main() {var model=Neural.TransformerBlock("block",4,2,6,seed:17,norm_first:false);var device=GPU.Device();model.to(device);let output=model.forward(Tensor.ones([1,2,4]))}

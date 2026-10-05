@@ -125,3 +125,15 @@ there is no framework packing or transpose conversion. Hermetic CPU/Metal tests
 use absolute tolerance 0.000003. Recheck with
 `python3 Tools/Oracle/multihead_decimal.py --check`, and review fixture/report
 together after deliberate regeneration.
+
+## Pre/post-norm Transformer Decimal fixture
+
+`transformer_decimal.py` uses standard-library Decimal at 60 digits, direct
+exp-normalized self-attention, population LayerNorm equations and analytic VJPs
+through residuals and ReLU. `TRANSFORMER_REPORT.json` pins pre/post cases, feature
+order, separate row-major `[input,output]` matrices and feature vectors; no packing
+or transpose conversion. The fixture compares output, attention weights, input
+and all sixteen parameter gradients on CPU/Metal with absolute tolerance8e-6.
+It stays away from ReLU kinks and needs no Python at runtime. Recheck with
+`python3 Tools/Oracle/transformer_decimal.py --check`; review source and report
+together after deliberate regeneration.

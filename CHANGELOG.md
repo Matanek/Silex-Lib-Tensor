@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.TransformerBlock` composes attention, residuals, LayerNorm and MLP with explicit pre/post-norm and reproducible dropout. An external causal model with separate positions, learning and exact CPU/Metal resume is qualified; see the [guide](Docs/EN/Transformer.md).
+
 - `Neural.MultiHeadAttention` adds four trainable projections to Layer registration, self/cross-attention and explicit seed/iteration dropout. Queries without keys stay zero after projection, optional applied weights, shared state and CPU/Metal resume are qualified; see the [guide](Docs/EN/MultiHeadAttention.md).
 
 - `Neural.attention` composes Q/K/V products and masked softmax into batch-first rank3/4 self/cross-attention. Differentiable optional weights, shared gradients, empty shapes and resident CPU/Metal computation; see the [guide](Docs/EN/Attention.md).

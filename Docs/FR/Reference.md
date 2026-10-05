@@ -17,6 +17,7 @@ contrats de chaque opération.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` aussi entiers | `float32` | `float32` |
 | `concatenate`, `stack` | les neuf + booléens | les neuf + booléens résidents | `float32` |
 | `gather` | source quelconque, indices `int32` | source `float32`, indices `int32` | source `float32` |
+| `Neural.TransformerBlock` | bloc `float32`, rang3 | idem, calcul résident | entrée et seize paramètres nommés |
 | `Neural.MultiHeadAttention` | projections `float32`, rang3 | idem, calcul résident | Q/K/V et huit paramètres nommés |
 | `Neural.attention` | `float32`, rang3/4 | idem, calcul résident | Q/K/V et poids optionnels |
 | `Neural.Embedding` | indices `int32`, poids `float32` | idem, calcul résident | poids dense ; padding à dérivée arrêtée |
@@ -162,3 +163,7 @@ paramètres historique reste distinct et compatible.
 ## Attention multi-têtes
 
 `Neural.MultiHeadAttention(name,features,heads,seed,dropout_probability:0.0)` : `attend` self/cross avec masque, échelle, itération et poids optionnels ; `forward` self à itération0. État partagé, dropout et reprise dans le [guide](MultiHeadAttention.md).
+
+## Transformer
+
+`Neural.TransformerBlock(name,features,heads,feed_forward_features,seed,norm_first:true,dropout_probability:0.0,epsilon:0.00001)` : `encode` avec masque/itération/poids optionnels ; `forward` à itération0. Résidus, pre/post-norm, MLP et reprise dans le [guide](Transformer.md).

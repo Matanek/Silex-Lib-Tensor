@@ -1,0 +1,39 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func transformer_graph(device:GPU.Device,mode:int,return_weights:bool,norm_first:bool,iteration:int) {
+    var model=Neural.TransformerBlock("block",4,2,6,seed:13,norm_first:norm_first,dropout_probability:0.25)
+    model.to(device)
+    var input=Autograd.Variable(Tensor.linspace(-0.5,0.75,8).reshape([1,2,4]).to(device))
+    let mask=Neural.causal_mask(2,2).to(device)
+    let result=model.encode(input.value(),mask:mask,iteration:iteration,return_weights:return_weights)
+    if mode==0 {result.output.sum().backward()}
+    elif mode==1 {var gradients=Autograd.grad(result.output,[input.value()],seed:input.value());assert(gradients.count()==1)}
+    if let weights=result.weights {assert(weights.count()==8)}
+}
+test "pre and post Transformer optional graphs release all resources within a fixed peak" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics()
+    var profile=Profile(device);var peak=0;var cycle=0
+    while cycle<16 {
+        profile.reset()
+        for norm_first in [true,false] {
+            var mode=0
+            while mode<3 {transformer_graph(device,mode,false,norm_first,cycle);transformer_graph(device,mode,true,norm_first,cycle);mode++}
+        }
+        let stats=profile.snapshot()
+        assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+        if cycle==0 {peak=stats.peak_bytes;assert(peak>0)}
+        assert(stats.peak_bytes<=peak)
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+    print("Transformer lifetime peak bytes: ",peak)
+}

@@ -1,0 +1,87 @@
+use Tensor
+use Tensor.DType
+use STD.Math
+use STD.Randomizer
+use STD.Text
+
+public struct TransformerResult {
+    var output:Tensor
+    var weights:Tensor?
+}
+
+public nocopy class TransformerBlock:Layer {
+    private let features:int
+    private let heads:int
+    private let feed_forward_features:int
+    private let norm_first:bool
+    private let dropout_probability:float
+    private let epsilon:float
+    private var attention_seed:int
+    private var feed_forward_seed:int
+    private var attention:MultiHeadAttention
+    private var attention_norm:LayerNorm
+    private var feed_forward_norm:LayerNorm
+    private var feed_forward:Sequential
+
+    init(name:str, features:int, heads:int, feed_forward_features:int, seed:int, norm_first:bool = true, dropout_probability:float = 0.0, epsilon:float = 0.00001) {
+        if features<=0 || heads<=0 || features%heads!=0 || feed_forward_features<=0 {panic("Tensor.Neural.TransformerBlock requires positive compatible features heads and feed_forward_features")}
+        if seed<0 || seed>4294967295 {panic("Tensor.Neural.TransformerBlock seed must fit uint32")}
+        if !Math.is_finite(dropout_probability) || dropout_probability<0.0 || dropout_probability>=1.0 {panic("Tensor.Neural.TransformerBlock dropout_probability must be in [0, 1)")}
+        if !Math.is_finite(epsilon) || epsilon<=0.0 {panic("Tensor.Neural.TransformerBlock requires finite epsilon > 0")}
+        self.features=features
+        self.heads=heads
+        self.feed_forward_features=feed_forward_features
+        self.norm_first=norm_first
+        self.dropout_probability=dropout_probability
+        self.epsilon=epsilon
+        var random=Randomizer(seed)
+        self.attention=MultiHeadAttention(name+".attention",features,heads,random.get_int(0,4294967296),dropout_probability)
+        self.attention_norm=LayerNorm(name+".attention_norm",[features],epsilon)
+        self.feed_forward_norm=LayerNorm(name+".feed_forward_norm",[features],epsilon)
+        var layers:Layer[]=[Dense(name+".feed_forward.input",features,feed_forward_features,random.get_int(0,4294967296)),Activation.relu(),Dense(name+".feed_forward.output",feed_forward_features,features,random.get_int(0,4294967296))]
+        self.feed_forward=Sequential(layers)
+        self.attention_seed=random.get_int(0,4294967296)
+        self.feed_forward_seed=random.get_int(0,4294967296)
+        self.register_child("attention",self.attention)
+        self.register_child("attention_norm",self.attention_norm)
+        self.register_child("feed_forward_norm",self.feed_forward_norm)
+        self.register_child("feed_forward",self.feed_forward)
+    }
+
+    override func forward(input:Tensor) Tensor {return self.encode(input).output}
+
+    func encode(input:Tensor, mask:Tensor? = null, iteration:int = 0, return_weights:bool = false) TransformerResult {
+        if input.dtype()!=DType.float32() {panic("Tensor.Neural.TransformerBlock input must use dtype float32")}
+        if input.rank()!=3 || input.shape()[2]!=self.features {panic("Tensor.Neural.TransformerBlock requires rank 3 batch-first input with matching features")}
+        if iteration<0 || iteration>4294967295 {panic("Tensor.Neural.TransformerBlock iteration must fit uint32")}
+        var queries=input
+        if self.norm_first {queries=self.attention_norm.forward(input)}
+        let attention=self.attention.attend(queries,queries,queries,mask:mask,iteration:iteration,return_weights:return_weights)
+        var residual=input.add(attention.output.dropout(self.dropout_probability,self.attention_seed,iteration:iteration,training:self.is_training()))
+        if !self.norm_first {residual=self.attention_norm.forward(residual)}
+        var hidden=residual
+        if self.norm_first {hidden=self.feed_forward_norm.forward(residual)}
+        let transformed=self.feed_forward.forward(hidden).dropout(self.dropout_probability,self.feed_forward_seed,iteration:iteration,training:self.is_training())
+        var output=residual.add(transformed)
+        if !self.norm_first {output=self.feed_forward_norm.forward(output)}
+        return TransformerResult(output:output,weights:attention.weights)
+    }
+
+    override package func checkpoint_configuration() str {
+        return "TransformerBlock:$(self.features):$(self.heads):$(self.feed_forward_features):$(self.norm_first):"+training_checkpoint_float_text(self.dropout_probability)+":"+training_checkpoint_float_text(self.epsilon)
+    }
+    override package func checkpoint_random_state() str {return "$(self.attention_seed),$(self.feed_forward_seed)"}
+    override package func checkpoint_validate_random_state(value:str) Result<void,str> {
+        let fields=Text.split(value,",")
+        if fields.count()!=2 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid Transformer dropout state")}
+        let attention=try training_checkpoint_integer(fields[0])
+        let feed_forward=try training_checkpoint_integer(fields[1])
+        if attention>4294967295 || feed_forward>4294967295 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint Transformer seeds exceed their RNG domain")}
+        return Result<void,str>.success()
+    }
+    override package func checkpoint_apply_random_state(value:str) {
+        let fields=Text.split(value,",")
+        self.attention_seed=try training_checkpoint_integer(fields[0]) else error {panic(error)}
+        self.feed_forward_seed=try training_checkpoint_integer(fields[1]) else error {panic(error)}
+    }
+}

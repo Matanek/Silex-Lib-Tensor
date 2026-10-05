@@ -17,6 +17,7 @@ contract.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| `Neural.TransformerBlock` | `float32` block, rank3 | same, resident computation | input and sixteen named parameters |
 | `Neural.MultiHeadAttention` | `float32` projections, rank3 | same, resident computation | Q/K/V and eight named parameters |
 | `Neural.attention` | `float32`, rank3/4 | same, resident computation | Q/K/V and optional weights |
 | `Neural.Embedding` | `int32` indices, `float32` weight | same, resident computation | dense weight; stopped padding derivative |
@@ -162,3 +163,7 @@ parameter checkpoint remains separate and compatible.
 ## Multi-head attention
 
 `Neural.MultiHeadAttention(name,features,heads,seed,dropout_probability:0.0)`: self/cross `attend` with mask, scale, iteration and optional weights; self `forward` at iteration0. Shared state, dropout and resume in the [guide](MultiHeadAttention.md).
+
+## Transformer
+
+`Neural.TransformerBlock(name,features,heads,feed_forward_features,seed,norm_first:true,dropout_probability:0.0,epsilon:0.00001)` : `encode` with mask/iteration/optional weights; `forward` at iteration0. Residuals, pre/post-norm, MLP and resume in the [guide](Transformer.md).
