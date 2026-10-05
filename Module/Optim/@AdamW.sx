@@ -1,0 +1,51 @@
+use Tensor
+use Tensor.Neural.Parameter
+
+public struct AdamWState {
+    let learning_rate:float
+    let beta1:float
+    let beta2:float
+    let epsilon:float
+    let weight_decay:float
+    var parameters:AdamMomentState[]
+
+    func cpu() AdamWState {
+        var saved = adamw_moments(self).cpu()
+        return adamw_state(saved)
+    }
+}
+
+public nocopy class AdamW {
+    private var engine:AdamEngine
+
+    init(
+        parameters:Parameter[], learning_rate:float = 0.001,
+        beta1:float = 0.9, beta2:float = 0.999,
+        epsilon:float = 0.00000001, weight_decay:float = 0.01
+    ) {
+        self.engine = AdamEngine(parameters, learning_rate, beta1, beta2, epsilon, weight_decay,
+            operation:"AdamW", decoupled_decay:true)
+    }
+
+    func learning_rate() float { return self.engine.learning_rate() }
+    func set_learning_rate(value:float) { self.engine.set_learning_rate(value) }
+    func zero_grad() { self.engine.zero_grad() }
+    func step() { self.engine.step() }
+    func state() AdamWState { return adamw_state(self.engine.state()) }
+    func restore(snapshot:AdamWState) Result<void,str> { return self.engine.restore(adamw_moments(snapshot)) }
+
+    func clip_grad_norm(
+        maximum_norm:float,
+        nonfinite:NonFiniteGradientPolicy = NonFiniteGradientPolicy.propagate
+    ) Tensor { return self.engine.clip_grad_norm(maximum_norm, nonfinite) }
+}
+
+func adamw_moments(snapshot:AdamWState) AdamState {
+    return AdamState(learning_rate:snapshot.learning_rate,beta1:snapshot.beta1,beta2:snapshot.beta2,
+        epsilon:snapshot.epsilon,weight_decay:snapshot.weight_decay,parameters:snapshot.parameters)
+}
+
+func adamw_state(snapshot:AdamState) AdamWState {
+    return AdamWState(learning_rate:snapshot.learning_rate,beta1:snapshot.beta1,beta2:snapshot.beta2,
+        epsilon:snapshot.epsilon,weight_decay:snapshot.weight_decay,parameters:snapshot.parameters)
+}

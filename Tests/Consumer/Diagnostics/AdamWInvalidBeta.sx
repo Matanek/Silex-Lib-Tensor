@@ -1,0 +1,4 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+func main() { var optimizer=Optim.AdamW([Parameter("weight",Tensor.scalar(2.0))],beta1:1.0) }

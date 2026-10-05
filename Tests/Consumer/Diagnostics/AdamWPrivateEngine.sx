@@ -1,0 +1,2 @@
+use Tensor.Optim.AdamEngine
+func main() { var engine=AdamEngine([]) }

@@ -8,7 +8,7 @@ primitives for dense, convolutional, and recurrent models. Its eager
 reverse-mode autodifferentiation keeps immutable Tensor values and GPU-resident
 gradients behind explicit `Tensor.Autograd.Variable` leaves. Named
 `Tensor.Neural.Parameter` values, composable dense, convolutional and recurrent
-layers, deterministic checkpoints, and `Tensor.Optim` SGD/Adam optimizers
+layers, deterministic checkpoints, and `Tensor.Optim` SGD/Adam/AdamW optimizers
 complete an explicit eager training workflow without hidden transfers.
 
 ```text
@@ -29,6 +29,7 @@ silex install Tensor
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
 - [French supervised batch guide](Docs/FR/SupervisedBatches.md) · [English](Docs/EN/SupervisedBatches.md)
 - [French batch sampling guide](Docs/FR/BatchSampling.md) · [English](Docs/EN/BatchSampling.md)
+- [French optimizer updates guide](Docs/FR/OptimizerUpdates.md) · [English](Docs/EN/OptimizerUpdates.md)
 - [French optimizer restoration guide](Docs/FR/OptimizerState.md) · [English](Docs/EN/OptimizerState.md)
 - [French model state guide](Docs/FR/ModelState.md) · [English](Docs/EN/ModelState.md)
 - [French layer registration guide](Docs/FR/Registration.md) · [English](Docs/EN/Registration.md)

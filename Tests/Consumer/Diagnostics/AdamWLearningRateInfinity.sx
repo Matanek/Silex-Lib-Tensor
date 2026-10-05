@@ -1,0 +1,9 @@
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+func main() {
+    var parameter=Parameter("weight",Tensor.scalar(2.0))
+    var optimizer=Optim.AdamW([parameter],learning_rate:0.1)
+    optimizer.set_learning_rate(1.0/0.0)
+}

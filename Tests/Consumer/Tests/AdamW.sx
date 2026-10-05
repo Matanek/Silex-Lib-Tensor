@@ -1,0 +1,122 @@
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+use GFX.GPU
+
+func adamw_moment(value:Tensor?) Tensor {
+    if let tensor=value {return tensor}
+    panic("expected AdamW moment")
+}
+
+func adamw_exact(a:Tensor,b:Tensor) bool {
+    let left=a.detach().cpu().values();let right=b.detach().cpu().values()
+    if left.count()!=right.count() {return false}
+    var index=0
+    while index<left.count() {if left[index]!=right[index] {return false}
+        index++}
+    return true
+}
+
+func adamw_resume(initial:Tensor) {
+    var boundary=0
+    while boundary<5 {
+        var parameter=Parameter("weight",initial);var idle=Parameter("idle",initial)
+        var optimizer=Optim.AdamW([parameter,idle],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001,weight_decay:0.5)
+        var step=0
+        while step<boundary {parameter.value().multiply(3.0).sum().backward();optimizer.step();optimizer.zero_grad();step++}
+        var saved=optimizer.state()
+        var resumed_parameter=Parameter("weight",parameter.value().detach());var resumed_idle=Parameter("idle",initial)
+        var resumed=Optim.AdamW([resumed_idle,resumed_parameter],learning_rate:1.0)
+        try resumed.restore(saved) else error {panic(error)}
+        let schedule=Optim.LearningRateSchedule.cosine(0.1,duration:4,minimum_rate:0.01)
+        while step<6 {
+            let rate=schedule.value_at(step);optimizer.set_learning_rate(rate);resumed.set_learning_rate(rate)
+            parameter.value().multiply(4.0).sum().backward();resumed_parameter.value().multiply(4.0).sum().backward()
+            optimizer.step();resumed.step();optimizer.zero_grad();resumed.zero_grad()
+            assert(adamw_exact(parameter.value(),resumed_parameter.value()))
+            var a=optimizer.state();var b=resumed.state()
+            assert(a.parameters[0].step_count==b.parameters[1].step_count && b.parameters[0].step_count==0)
+            assert(adamw_exact(adamw_moment(a.parameters[0].first_moment),adamw_moment(b.parameters[1].first_moment)))
+            assert(adamw_exact(adamw_moment(a.parameters[0].second_moment),adamw_moment(b.parameters[1].second_moment)))
+            step++
+        }
+        assert(saved.parameters[0].step_count==boundary && saved.learning_rate==0.1)
+        assert(adamw_exact(idle.value(),initial) && adamw_exact(resumed_idle.value(),initial))
+        boundary++
+    }
+}
+
+test "resume AdamW at five CPU boundaries with explicit cosine rates and named order" {adamw_resume(Tensor.scalar(2.0))}
+test "resume AdamW at five GPU boundaries with explicit cosine rates and named order" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));adamw_resume(Tensor.scalar(2.0).to(device))
+}
+
+test "decoupled decay changes values independently of moments and differs from coupled Adam" {
+    var a=Parameter("weight",Tensor.scalar(2.0));var w=Parameter("weight",Tensor.scalar(2.0))
+    var adam=Optim.Adam([a],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001,weight_decay:0.5)
+    var adamw=Optim.AdamW([w],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001,weight_decay:0.5)
+    a.value().multiply(3.0).backward();w.value().multiply(3.0).backward();adam.step();adamw.step();adam.zero_grad();adamw.zero_grad()
+    var asaved=adam.state();var wsaved=adamw.state()
+    assert(adamw_moment(asaved.parameters[0].first_moment).item()==2.0)
+    assert(adamw_moment(wsaved.parameters[0].first_moment).item()==1.5)
+    assert(adamw_moment(wsaved.parameters[0].second_moment).item()==4.5)
+    assert(Math.abs(w.value().detach().item()-1.800003333)<0.000001)
+    assert(w.value().detach().item()<a.value().detach().item())
+}
+
+test "zero decay matches Adam exactly and freezing suppresses updates decay moments and clipping" {
+    var a=Parameter("weight",Tensor.scalar(2.0));var w=Parameter("weight",Tensor.scalar(2.0))
+    var adam=Optim.Adam([a],learning_rate:0.1);var adamw=Optim.AdamW([w],learning_rate:0.1,weight_decay:0.0)
+    var step=0
+    while step<4 {
+        a.value().multiply(3.0).backward();w.value().multiply(3.0).backward();adam.step();adamw.step();adam.zero_grad();adamw.zero_grad()
+        assert(adamw_exact(a.value(),w.value()));step++
+    }
+    var before=adamw.state();let value=w.value().detach();let old_graph=w.value().multiply(10.0)
+    w.freeze();old_graph.backward();assert(adamw.clip_grad_norm(1.0).item()==0.0);adamw.step()
+    assert(adamw_exact(w.value(),value) && adamw.state().parameters[0].step_count==4)
+    assert(adamw_exact(adamw_moment(before.parameters[0].first_moment),adamw_moment(adamw.state().parameters[0].first_moment)))
+    adamw.zero_grad();w.unfreeze();w.value().sum().backward();adamw.step();adamw.zero_grad()
+    assert(adamw.state().parameters[0].step_count==5)
+}
+
+test "AdamW restores resident state without transfer and stages cpu state explicitly" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var parameter=Parameter("weight",Tensor.ones([2]).to(device));var optimizer=Optim.AdamW([parameter])
+    parameter.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    device.reset_command_stats();var saved=optimizer.state()
+    try optimizer.restore(saved) else error {panic(error)}
+    assert(device.command_stats().uploads==0 && device.command_stats().downloads==0)
+    var cpu=saved.cpu();assert(device.command_stats().downloads==2)
+    match optimizer.restore(cpu) {failure(error) => {assert(error!="")};success => {panic("CPU moments accepted for GPU parameter")}}
+    assert(optimizer.state().parameters[0].step_count==1)
+    var entries=cpu.parameters;var entry=entries[0]
+    entry.first_moment=adamw_moment(entry.first_moment).to(device);entry.second_moment=adamw_moment(entry.second_moment).to(device);entries[0]=entry
+    try optimizer.restore(Optim.AdamWState(learning_rate:cpu.learning_rate,beta1:cpu.beta1,beta2:cpu.beta2,epsilon:cpu.epsilon,weight_decay:cpu.weight_decay,parameters:entries)) else error {panic(error)}
+    assert(optimizer.state().parameters[0].step_count==1)
+}
+
+test "AdamW rejects invalid last state atomically and preserves model values and configuration" {
+    var first=Parameter("first",Tensor.scalar(2.0));var last=Parameter("last",Tensor.scalar(3.0))
+    var optimizer=Optim.AdamW([first,last],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001,weight_decay:0.5)
+    first.value().sum().backward();last.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    var before=optimizer.state();let first_value=first.value().detach();let last_value=last.value().detach()
+    var entries:Optim.AdamMomentState[]=[Optim.AdamMomentState(name:"first",shape:[],step_count:8,first_moment:Tensor.scalar(7.0),second_moment:Tensor.scalar(9.0)),Optim.AdamMomentState(name:"last",shape:[],step_count:1,first_moment:Tensor.scalar(1.0),second_moment:Tensor.ones([1]))]
+    match optimizer.restore(Optim.AdamWState(learning_rate:0.7,beta1:0.2,beta2:0.3,epsilon:0.01,weight_decay:0.0,parameters:entries)) {
+        failure(error) => {assert(error!="")}
+        success => {panic("invalid final AdamW moment accepted")}
+    }
+    var after=optimizer.state()
+    assert(after.learning_rate==before.learning_rate && after.beta1==before.beta1 && after.beta2==before.beta2 && after.epsilon==before.epsilon && after.weight_decay==before.weight_decay)
+    assert(adamw_exact(first.value(),first_value) && adamw_exact(last.value(),last_value))
+    var index=0
+    while index<2 {
+        assert(after.parameters[index].step_count==before.parameters[index].step_count)
+        assert(adamw_exact(adamw_moment(after.parameters[index].first_moment),adamw_moment(before.parameters[index].first_moment)))
+        assert(adamw_exact(adamw_moment(after.parameters[index].second_moment),adamw_moment(before.parameters[index].second_moment)))
+        index++
+    }
+}

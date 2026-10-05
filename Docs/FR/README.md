@@ -374,6 +374,8 @@ de migrer silencieusement une partie du modèle.
 
 [Reprise des optimiseurs](OptimizerState.md) : moments nommés, restauration atomique et taux courant.
 
+[Décroissance découplée et calendriers](OptimizerUpdates.md) : AdamW, étape explicite et taux du prochain pas.
+
 ## Composer et entraîner un réseau
 
 `Tensor.Neural.Layer` est le contrat commun des couches et `Sequential` les exécute

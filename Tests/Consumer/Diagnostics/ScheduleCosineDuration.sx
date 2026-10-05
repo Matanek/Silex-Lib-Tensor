@@ -1,0 +1,3 @@
+use STD.Math
+use Tensor.Optim
+func main() { let rate=Optim.LearningRateSchedule.cosine(0.1,duration:0,minimum_rate:0.01) }

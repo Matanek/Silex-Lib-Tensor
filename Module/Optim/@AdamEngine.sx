@@ -1,0 +1,255 @@
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+
+class AdamSlot {
+    var step_count:int
+    var first_moment:Tensor
+    var second_moment:Tensor
+
+    init() {
+        self.step_count = 0
+        self.first_moment = Tensor.scalar(0.0)
+        self.second_moment = Tensor.scalar(0.0)
+    }
+}
+
+nocopy class AdamEngine {
+    private let operation:str
+    private let decoupled_decay:bool
+    private var parameters:Parameter[]
+    private var states:AdamSlot[]
+    private var current_learning_rate:float
+    private var beta1:float
+    private var beta2:float
+    private var epsilon:float
+    private var weight_decay:float
+
+    init(
+        parameters:Parameter[], learning_rate:float = 0.001,
+        beta1:float = 0.9, beta2:float = 0.999,
+        epsilon:float = 0.00000001, weight_decay:float = 0.0,
+        operation:str = "Adam", decoupled_decay:bool = false
+    ) {
+        require_positive(learning_rate, "learning_rate", operation)
+        require_unit_interval(beta1, "beta1", operation)
+        require_unit_interval(beta2, "beta2", operation)
+        require_positive(epsilon, "epsilon", operation)
+        require_non_negative(weight_decay, "weight_decay", operation)
+        self.operation = operation
+        self.decoupled_decay = decoupled_decay
+        self.parameters = optimizer_parameters(parameters, operation)
+        self.states = []
+        for parameter in self.parameters { self.states.append(AdamSlot()) }
+        self.current_learning_rate = learning_rate
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.weight_decay = weight_decay
+    }
+
+    func learning_rate() float {return self.current_learning_rate}
+    func set_learning_rate(value:float) {
+        require_positive(value,"learning_rate","$(self.operation).set_learning_rate")
+        self.current_learning_rate=value
+    }
+
+    func zero_grad() { optimizer_zero_grad(self.parameters) }
+
+    func clip_grad_norm(
+        maximum_norm:float,
+        nonfinite:NonFiniteGradientPolicy = NonFiniteGradientPolicy.propagate
+    ) Tensor {
+        require_non_negative(maximum_norm, "maximum_norm", "clip_grad_norm")
+        let reference = self.parameters[0].value().detach()
+        var index = 0
+        while index < self.parameters.count() {
+            if !self.parameters[index].value().same_optimizer_placement(reference) {
+                panic("Tensor.Optim.clip_grad_norm requires all parameters on one placement")
+            }
+            let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm")
+            index++
+        }
+        var squared_norm = reference.autograd_constant_shape([], 0.0)
+        index = 0
+        while index < self.parameters.count() {
+            if let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm") {
+                if !gradient.is_empty() {
+                    squared_norm = squared_norm.add(gradient.multiply(gradient).sum())
+                }
+            }
+            index++
+        }
+        let norm = squared_norm.sqrt().detach()
+        if nonfinite == NonFiniteGradientPolicy.reject {
+            let observed = norm.cpu().item()
+            if !Math.is_finite(observed) {
+                panic("Tensor.Optim.clip_grad_norm rejected a non-finite global gradient norm")
+            }
+        }
+        let one = reference.autograd_constant_shape([], 1.0)
+        let maximum = reference.autograd_constant_shape([], maximum_norm)
+        let ratio = maximum.divide(norm.add(0.000001))
+        let factor = one.subtract(one.subtract(ratio).relu())
+        index = 0
+        while index < self.parameters.count() {
+            if let gradient = optimizer_gradient(self.parameters[index], "clip_grad_norm") {
+                self.parameters[index].replace_gradient(gradient.multiply(factor).detach())
+            }
+            index++
+        }
+        return norm
+    }
+
+    func step() {
+        var index = 0
+        while index < self.parameters.count() {
+            var parameter = self.parameters[index]
+            if self.states[index].step_count > 0 {
+                require_optimizer_tensor(
+                    parameter, self.states[index].first_moment,
+                    "first-moment state", "$(self.operation).step"
+                )
+                require_optimizer_tensor(
+                    parameter, self.states[index].second_moment,
+                    "second-moment state", "$(self.operation).step"
+                )
+            }
+            let gradient = optimizer_gradient(parameter, "$(self.operation).step")
+            if gradient!=null && self.states[index].step_count==9223372036854775807 {
+                panic("Tensor.Optim.$(self.operation).step counter overflows int")
+            }
+            index++
+        }
+
+        index = 0
+        while index < self.parameters.count() {
+            var parameter = self.parameters[index]
+            var state = self.states[index]
+            if let incoming = optimizer_gradient(parameter, "$(self.operation).step") {
+                var gradient = incoming
+                if !self.decoupled_decay && self.weight_decay != 0.0 {
+                    gradient = gradient.add(parameter.value().detach().multiply(self.weight_decay))
+                }
+                var first = state.first_moment
+                var second = state.second_moment
+                if state.step_count == 0 {
+                    first = parameter.value().detach().multiply(0.0)
+                    second = parameter.value().detach().multiply(0.0)
+                }
+                first = first.multiply(self.beta1).add(gradient.multiply(1.0 - self.beta1)).detach()
+                second = second.multiply(self.beta2).add(gradient.multiply(gradient).multiply(1.0 - self.beta2)).detach()
+                let next_step = state.step_count + 1
+                let first_correction = 1.0 - optimizer_power(self.beta1, next_step)
+                let second_correction = 1.0 - optimizer_power(self.beta2, next_step)
+                let numerator = first.divide(first_correction)
+                let denominator = second.divide(second_correction).sqrt().add(self.epsilon)
+                var base_value = parameter.value().detach()
+                if self.decoupled_decay && self.weight_decay != 0.0 {
+                    base_value = base_value.multiply(1.0 - self.current_learning_rate * self.weight_decay)
+                }
+                let next_value = base_value.subtract(
+                    numerator.divide(denominator).multiply(self.current_learning_rate)
+                ).detach()
+                parameter.apply(next_value)
+                state.first_moment = first.detach()
+                state.second_moment = second.detach()
+                state.step_count = next_step
+            }
+            index++
+        }
+    }
+
+    func state() AdamState {
+        var entries:AdamMomentState[]=[]
+        var index=0
+        while index<self.parameters.count() {
+            var first:Tensor?=null
+            var second:Tensor?=null
+            if self.states[index].step_count>0 {first=self.states[index].first_moment.detach();second=self.states[index].second_moment.detach()}
+            entries.append(AdamMomentState(name:self.parameters[index].name(),shape:optimizer_state_shape(self.parameters[index].value().shape()),step_count:self.states[index].step_count,first_moment:first,second_moment:second))
+            index++
+        }
+        return AdamState(learning_rate:self.current_learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:entries)
+    }
+
+    func restore(snapshot:AdamState) Result<void,str> {
+        if !state_positive(snapshot.learning_rate) || !state_unit_interval(snapshot.beta1) || !state_unit_interval(snapshot.beta2) ||
+            !state_positive(snapshot.epsilon) || !state_nonnegative(snapshot.weight_decay) {
+            return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires valid hyperparameters")
+        }
+        if snapshot.parameters.count()!=self.parameters.count() {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+        var restored:AdamSlot[]=[]
+        for parameter in self.parameters {
+            if parameter.gradient()!=null {return Result<void,str>.failure("Tensor.Optim.restore requires zero_grad before restoring state")}
+            var found=-1
+            var index=0
+            while index<snapshot.parameters.count() {
+                if snapshot.parameters[index].name==parameter.name() {
+                    if found>=0 {return Result<void,str>.failure("Tensor.Optim.restore requires unique parameter names")}
+                    found=index
+                }
+                index++
+            }
+            if found<0 {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+            var entry=snapshot.parameters[found]
+            if !optimizer_shapes_equal(entry.shape,parameter.value().shape()) {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter shapes")}
+            if entry.step_count<0 {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires non-negative step counts")}
+            var slot=AdamSlot()
+            if entry.step_count==0 {
+                if entry.first_moment!=null || entry.second_moment!=null {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires absent moments at step zero")}
+            } else {
+                if let first=entry.first_moment {
+                    if let second=entry.second_moment {
+                        try validate_state_tensor(parameter,first)
+                        try validate_state_tensor(parameter,second)
+                        slot.first_moment=first.detach();slot.second_moment=second.detach();slot.step_count=entry.step_count
+                    } else {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires both moments after step zero")}
+                } else {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires both moments after step zero")}
+            }
+            restored.append(slot)
+        }
+        self.states=restored
+        self.current_learning_rate=snapshot.learning_rate
+        self.beta1=snapshot.beta1
+        self.beta2=snapshot.beta2
+        self.epsilon=snapshot.epsilon
+        self.weight_decay=snapshot.weight_decay
+        return Result<void,str>.success()
+    }
+
+    func first_moment_state(name:str) Tensor? { return self.moment_state(name, true) }
+    func second_moment_state(name:str) Tensor? { return self.moment_state(name, false) }
+    func state_step(name:str) int {
+        var index = self.parameter_index(name)
+        return self.states[index].step_count
+    }
+
+    private func moment_state(name:str, first:bool) Tensor? {
+        var index = self.parameter_index(name)
+        if self.states[index].step_count == 0 { return null }
+        if first { return self.states[index].first_moment }
+        return self.states[index].second_moment
+    }
+
+    private func parameter_index(name:str) int {
+        var index = 0
+        while index < self.parameters.count() {
+            if self.parameters[index].name() == name { return index }
+            index++
+        }
+        panic("Tensor.Optim.$(self.operation) has no parameter named '$(name)'")
+    }
+}
+
+func optimizer_power(base:float, exponent:int) float {
+    var result:float=1.0
+    var power=base
+    var remaining=exponent
+    while remaining>0 {
+        if remaining%2==1 {result*=power}
+        remaining/=2
+        if remaining>0 {power*=power}
+    }
+    return result
+}

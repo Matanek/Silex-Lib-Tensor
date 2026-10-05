@@ -365,6 +365,8 @@ a placement change atomically instead of silently migrating part of a model.
 
 [Optimizer restoration](OptimizerState.md): named moments, atomic restoration, and current learning rate.
 
+[Decoupled decay and schedules](OptimizerUpdates.md): AdamW, explicit step, and next update rate.
+
 ## Compose and train a network
 
 `Tensor.Neural.Layer` is the common layer contract. `Sequential` executes layers

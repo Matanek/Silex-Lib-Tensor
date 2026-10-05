@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- AdamW applies decay independently of moments, with distinct named state and atomic restoration. LearningRateSchedule provides constant, step, exponential, and bounded cosine rates from an explicit step; finite positive rates and rate/update/increment order are documented in the [guide](Docs/EN/OptimizerUpdates.md).
+
 - SGD and Adam capture and restore named state with recoverable errors and atomic validation, without hidden transfers. The current rate can change without discarding moments. Adam bias correction is bounded for large restored counters, and overflow is rejected before mutation. See the [resume guide](Docs/EN/OptimizerState.md).
 
 - `Tensor.Data.Source`, `TensorSource`, and `BatchCursor` provide synchronous supervised batches. Stack or named callback collation has recoverable errors, advances after success, resumes the next batch, and preserves placement/dtypes/gradients. See the [guide](Docs/EN/SupervisedBatches.md).

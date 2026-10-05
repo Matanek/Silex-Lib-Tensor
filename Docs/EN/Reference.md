@@ -119,3 +119,5 @@ graph consumption, and Jacobian checking.
 [Supervised batches](SupervisedBatches.md): external sources, collation, recoverable errors and placement.
 
 [Optimizer restoration](OptimizerState.md): named moments, atomic restoration, and current learning rate.
+
+[Decoupled decay and schedules](OptimizerUpdates.md): AdamW, explicit step, and next update rate.

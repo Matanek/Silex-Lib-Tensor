@@ -1,0 +1,13 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+func main() {
+    var first=Parameter("first",Tensor.scalar(2.0));var second=Parameter("second",Tensor.scalar(3.0))
+    var optimizer=Optim.AdamW([first,second])
+    var entries:Optim.AdamMomentState[]=[
+        Optim.AdamMomentState(name:"first",shape:[],step_count:0,first_moment:null,second_moment:null),
+        Optim.AdamMomentState(name:"second",shape:[],step_count:9223372036854775807,first_moment:Tensor.scalar(1.0),second_moment:Tensor.scalar(1.0))
+    ]
+    try optimizer.restore(Optim.AdamWState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:entries)) else error {panic(error)}
+    first.value().sum().backward();second.value().sum().backward();optimizer.step()
+}

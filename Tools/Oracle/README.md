@@ -55,3 +55,14 @@ tolerance inputs. The neural fixture fixes identical MLP, CNN, and SimpleRNN
 weights and data for PyTorch and TensorFlow, then checks each layer output,
 named gradient, SGD/Adam update, and training checkpoints. A local finite-
 difference test independently covers a smooth derivative.
+
+## Mathematical AdamW oracle
+
+`adamw_decimal.py` uses Python’s standard-library Decimal at 50-digit precision
+for six explicit updates, including zero and tiny gradients. It records model
+values and both moments in `ADAMW_REPORT.json`; `AdamWOracle.sx` pins the rounded
+constants with an absolute tolerance of 2e-5 for float32 CPU/GPU. This independent
+mathematical oracle neither imports Tensor nor reuses its integer-power helper.
+Ordinary Silex tests remain offline and do not invoke Python. Recheck from the
+Tensor repository with `python3 Tools/Oracle/adamw_decimal.py --check`; review
+the report and Silex literal changes together after any deliberate regeneration.

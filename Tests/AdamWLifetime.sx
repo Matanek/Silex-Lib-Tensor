@@ -1,0 +1,29 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func adamw_cycle(device:GPU.Device) {
+    var parameter=Parameter("weight",Tensor.ones([2]).to(device));var optimizer=Optim.AdamW([parameter])
+    parameter.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    var saved=optimizer.state();var other=Parameter("weight",parameter.value().detach());var resumed=Optim.AdamW([other])
+    try resumed.restore(saved) else error {panic(error)}
+    other.value().sum().backward();resumed.step();resumed.zero_grad()
+    var cpu=saved.cpu()
+}
+
+test "AdamW engines snapshots and resumed GPU updates release graphs and buffers" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let before=autograd_performance_statistics()
+    var index=0
+    while index<32 {
+        adamw_cycle(device)
+        let after=autograd_performance_statistics()
+        assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        index++
+    }
+}

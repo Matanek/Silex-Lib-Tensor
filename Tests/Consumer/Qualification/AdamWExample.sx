@@ -1,0 +1,25 @@
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+
+func main() {
+    var parameter=Parameter("weight",Tensor.scalar(2.0))
+    var optimizer=Optim.AdamW([parameter],learning_rate:0.1,weight_decay:0.5)
+    parameter.value().multiply(0.0).backward();optimizer.step();optimizer.zero_grad()
+    assert(Math.abs(parameter.value().detach().item()-1.9)<0.000001)
+    var saved=optimizer.state()
+    var resumed_parameter=Parameter("weight",parameter.value().detach())
+    var resumed=Optim.AdamW([resumed_parameter])
+    try resumed.restore(saved) else error {panic(error)}
+    let schedule=Optim.LearningRateSchedule.cosine(0.1,duration:4,minimum_rate:0.01)
+    var step=1
+    while step<6 {
+        let rate=schedule.value_at(step)
+        optimizer.set_learning_rate(rate);resumed.set_learning_rate(rate)
+        parameter.value().multiply(3.0).backward();resumed_parameter.value().multiply(3.0).backward()
+        optimizer.step();resumed.step();optimizer.zero_grad();resumed.zero_grad()
+        assert(parameter.value().detach().item()==resumed_parameter.value().detach().item())
+        step++
+    }
+}

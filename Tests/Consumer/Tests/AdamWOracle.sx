@@ -1,0 +1,119 @@
+// Pinned mathematical AdamW oracle, Decimal precision 50. See Tools/Oracle/ADAMW_REPORT.json.
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+use GFX.GPU
+
+func adamw_close(actual:Tensor,expected:float[]) bool {
+    let values=actual.detach().cpu().values()
+    if values.count()!=expected.count() {return false}
+    var index=0
+    while index<values.count() {
+        if !Math.is_finite(values[index]) || Math.abs(values[index]-expected[index])>0.00002 {return false}
+        index++
+    }
+    return true
+}
+
+func adamw_required(value:Tensor?) Tensor {
+    if let result=value {return result}
+    panic("expected initialized AdamW moment")
+}
+
+func adamw_oracle(device:GPU.Device?) {
+    var initial:float[]=[1.0,-2.0];var tensor=Tensor.vector(initial)
+    if let gpu=device {tensor=tensor.to(gpu)}
+    var parameter=Parameter("weight",tensor)
+    var optimizer=Optim.AdamW([parameter],learning_rate:0.01,beta1:0.8,beta2:0.9,epsilon:0.000001,weight_decay:0.05)
+    {
+        var gradient_values:float[]=[0.3,-0.2];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==1)
+        var expected_value:float[]=[0.9895000333,-1.98900005]
+        var expected_first:float[]=[0.06,-0.04]
+        var expected_second:float[]=[0.009,0.004]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+    {
+        var gradient_values:float[]=[-0.1,0.4];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==2)
+        var expected_value:float[]=[0.9854513469,-1.992156869]
+        var expected_first:float[]=[0.028,0.048]
+        var expected_second:float[]=[0.0091,0.0196]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+    {
+        var gradient_values:float[]=[0.0,0.0];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==3)
+        var expected_value:float[]=[0.9823182293,-1.994245009]
+        var expected_first:float[]=[0.0224,0.0384]
+        var expected_second:float[]=[0.00819,0.01764]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+    {
+        var gradient_values:float[]=[1.0,-2.0];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==4)
+        var expected_value:float[]=[0.9752213138,-1.987560101]
+        var expected_first:float[]=[0.21792,-0.36928]
+        var expected_second:float[]=[0.107371,0.415876]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+    {
+        var gradient_values:float[]=[0.0001,-0.0002];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==5)
+        var expected_value:float[]=[0.9693951021,-1.981969505]
+        var expected_first:float[]=[0.174356,-0.295464]
+        var expected_second:float[]=[0.096633901,0.374288404]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+    {
+        var gradient_values:float[]=[0.3,0.1];var gradient=Tensor.vector(gradient_values)
+        if let gpu=device {gradient=gradient.to(gpu);gpu.reset_command_stats()}
+        parameter.value().multiply(gradient).sum().backward();optimizer.step();optimizer.zero_grad()
+        var state=optimizer.state()
+        if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+        assert(state.parameters[0].step_count==6)
+        var expected_value:float[]=[0.9629366073,-1.977525164]
+        var expected_first:float[]=[0.1994848,-0.2163712]
+        var expected_second:float[]=[0.0959705109,0.3378595636]
+        assert(adamw_close(parameter.value(),expected_value))
+        assert(adamw_close(adamw_required(state.parameters[0].first_moment),expected_first))
+        assert(adamw_close(adamw_required(state.parameters[0].second_moment),expected_second))
+    }
+}
+
+test "match independent AdamW parameter and moment oracle for six CPU updates" {adamw_oracle(null)}
+test "match independent AdamW parameter and moment oracle for six resident GPU updates" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));adamw_oracle(device)
+}

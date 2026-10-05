@@ -1,0 +1,63 @@
+use STD.Math
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+
+test "constant schedule preserves rate for any explicit nonnegative step" {
+    let schedule=Optim.LearningRateSchedule.constant(0.125)
+    assert(schedule.value_at(0)==0.125 && schedule.value_at(9223372036854775807)==0.125)
+    assert(schedule.value_at(12)==schedule.value_at(12))
+}
+
+test "step schedule changes at multiples of step size with no hidden counter" {
+    let schedule=Optim.LearningRateSchedule.step(0.125,step_size:3,gamma:0.5)
+    assert(schedule.value_at(0)==0.125 && schedule.value_at(2)==0.125)
+    assert(schedule.value_at(3)==0.0625 && schedule.value_at(5)==0.0625)
+    assert(schedule.value_at(6)==0.03125 && schedule.value_at(12)==0.0078125)
+    assert(schedule.value_at(2)==0.125)
+}
+
+test "exponential schedule supports decreasing increasing and unit gamma" {
+    let decreasing=Optim.LearningRateSchedule.exponential(0.125,gamma:0.5)
+    let increasing=Optim.LearningRateSchedule.exponential(0.125,gamma:2.0)
+    assert(decreasing.value_at(0)==0.125 && decreasing.value_at(1)==0.0625 && decreasing.value_at(3)==0.015625)
+    assert(increasing.value_at(0)==0.125 && increasing.value_at(3)==1.0)
+    let unit=Optim.LearningRateSchedule.exponential(0.125,gamma:1.0)
+    let steps=Optim.LearningRateSchedule.step(0.125,step_size:1,gamma:1.0)
+    assert(unit.value_at(9223372036854775807)==0.125 && steps.value_at(9223372036854775807)==0.125)
+}
+
+test "cosine schedule follows independent values then remains at its explicit minimum" {
+    let schedule=Optim.LearningRateSchedule.cosine(0.1,duration:4,minimum_rate:0.01)
+    var expected:float[]=[0.1,0.08681980515,0.055,0.02318019485,0.01,0.01]
+    var step=0
+    while step<expected.count() {
+        assert(Math.abs(schedule.value_at(step)-expected[step])<0.0000001)
+        step++
+    }
+    assert(schedule.value_at(9223372036854775807)==0.01)
+    let constant=Optim.LearningRateSchedule.cosine(0.1,duration:1,minimum_rate:0.1)
+    assert(constant.value_at(0)==0.1 && constant.value_at(1)==0.1)
+}
+
+test "apply rate at explicit step before SGD update and resume the next step" {
+    let schedule=Optim.LearningRateSchedule.step(0.1,step_size:2,gamma:0.5)
+    var parameter=Parameter("weight",Tensor.scalar(2.0));var optimizer=Optim.SGD([parameter],learning_rate:0.1,momentum:0.5)
+    var step=0
+    while step<3 {
+        optimizer.set_learning_rate(schedule.value_at(step))
+        parameter.value().sum().backward();optimizer.step();optimizer.zero_grad();step++
+    }
+    // Independent recurrence: updates 0.1*1, 0.1*1.5, 0.05*1.75.
+    assert(Math.abs(parameter.value().detach().item()-1.6625)<0.000001)
+    var saved=optimizer.state();var restored_parameter=Parameter("weight",parameter.value().detach())
+    var restored=Optim.SGD([restored_parameter],learning_rate:1.0)
+    try restored.restore(saved) else error {panic(error)}
+    while step<8 {
+        let rate=schedule.value_at(step);optimizer.set_learning_rate(rate);restored.set_learning_rate(rate)
+        parameter.value().sum().backward();restored_parameter.value().sum().backward()
+        optimizer.step();restored.step();optimizer.zero_grad();restored.zero_grad()
+        assert(parameter.value().detach().item()==restored_parameter.value().detach().item())
+        step++
+    }
+}

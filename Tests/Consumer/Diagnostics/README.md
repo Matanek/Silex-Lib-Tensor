@@ -174,3 +174,9 @@ Optimizer restoration adds `SGDLearningRateZero`, `SGDLearningRateNaN`,
 for prevalidation before an active maximal counter advances. Each name refers
 to its `.sx` fixture. Recoverable invalid snapshots and unchanged prior state
 are asserted in `Tests/OptimizerRestoration.sx`.
+
+AdamW adds `AdamWLearningRateZero`/`NaN`/`Infinity`, `AdamWInvalidBeta`,
+`AdamWCounterOverflow`, and `AdamWPrivateEngine`. `Schedule*` fixtures diagnose
+invalid rate/gamma domains, positive step sizes/durations, explicit cosine bounds,
+negative steps, and multiplicative overflow/underflow. Ordinary schedule tests
+cover exact boundaries and restart order.

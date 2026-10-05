@@ -1,0 +1,64 @@
+use STD.Math
+
+enum RateScheduleKind { constant; step; exponential; cosine }
+
+public struct LearningRateSchedule {
+    private let kind:RateScheduleKind
+    private let initial_rate:float
+    private let gamma:float
+    private let interval:int
+    private let minimum_rate:float
+
+    private init(kind:RateScheduleKind,initial_rate:float,gamma:float,interval:int,minimum_rate:float) {
+        self.kind=kind
+        self.initial_rate=initial_rate
+        self.gamma=gamma
+        self.interval=interval
+        self.minimum_rate=minimum_rate
+    }
+
+    static func constant(learning_rate:float) LearningRateSchedule {
+        require_positive(learning_rate,"learning_rate","LearningRateSchedule.constant")
+        return LearningRateSchedule(RateScheduleKind.constant,learning_rate,1.0,1,learning_rate)
+    }
+
+    static func step(learning_rate:float,step_size:int,gamma:float) LearningRateSchedule {
+        require_positive(learning_rate,"learning_rate","LearningRateSchedule.step")
+        require_positive(gamma,"gamma","LearningRateSchedule.step")
+        if step_size<=0 {panic("Tensor.Optim.LearningRateSchedule.step requires step_size > 0")}
+        return LearningRateSchedule(RateScheduleKind.step,learning_rate,gamma,step_size,learning_rate)
+    }
+
+    static func exponential(learning_rate:float,gamma:float) LearningRateSchedule {
+        require_positive(learning_rate,"learning_rate","LearningRateSchedule.exponential")
+        require_positive(gamma,"gamma","LearningRateSchedule.exponential")
+        return LearningRateSchedule(RateScheduleKind.exponential,learning_rate,gamma,1,learning_rate)
+    }
+
+    static func cosine(learning_rate:float,duration:int,minimum_rate:float) LearningRateSchedule {
+        require_positive(learning_rate,"learning_rate","LearningRateSchedule.cosine")
+        require_positive(minimum_rate,"minimum_rate","LearningRateSchedule.cosine")
+        if duration<=0 {panic("Tensor.Optim.LearningRateSchedule.cosine requires duration > 0")}
+        if minimum_rate>learning_rate {panic("Tensor.Optim.LearningRateSchedule.cosine requires minimum_rate <= learning_rate")}
+        return LearningRateSchedule(RateScheduleKind.cosine,learning_rate,1.0,duration,minimum_rate)
+    }
+
+    func value_at(step:int) float {
+        if step<0 {panic("Tensor.Optim.LearningRateSchedule.value_at requires step >= 0")}
+        var rate=self.initial_rate
+        match self.kind {
+            constant => {}
+            step => {rate*=optimizer_power(self.gamma,step/self.interval)}
+            exponential => {rate*=optimizer_power(self.gamma,step)}
+            cosine => {
+                if step>=self.interval {rate=self.minimum_rate}
+                else if step>0 {
+                    let fraction=(step as float)/(self.interval as float)
+                    rate=self.minimum_rate+(self.initial_rate-self.minimum_rate)*(1.0+Math.cos(Math.pi()*fraction))*0.5
+                }
+            }
+        }
+        require_positive(rate,"result","LearningRateSchedule.value_at")
+        return rate
+    }
+}

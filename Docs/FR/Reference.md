@@ -119,3 +119,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Lots supervisés](SupervisedBatches.md) : sources extérieures, collation, erreurs récupérables et placement.
 
 [Reprise des optimiseurs](OptimizerState.md) : moments nommés, restauration atomique et taux courant.
+
+[Décroissance découplée et calendriers](OptimizerUpdates.md) : AdamW, étape explicite et taux du prochain pas.

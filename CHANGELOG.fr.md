@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- AdamW applique une décroissance découplée des moments, avec état nommé distinct et reprise atomique. LearningRateSchedule fournit constant, paliers, exponentiel et cosinus borné depuis une étape explicite ; taux finis positifs, ordre taux/pas/incrément documenté. Voir le [guide](Docs/FR/OptimizerUpdates.md).
+
 - SGD et Adam capturent et restaurent leurs états nommés avec erreurs récupérables et validation atomique, sans transfert caché. Le taux courant peut changer sans perdre les moments. Correction de biais Adam bornée pour les grands compteurs restaurés et débordement refusé avant mutation. Voir le [guide de reprise](Docs/FR/OptimizerState.md).
 
 - `Tensor.Data.Source`, `TensorSource` et `BatchCursor` produisent des lots supervisés synchrones. Collation stack ou callback nommé avec erreurs récupérables, progression après réussite, reprise du prochain lot et placements/dtypes/gradients préservés. Voir le [guide](Docs/FR/SupervisedBatches.md).
