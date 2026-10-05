@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Compose an [external layer and share its parameters](Composition.md).
 - Select the [best elements and their gradients](TopK.md).
 - Find [extremum indices](IndexedReductions.md) and select their values.
 - Build [indices and numerical grids](Sequences.md).
@@ -396,9 +397,10 @@ The model must be on the CPU while loading; explicitly call `model.to(device)`
 afterwards when needed. A checkpoint contains no code, autograd graph, or
 optimizer state.
 
-Custom composition may remain an application type or function assembling the
-public Tensor operations. Version 0.2.0 does not provide BatchNorm, grouped or
-transposed convolution, LSTM/GRU, embeddings, or attention.
+Custom composition can [derive from Layer](Composition.md) or remain an
+application type or function assembling public Tensor operations. Version 0.2.0
+does not provide BatchNorm, grouped or transposed convolution, LSTM/GRU, embeddings,
+or attention.
 
 ## Move to the GPU
 

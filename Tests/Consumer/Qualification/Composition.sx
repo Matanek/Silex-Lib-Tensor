@@ -1,0 +1,83 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Profile
+use GFX.GPU
+
+nocopy class Residual:Neural.Layer {
+    private var block:Neural.Dense
+
+    init(block:Neural.Dense) { self.block = block }
+    override func forward(input:Tensor) Tensor { return input.add(self.block.forward(input)) }
+    override func parameters() Neural.Parameter[] { return self.block.parameters() }
+    override func to(device:GPU.Device) { self.block.to(device) }
+    override func cpu() { self.block.cpu() }
+}
+
+nocopy class StatefulLayer:Neural.Layer {
+    private var training:bool
+    private var calls:int
+    private var changes:int
+    init() { self.training = false; self.calls = 0; self.changes = 0 }
+    override func forward(input:Tensor) Tensor {
+        self.calls++
+        if self.training { return input.multiply(2.0) }
+        return input
+    }
+    override func train() { self.training = true; self.changes++ }
+    override func eval() { self.training = false; self.changes++ }
+    override func to(device:GPU.Device) { self.changes++ }
+    override func cpu() { self.changes++ }
+    func call_count() int { return self.calls }
+    func change_count() int { return self.changes }
+}
+
+func shared_block() Neural.Dense {
+    var block = Neural.Dense("shared",1,1,seed:0)
+    var parameters = block.parameters()
+    parameters[0].replace(Tensor.full([1,1],2.0))
+    parameters[1].replace(Tensor.full([1],1.0))
+    return block
+}
+
+func input_residual_loss(inputs:Tensor[]) Tensor {
+    var model:Neural.Layer = Residual(shared_block())
+    return model.forward(inputs[0]).sum()
+}
+
+func verify_composition_gpu(device:GPU.Device) {
+    var block = shared_block()
+    var left:Neural.Layer = Residual(block); var right:Neural.Layer = Residual(block)
+    left.to(device)
+    var parameters = block.parameters()
+    assert(parameters[0].value().is_gpu() && right.parameters()[0] == parameters[0])
+    var values:float[] = [1.0,2.0]
+    var input = Autograd.Variable(Tensor(values,[2,1]).to(device))
+    var profile = Profile(device)
+    let output = left.forward(input.value()).add(right.forward(input.value())).sum()
+    var gradients = Autograd.grad(output,[parameters[0].value(),parameters[1].value(),input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(output.detach().cpu().item() == 22.0 && gradients[0].cpu().item() == 6.0 && gradients[1].cpu().item() == 4.0)
+    for value in gradients[2].cpu().values() { assert(value == 6.0) }
+    assert(parameters[0].gradient() == null && parameters[1].gradient() == null && input.gradient() == null)
+    right.cpu()
+    assert(parameters[0].value().is_cpu() && left.parameters()[0] == parameters[0])
+    var leaf = StatefulLayer()
+    var base:Neural.Layer = leaf
+    base.to(device); assert(leaf.change_count() == 1)
+}
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    verify_composition_gpu(device)
+    var leaf = StatefulLayer()
+    var base:Neural.Layer = leaf
+    base.train(); assert(base.forward(Tensor.scalar(4.0)).item() == 8.0)
+    var layers:Neural.Layer[] = [leaf]
+    var sequence = Neural.Sequential(layers)
+    sequence.eval(); assert(sequence.forward(Tensor.scalar(4.0)).item() == 4.0)
+    base.cpu()
+    assert(leaf.call_count() == 2 && leaf.change_count() == 3)
+    print("Tensor external composition qualification passed")
+}

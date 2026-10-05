@@ -1,0 +1,2 @@
+use Tensor.Neural
+func main() { var layer = Neural.Layer() }

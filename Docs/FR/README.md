@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Composez une [couche extérieure et partagez ses paramètres](Composition.md).
 - Sélectionnez les [meilleurs éléments et leurs gradients](TopK.md).
 - Trouvez les [indices des extrema](IndexedReductions.md) et sélectionnez leurs valeurs.
 - Construisez des [indices et grilles numériques](Sequences.md).
@@ -406,8 +407,8 @@ paramètres avant la première mutation. Le modèle doit être sur CPU pendant l
 lecture ; appelez ensuite explicitement `model.to(device)` si nécessaire. Le
 checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.
 
-La composition personnalisée peut rester un type ou une fonction applicative
-qui assemble les opérations Tensor publiques. La version 0.2.0 ne fournit pas
+La composition personnalisée peut [dériver de Layer](Composition.md) ou rester
+un type ou une fonction applicative qui assemble les opérations Tensor publiques. La version 0.2.0 ne fournit pas
 BatchNorm, convolution groupée ou transposée, LSTM/GRU, embedding ni attention.
 
 ## Passer sur GPU

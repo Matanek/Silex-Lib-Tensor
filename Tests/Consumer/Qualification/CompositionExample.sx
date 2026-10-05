@@ -1,0 +1,32 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class Residual:Neural.Layer {
+    private var block:Neural.Dense
+
+    init(block:Neural.Dense) { self.block = block }
+    override func forward(input:Tensor) Tensor { return input.add(self.block.forward(input)) }
+    override func parameters() Neural.Parameter[] { return self.block.parameters() }
+    override func to(device:GPU.Device) { self.block.to(device) }
+    override func cpu() { self.block.cpu() }
+}
+
+func main() {
+    var block = Neural.Dense("shared",1,1,seed:0)
+    var parameters = block.parameters()
+    parameters[0].replace(Tensor.full([1,1],2.0))
+    parameters[1].replace(Tensor.full([1],1.0))
+    var left:Neural.Layer = Residual(block)
+    var right:Neural.Layer = Residual(block)
+    assert(left.parameters()[0] == right.parameters()[0])
+    var observations:float[] = [1.0,2.0]
+    var input = Autograd.Variable(Tensor(observations,[2,1]))
+    let output = left.forward(input.value()).add(right.forward(input.value())).sum()
+    assert(output.detach().item() == 22.0)
+    var gradients = Autograd.grad(output,[parameters[0].value(),parameters[1].value(),input.value()])
+    assert(gradients[0].item() == 6.0 && gradients[1].item() == 4.0)
+    for value in gradients[2].values() { assert(value == 6.0) }
+    assert(parameters[0].gradient() == null && parameters[1].gradient() == null && input.gradient() == null)
+}

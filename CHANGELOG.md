@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- External classes can derive from `Neural.Layer` through its protected
+  constructor and share existing layers/parameters. Virtual state hooks rely
+  on the compiler’s family-wide mutation inference; remove the obsolete base
+  marker. CPU/GPU residual values and shared gradients are qualified. See the
+  [composition guide](Docs/EN/Composition.md).
+
 - Add `Tensor.topk` with explicit axis, ordered values and detached int32
   indices in `TopKResult`. Exact CPU numeric comparisons and resident float32
   GPU selection preserve first-index ties and NaN ordering; selected values
