@@ -1,0 +1,34 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+
+func demonstrate_multihead(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",4,2,seed:17,dropout_probability:0.1)
+    var data:float[]=[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2]
+    var input=Tensor(data,[1,3,4])
+    let valid=Neural.sequence_mask([2],3)
+    var mask=valid.reshape([1,1,3,1]).logical_and(valid.reshape([1,1,1,3])).logical_and(Neural.causal_mask(3,3))
+    if let gpu=device {model.to(gpu);input=input.to(gpu);mask=mask.to(gpu)}
+    var values=Autograd.Variable(input)
+    var optimizer=Optim.AdamW(model.parameters(),learning_rate:0.01)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let result=model.attend(values.value(),values.value(),values.value(),mask:mask,iteration:0,return_weights:true)
+    result.output.sum().backward();optimizer.step();optimizer.zero_grad()
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    let output=result.output.detach().cpu().values()
+    assert(result.output.shape()[2]==4)
+    var i=8;while i<12 {assert(output[i]==0.0);i++}
+    if let weights=result.weights {assert(weights.shape()[1]==2 && weights.shape()[2]==3 && weights.shape()[3]==3)} else {panic("expected attention weights")}
+    if let gradient=values.gradient() {
+        let gradient_values=gradient.cpu().values();var j=8;while j<12 {assert(gradient_values[j]==0.0);j++}
+    } else {panic("expected input gradient")}
+}
+func main() {
+    demonstrate_multihead(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));demonstrate_multihead(device)}
+    print("Multi-head attention: causal padding and resident AdamW step")
+}

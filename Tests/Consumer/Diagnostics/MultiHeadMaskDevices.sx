@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func main() {var model=Neural.MultiHeadAttention("attention",2,2,seed:13);var first=GPU.Device();var second=GPU.Device();model.to(first);let x=Tensor.ones([1,2,2]).to(first);let output=model.attend(x,x,x,mask:Tensor.scalar(true).to(second))}

@@ -1,0 +1,91 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use STD.File
+use STD.FileSystem
+use STD.Math
+use GFX.GPU
+
+func multihead_checkpoint_source() Data.TensorSource {
+    var samples:float[]=[0.2,0.6,0.4,0.8,0.3,0.7,0.5,0.9,0.4,0.8,0.6,1.0,0.5,0.9,0.7,1.1]
+    var targets:float[]=[0.2,-0.3,0.2,-0.3,0.2,-0.3,0.2,-0.3,0.2,-0.3,0.2,-0.3,0.2,-0.3,0.2,-0.3]
+    return Data.TensorSource(Tensor(samples,[4,2,2]),Tensor(targets,[4,2,2]))
+}
+func multihead_checkpoint_step(model:Neural.MultiHeadAttention,optimizer:Optim.AdamW,cursor:Data.BatchCursor,step:int,device:GPU.Device?) {
+    var reading=cursor;var active=model;var optim=optimizer
+    var batch=try reading.next() else error {panic(error)}
+    if batch==null {reading.set_epoch(reading.state().epoch+1);batch=try reading.next() else error {panic(error)}}
+    if var value=batch {
+        if let gpu=device {value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        let output=active.attend(value.input,value.input,value.input,iteration:step).output
+        output.mse_loss(value.target).backward();optim.step();optim.zero_grad()
+    } else {panic("empty attention checkpoint source")}
+}
+func multihead_checkpoint_text(path:str) str {
+    match File.read_text(path,1024*1024) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
+}
+func multihead_checkpoint_remove(path:str) {
+    match FileSystem.remove_file(path) {success=>{};failure(error)=>{panic(error.detail)}}
+}
+func multihead_checkpoint_resume(device:GPU.Device?) {
+    let first="/private/tmp/tensor-multihead-checkpoint-a.sxtc"
+    let second="/private/tmp/tensor-multihead-checkpoint-b.sxtc"
+    var left=Neural.MultiHeadAttention("attention",2,2,seed:17,dropout_probability:0.25)
+    var cursor=Data.BatchCursor(multihead_checkpoint_source(),2,shuffle:true,seed:7)
+    if let gpu=device {left.to(gpu)}
+    var optimizer=Optim.AdamW(left.parameters(),learning_rate:0.03,weight_decay:0.01)
+    var step=0
+    while step<3 {multihead_checkpoint_step(left,optimizer,cursor,step,device);step++}
+    try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+    var right=Neural.MultiHeadAttention("attention",2,2,seed:97,dropout_probability:0.25)
+    var resumed_cursor=Data.BatchCursor(multihead_checkpoint_source(),2,shuffle:true,seed:7,prefetch:2)
+    var resumed=Optim.AdamW(right.parameters(),learning_rate:1.0)
+    let progress=try Neural.TrainingCheckpoint.load(right,resumed,resumed_cursor,first) else error {panic(error)}
+    assert(progress.step==3 && cursor.state()==resumed_cursor.state())
+    try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,progress,second) else error {panic(error)}
+    assert(multihead_checkpoint_text(first)==multihead_checkpoint_text(second))
+    var incompatible=Neural.MultiHeadAttention("attention",2,1,seed:99,dropout_probability:0.25)
+    var rejected=Optim.AdamW(incompatible.parameters(),learning_rate:1.0)
+    let before=incompatible.parameters()[0].value().detach().values()
+    match Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first) {
+        success(ignored)=>{panic("accepted incompatible attention heads")}
+        failure(error)=>{assert(error!="")}
+    }
+    let after=incompatible.parameters()[0].value().detach().values()
+    var i=0;while i<before.count() {assert(before[i]==after[i]);i++}
+    if let gpu=device {let moments=resumed.state().to(gpu);right.to(gpu);try resumed.restore(moments) else error {panic(error)}}
+    while step<8 {
+        multihead_checkpoint_step(left,optimizer,cursor,step,device)
+        multihead_checkpoint_step(right,resumed,resumed_cursor,step,device);step++
+        try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+        try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,Neural.TrainingProgress(step:step),second) else error {panic(error)}
+        assert(multihead_checkpoint_text(first)==multihead_checkpoint_text(second))
+    }
+    multihead_checkpoint_remove(first);multihead_checkpoint_remove(second)
+}
+test "multi-head checkpoint restores seed explicit iteration batches and AdamW exactly on CPU" {multihead_checkpoint_resume(null)}
+test "multi-head checkpoint resumes Metal with explicit weight and moment uploads" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_checkpoint_resume(device)
+}
+func multihead_learns(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:17)
+    var source=multihead_checkpoint_source()
+    var cursor=Data.BatchCursor(source,4,shuffle:false)
+    var batch=try cursor.next() else error {panic(error)}
+    if var value=batch {
+        if let gpu=device {model.to(gpu);value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        model.eval()
+        let initial=model.forward(value.input).mse_loss(value.target).detach().cpu().values()[0]
+        var optimizer=Optim.AdamW(model.parameters(),learning_rate:0.04)
+        var step=0
+        while step<30 {model.forward(value.input).mse_loss(value.target).backward();optimizer.step();optimizer.zero_grad();step++}
+        let final=model.forward(value.input).mse_loss(value.target).detach().cpu().values()[0]
+        assert(Math.is_finite(final) && final<initial*0.25)
+    } else {panic("empty attention learning source")}
+}
+test "small multi-head model learns a synthetic target on CPU and Metal" {
+    multihead_learns(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_learns(device)}
+}

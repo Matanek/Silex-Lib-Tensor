@@ -17,6 +17,7 @@ contrats de chaque opération.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` aussi entiers | `float32` | `float32` |
 | `concatenate`, `stack` | les neuf + booléens | les neuf + booléens résidents | `float32` |
 | `gather` | source quelconque, indices `int32` | source `float32`, indices `int32` | source `float32` |
+| `Neural.MultiHeadAttention` | projections `float32`, rang3 | idem, calcul résident | Q/K/V et huit paramètres nommés |
 | `Neural.attention` | `float32`, rang3/4 | idem, calcul résident | Q/K/V et poids optionnels |
 | `Neural.Embedding` | indices `int32`, poids `float32` | idem, calcul résident | poids dense ; padding à dérivée arrêtée |
 | `Neural.sequence_mask`, `Neural.causal_mask` | booléens construits depuis métadonnées `int` | transfert explicite, logique résidente | détachés ; `true` autorise |
@@ -157,3 +158,7 @@ paramètres historique reste distinct et compatible.
 ## Attention
 
 `Neural.attention(query,key,value,mask:null,scale:null,return_weights:false)` : calcul batch-first rang3/4, échelle finie, visibilité booléenne et poids optionnels. Formes vides, gradients partagés et placement dans le [guide](Attention.md).
+
+## Attention multi-têtes
+
+`Neural.MultiHeadAttention(name,features,heads,seed,dropout_probability:0.0)` : `attend` self/cross avec masque, échelle, itération et poids optionnels ; `forward` self à itération0. État partagé, dropout et reprise dans le [guide](MultiHeadAttention.md).

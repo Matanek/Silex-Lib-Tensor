@@ -113,3 +113,15 @@ Conversion is direct row-major, with no parameter transpose, bias or gate orderi
 `AttentionOracle.sx` is a hermetic CPU/Metal consumer with absolute tolerance
 0.000002. Check with `python3 Tools/Oracle/attention_decimal.py --check`; review
 report and generated source together after deliberate regeneration.
+
+## Projected multi-head Decimal fixture
+
+`multihead_decimal.py` uses standard-library Decimal at 60 digits to compute
+four asymmetric affine projections, direct exp normalization per head and
+analytic gradients of Q/K/V and every weight/bias. Head-specific masks include
+an empty query and a query with only one visible head. `MULTIHEAD_REPORT.json`
+pins inputs, row-major `[input,output]` weights, biases and output feature order;
+there is no framework packing or transpose conversion. Hermetic CPU/Metal tests
+use absolute tolerance 0.000003. Recheck with
+`python3 Tools/Oracle/multihead_decimal.py --check`, and review fixture/report
+together after deliberate regeneration.

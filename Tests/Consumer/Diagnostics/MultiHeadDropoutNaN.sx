@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+func main() {var model=Neural.MultiHeadAttention("attention",2,2,seed:1,dropout_probability:Math.sqrt(-1.0))}

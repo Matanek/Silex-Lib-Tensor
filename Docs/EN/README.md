@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Train [multi-head attention with explicit dropout](MultiHeadAttention.md).
 - Apply [self/cross-attention to values](Attention.md).
 - Normalize [scores with a stable masked softmax](MaskedSoftmax.md).
 - Build [length and causal masks](SequenceMasks.md).

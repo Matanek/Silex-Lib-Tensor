@@ -1,0 +1,40 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+
+func multihead_shared_state(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:17)
+    var diagonal:float[]=[1.0,0.0,0.0,1.0]
+    for parameter in model.parameters() {var p=parameter;if p.value().rank()==2 {p.replace(Tensor(diagonal,[2,2]))} else {p.replace(Tensor.zeros([2]))}}
+    var root=Neural.Sequential([model,model])
+    assert(root.parameters().count()==8 && root.children().count()==1)
+    var input=Tensor.ones([2,4,2])
+    if let gpu=device {root.to(gpu);input=input.to(gpu)}
+    root.eval();assert(!model.is_training())
+    var optimizer=Optim.SGD(root.parameters(),learning_rate:0.01)
+    root.forward(input).sum().backward()
+    for parameter in root.parameters() {
+        if parameter.name()=="attention.value.weight" {
+            if let gradient=parameter.gradient() {for value in gradient.cpu().values() {assert(Math.abs(value-16.0)<0.00001)}} else {panic("expected shared gradient")}
+        }
+    }
+    optimizer.step();optimizer.zero_grad()
+    for parameter in root.parameters() {if parameter.name()=="attention.value.weight" {assert(Math.abs(parameter.value().detach().cpu().values()[0]-0.84)<0.00001)}}
+    root.freeze()
+    for parameter in model.parameters() {assert(!parameter.is_trainable() && parameter.gradient()==null)}
+    var variable=Autograd.Variable(input)
+    root.forward(variable.value()).sum().backward()
+    if let gradient=variable.gradient() {assert(gradient.count()==16 && gradient.abs().sum().cpu().values()[0]>0.0)} else {panic("expected frozen input gradient")}
+    for parameter in root.parameters() {assert(parameter.gradient()==null)}
+    root.zero_grad();root.unfreeze();root.train()
+    for parameter in model.parameters() {assert(parameter.is_trainable())}
+    assert(model.is_training())
+}
+test "shared multi-head layer updates each parameter once and preserves frozen input gradients on CPU" {multihead_shared_state(null)}
+test "shared multi-head layer state and placement work through Sequential on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_shared_state(device)
+}

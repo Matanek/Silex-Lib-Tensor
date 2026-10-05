@@ -1,0 +1,40 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func multihead_graph(device:GPU.Device, mode:int, return_weights:bool, iteration:int) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:13,dropout_probability:0.25)
+    model.to(device)
+    var q=Autograd.Variable(Tensor.ones([1,2,2]).to(device))
+    var k=Autograd.Variable(Tensor.ones([1,3,2]).to(device))
+    var v=Autograd.Variable(Tensor.ones([1,3,2]).to(device))
+    let mask=Neural.sequence_mask([2],3).to(device)
+    let result=model.attend(q.value(),k.value(),v.value(),mask:mask,iteration:iteration,return_weights:return_weights)
+    if mode==0 {result.output.sum().backward()}
+    elif mode==1 {var gradients=Autograd.grad(result.output.sum(),[q.value(),k.value(),v.value()]);assert(gradients.count()==3)}
+    if let weights=result.weights {assert(weights.count()==12)}
+}
+test "multi-head projections dropout and optional graphs release resources within a fixed peak" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics()
+    var profile=Profile(device)
+    var peak=0;var cycle=0
+    while cycle<32 {
+        profile.reset()
+        var mode=0
+        while mode<3 {multihead_graph(device,mode,false,cycle);multihead_graph(device,mode,true,cycle);mode++}
+        let stats=profile.snapshot()
+        assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+        if cycle==0 {peak=stats.peak_bytes;assert(peak>0)}
+        assert(stats.peak_bytes<=peak)
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+    print("Multi-head lifetime peak bytes: ",peak)
+}

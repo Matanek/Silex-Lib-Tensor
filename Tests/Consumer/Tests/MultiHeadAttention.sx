@@ -1,0 +1,148 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func multihead_near(actual:Tensor, expected:float[], tolerance:float = 0.00001) {
+    let data=actual.detach().cpu().values()
+    assert(data.count()==expected.count())
+    var i=0;while i<data.count() {assert(Math.is_finite(data[i]) && Math.abs(data[i]-expected[i])<tolerance);i++}
+}
+func multihead_identity(model:Neural.MultiHeadAttention) {
+    var active=model
+    var diagonal:float[]=[1.0,0.0,0.0,1.0]
+    for parameter in active.parameters() {
+        var p=parameter
+        if p.value().rank()==2 {p.replace(Tensor(diagonal,[2,2]))}
+        else {p.replace(Tensor.zeros([2]))}
+    }
+}
+func multihead_witness(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:7)
+    multihead_identity(model)
+    for parameter in model.parameters() {if parameter.name()=="attention.output.bias" {var p=parameter;p.replace(Tensor.full([2],2.0))}}
+    var qs:float[]=[1.0,0.0,0.0,1.0];var ks:float[]=[1.0,0.0,0.0,1.0,1.0,1.0];var vs:float[]=[2.0,4.0,6.0,8.0,10.0,12.0]
+    var flags:bool[]=[false,false,false,true,true,false]
+    var q=Tensor(qs,[1,2,2]);var k=Tensor(ks,[1,3,2]);var v=Tensor(vs,[1,3,2]);var mask=Tensor(flags,[1,1,2,3])
+    if let gpu=device {model.to(gpu);q=q.to(gpu);k=k.to(gpu);v=v.to(gpu);mask=mask.to(gpu)}
+    var query=Autograd.Variable(q);var key=Autograd.Variable(k);var value=Autograd.Variable(v)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let result=model.attend(query.value(),key.value(),value.value(),mask:mask,scale:0.0,return_weights:true)
+    result.output.sum().backward()
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    multihead_near(result.output,[0.0,0.0,6.0,8.0])
+    if let weights=result.weights {multihead_near(weights,[0.0,0.0,0.0,0.5,0.5,0.0,0.0,0.0,0.0,0.5,0.5,0.0])} else {panic("expected attention weights")}
+    if let gradient=value.gradient() {multihead_near(gradient,[0.5,0.5,0.5,0.5,0.0,0.0])} else {panic("expected value gradient")}
+    for parameter in model.parameters() {if parameter.name()=="attention.output.bias" {if let gradient=parameter.gradient() {multihead_near(gradient,[1.0,1.0])} else {panic("expected output bias gradient")}}}
+    assert(model.parameters().count()==8 && model.children().count()==4)
+}
+test "multi-head cross attention masks final bias and gradients on CPU" {multihead_witness(null)}
+test "multi-head cross attention masks final bias and gradients while resident on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_witness(device)
+}
+
+func multihead_function(inputs:Tensor[]) Tensor {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:31)
+    var flags:bool[]=[false,false,false,true,false,true]
+    return model.attend(inputs[0],inputs[1],inputs[2],mask:Tensor(flags,[1,1,2,3])).output
+}
+test "multi-head input Jacobian agrees with finite differences" {
+    var q:float[]=[0.125,-0.5,0.75,0.25];var k:float[]=[0.5,1.25,-0.75,0.125,0.25,-0.5];var v:float[]=[1.5,-0.25,0.5,0.75,-1.25,2.0]
+    let check=Autograd.gradcheck(multihead_function,[Tensor(q,[1,2,2]),Tensor(k,[1,3,2]),Tensor(v,[1,3,2])],epsilon:0.001,absolute_tolerance:0.0003,relative_tolerance:0.003)
+    assert(check.passed && check.checked_derivatives==64)
+}
+func multihead_dropout(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:17,dropout_probability:0.5)
+    multihead_identity(model)
+    var input=Tensor.ones([2,4,2])
+    if let gpu=device {model.to(gpu);input=input.to(gpu)}
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let first=model.attend(input,input,input,iteration:7,return_weights:true)
+    let same=model.attend(input,input,input,iteration:7,return_weights:true)
+    let next=model.attend(input,input,input,iteration:8,return_weights:true)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    multihead_near(same.output,first.output.detach().cpu().values())
+    if let weights=first.weights {
+        if let repeated=same.weights {multihead_near(repeated,weights.detach().cpu().values())} else {panic("expected repeated weights")}
+        let applied=weights.detach().sum([3]).permute([0,2,1])
+        multihead_near(first.output,applied.cpu().values())
+        var differs=false
+        if let changed=next.weights {
+            let before=weights.detach().cpu().values();let after=changed.detach().cpu().values()
+            var i=0
+            while i<before.count() {
+                assert(before[i]==0.0 || before[i]==0.5)
+                if before[i]!=after[i] {differs=true}
+                i++
+            }
+        } else {panic("expected next weights")}
+        assert(differs)
+    } else {panic("expected dropout weights")}
+    model.eval()
+    for child in model.children() {assert(!child.is_training())}
+    let evaluated=model.attend(input,input,input,iteration:8,return_weights:true)
+    multihead_near(evaluated.output,Tensor.ones([2,4,2]).values())
+    if let weights=evaluated.weights {for item in weights.detach().cpu().values() {assert(item==0.25)}} else {panic("expected eval weights")}
+    multihead_near(model.forward(input),evaluated.output.detach().cpu().values())
+}
+test "multi-head dropout uses explicit iteration actual weights and recursive evaluation on CPU and Metal" {
+    multihead_dropout(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_dropout(device)}
+}
+func multihead_empty(device:GPU.Device?, batch:int, queries:int, keys:int) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:11)
+    for parameter in model.parameters() {if parameter.name()=="attention.output.bias" {var p=parameter;p.replace(Tensor.full([2],2.0))}}
+    var q=Tensor.zeros([batch,queries,2]);var k=Tensor.zeros([batch,keys,2]);var v=Tensor.zeros([batch,keys,2])
+    if let gpu=device {model.to(gpu);q=q.to(gpu);k=k.to(gpu);v=v.to(gpu)}
+    var query=Autograd.Variable(q);var key=Autograd.Variable(k);var value=Autograd.Variable(v)
+    let result=model.attend(query.value(),key.value(),value.value(),return_weights:true)
+    result.output.sum().backward()
+    assert(result.output.shape()[0]==batch && result.output.shape()[1]==queries && result.output.shape()[2]==2)
+    assert(result.output.abs().sum().detach().cpu().values()[0]==0.0)
+    for parameter in model.parameters() {
+        if let gradient=parameter.gradient() {assert(gradient.abs().sum().cpu().values()[0]==0.0)} else {panic("expected empty parameter gradient")}
+    }
+    if let gradient=query.gradient() {assert(gradient.shape()[0]==batch && gradient.shape()[1]==queries)} else {panic("expected empty query gradient")}
+    if let gradient=key.gradient() {assert(gradient.shape()[0]==batch && gradient.shape()[1]==keys)} else {panic("expected empty key gradient")}
+    if let gradient=value.gradient() {assert(gradient.shape()[0]==batch && gradient.shape()[1]==keys)} else {panic("expected empty value gradient")}
+}
+test "empty batch query and key axes keep projected output and parameter gradients zero on CPU and Metal" {
+    multihead_empty(null,0,2,3);multihead_empty(null,1,0,3);multihead_empty(null,1,2,0)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_empty(device,0,2,3);multihead_empty(device,1,0,3);multihead_empty(device,1,2,0)}
+}
+
+func multihead_wide(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",4,2,seed:23)
+    var diagonal:float[]=[1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0]
+    for parameter in model.parameters() {var p=parameter;if p.value().rank()==2 {p.replace(Tensor(diagonal,[4,4]))} else {p.replace(Tensor.zeros([4]))}}
+    var data:float[]=[1.0,10.0,100.0,1000.0,2.0,20.0,200.0,2000.0,3.0,30.0,300.0,3000.0,4.0,40.0,400.0,4000.0,5.0,50.0,500.0,5000.0,6.0,60.0,600.0,6000.0]
+    var q=Tensor.zeros([2,2,4]);var k=Tensor.zeros([2,3,4]);var v=Tensor(data,[2,3,4]);var mask=Neural.sequence_mask([2,3],3).reshape([2,1,1,3])
+    if let gpu=device {model.to(gpu);q=q.to(gpu);k=k.to(gpu);v=v.to(gpu);mask=mask.to(gpu)}
+    var values=Autograd.Variable(v)
+    let result=model.attend(q,k,values.value(),mask:mask)
+    var gradients=Autograd.grad(result.output.sum(),[values.value()])
+    multihead_near(result.output,[1.5,15.0,150.0,1500.0,1.5,15.0,150.0,1500.0,5.0,50.0,500.0,5000.0,5.0,50.0,500.0,5000.0],tolerance:0.002)
+    multihead_near(gradients[0],[1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0,0.0,0.0,0.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0,2.0/3.0])
+}
+test "multi-head packing preserves multiple features per head and batch on CPU and Metal" {
+    multihead_wide(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_wide(device)}
+}
+
+func multihead_rng_limits(device:GPU.Device?) {
+    var model=Neural.MultiHeadAttention("attention",2,2,seed:4294967295,dropout_probability:0.5)
+    var input=Tensor.ones([1,1,2])
+    if let gpu=device {model.to(gpu);input=input.to(gpu)}
+    let result=model.attend(input,input,input,iteration:4294967295,return_weights:true)
+    for value in result.output.detach().cpu().values() {assert(Math.is_finite(value))}
+    if let weights=result.weights {for value in weights.detach().cpu().values() {assert(value==0.0 || value==2.0)}} else {panic("expected boundary weights")}
+}
+test "maximum uint32 seed and iteration are valid on CPU and Metal" {
+    multihead_rng_limits(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));multihead_rng_limits(device)}
+}

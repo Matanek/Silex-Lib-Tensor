@@ -1,0 +1,76 @@
+use Tensor
+use Tensor.DType
+use STD.Math
+
+public nocopy class MultiHeadAttention:Layer {
+    private let features:int
+    private let heads:int
+    private let dropout_probability:float
+    private var seed:int
+    private var query_projection:Dense
+    private var key_projection:Dense
+    private var value_projection:Dense
+    private var output_projection:Dense
+
+    init(name:str, features:int, heads:int, seed:int, dropout_probability:float = 0.0) {
+        if features<=0 || heads<=0 || features%heads!=0 {panic("Tensor.Neural.MultiHeadAttention requires positive features divisible by positive heads")}
+        if !Math.is_finite(dropout_probability) || dropout_probability<0.0 || dropout_probability>=1.0 {panic("Tensor.Neural.MultiHeadAttention dropout_probability must be in [0, 1)")}
+        if seed<0 || seed>4294967295 {panic("Tensor.Neural.MultiHeadAttention seed must fit uint32")}
+        self.features=features
+        self.heads=heads
+        self.dropout_probability=dropout_probability
+        self.seed=seed
+        self.query_projection=Dense(name+".query",features,features,seed)
+        self.key_projection=Dense(name+".key",features,features,seed+1)
+        self.value_projection=Dense(name+".value",features,features,seed+2)
+        self.output_projection=Dense(name+".output",features,features,seed+3)
+        self.register_child("query",self.query_projection)
+        self.register_child("key",self.key_projection)
+        self.register_child("value",self.value_projection)
+        self.register_child("output",self.output_projection)
+    }
+
+    override func forward(input:Tensor) Tensor {
+        return self.attend(input,input,input).output
+    }
+
+    func attend(query:Tensor, key:Tensor, value:Tensor, mask:Tensor? = null, scale:float? = null, iteration:int = 0, return_weights:bool = false) AttentionResult {
+        if query.dtype()!=DType.float32() || key.dtype()!=DType.float32() || value.dtype()!=DType.float32() {panic("Tensor.Neural.MultiHeadAttention inputs must use dtype float32")}
+        if query.rank()!=3 || key.rank()!=3 || value.rank()!=3 {panic("Tensor.Neural.MultiHeadAttention requires rank 3 batch-first inputs")}
+        if query.shape()[0]!=key.shape()[0] || query.shape()[0]!=value.shape()[0] {panic("Tensor.Neural.MultiHeadAttention batch dimensions must match")}
+        if query.shape()[2]!=self.features || key.shape()[2]!=self.features || value.shape()[2]!=self.features {panic("Tensor.Neural.MultiHeadAttention input features must match features")}
+        if key.shape()[1]!=value.shape()[1] {panic("Tensor.Neural.MultiHeadAttention key and value sequence lengths must match")}
+        if !query.has_same_placement(key) || !query.has_same_placement(value) {panic("Tensor.Neural.MultiHeadAttention inputs must share placement and GPU device")}
+        if iteration<0 || iteration>4294967295 {panic("Tensor.Neural.MultiHeadAttention iteration must fit uint32")}
+        let queries=self.split_heads(self.query_projection.forward(query))
+        let keys=self.split_heads(self.key_projection.forward(key))
+        let values=self.split_heads(self.value_projection.forward(value))
+        let probabilities=attention_weights(queries,keys,values,mask,scale)
+        // Presence precedes dropout, so a dropped row keeps its output bias.
+        let present=probabilities.detach().sum([1,3]).greater_than(0.0).unsqueeze(2)
+        let weights=probabilities.dropout(self.dropout_probability,self.seed,iteration:iteration,training:self.is_training())
+        let context=weights.matmul(values).permute([0,2,1,3]).contiguous().reshape([query.shape()[0],query.shape()[1],self.features])
+        let projected=self.output_projection.forward(context)
+        let output=Tensor.where(present,projected,projected.autograd_constant(0.0))
+        var selected:Tensor?=null
+        if return_weights {selected=weights}
+        return AttentionResult(output:output,weights:selected)
+    }
+
+    private func split_heads(input:Tensor) Tensor {
+        return input.reshape([input.shape()[0],input.shape()[1],self.heads,self.features/self.heads]).permute([0,2,1,3])
+    }
+
+    override package func checkpoint_configuration() str {
+        return "MultiHeadAttention:$(self.features):$(self.heads):"+training_checkpoint_float_text(self.dropout_probability)
+    }
+    override package func checkpoint_random_state() str {return "$(self.seed)"}
+    override package func checkpoint_validate_random_state(value:str) Result<void,str> {
+        let seed=try training_checkpoint_integer(value)
+        if seed>4294967295 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint attention seed exceeds its RNG domain")}
+        return Result<void,str>.success()
+    }
+    override package func checkpoint_apply_random_state(value:str) {
+        self.seed=try training_checkpoint_integer(value) else error {panic(error)}
+    }
+}

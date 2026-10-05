@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.MultiHeadAttention` ajoute quatre projections entraînables au registre Layer, self/cross-attention et dropout à seed/itération explicites. Queries sans clé neutralisées après projection, poids optionnels appliqués, état partagé et reprise CPU/Metal qualifiés ; voir le [guide](Docs/FR/MultiHeadAttention.md).
+
 - `Neural.attention` compose les produits Q/K/V et le softmax masqué en self/cross-attention batch-first de rang3/4. Poids optionnels différentiables, gradients partagés, formes vides et calcul CPU/Metal résident ; voir le [guide](Docs/FR/Attention.md).
 
 - `Tensor.masked_softmax(mask,axis)` normalise les scores visibles finis et définit des sorties/gradients nuls pour les positions et lignes entièrement masquées. Non-finis exclus ignorés, formes vides et calcul CPU/Metal résident qualifiés par oracle et gradcheck ; voir le [guide](Docs/FR/MaskedSoftmax.md).

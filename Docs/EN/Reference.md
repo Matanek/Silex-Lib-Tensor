@@ -17,6 +17,7 @@ contract.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| `Neural.MultiHeadAttention` | `float32` projections, rank3 | same, resident computation | Q/K/V and eight named parameters |
 | `Neural.attention` | `float32`, rank3/4 | same, resident computation | Q/K/V and optional weights |
 | `Neural.Embedding` | `int32` indices, `float32` weight | same, resident computation | dense weight; stopped padding derivative |
 | `Neural.sequence_mask`, `Neural.causal_mask` | booleans built from `int` metadata | explicit transfer, resident logic | detached; `true` allows |
@@ -157,3 +158,7 @@ parameter checkpoint remains separate and compatible.
 ## Attention
 
 `Neural.attention(query,key,value,mask:null,scale:null,return_weights:false)`: batch-first rank3/4 computation, finite scale, boolean visibility and optional weights. Empty shapes, shared gradients and placement in the [guide](Attention.md).
+
+## Multi-head attention
+
+`Neural.MultiHeadAttention(name,features,heads,seed,dropout_probability:0.0)`: self/cross `attend` with mask, scale, iteration and optional weights; self `forward` at iteration0. Shared state, dropout and resume in the [guide](MultiHeadAttention.md).

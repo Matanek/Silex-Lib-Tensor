@@ -8,6 +8,14 @@ public struct AttentionResult {
 }
 
 public func attention(query:Tensor, key:Tensor, value:Tensor, mask:Tensor? = null, scale:float? = null, return_weights:bool = false) AttentionResult {
+    let weights=attention_weights(query,key,value,mask,scale)
+    let output=weights.matmul(value)
+    var selected:Tensor?=null
+    if return_weights {selected=weights}
+    return AttentionResult(output:output,weights:selected)
+}
+
+package func attention_weights(query:Tensor, key:Tensor, value:Tensor, mask:Tensor?, scale:float?) Tensor {
     if query.dtype()!=DType.float32() || key.dtype()!=DType.float32() || value.dtype()!=DType.float32() {
         panic("Tensor.Neural.attention inputs must use dtype float32")
     }
@@ -39,11 +47,7 @@ public func attention(query:Tensor, key:Tensor, value:Tensor, mask:Tensor? = nul
     }
     let scores=query.matmul(transpose_attention_keys(key)).multiply(factor)
     let visibility=mask ?? scores.autograd_constant(0.0).equal(0.0)
-    let weights=scores.masked_softmax(visibility,axis:feature_axis)
-    let output=weights.matmul(value)
-    var selected:Tensor?=null
-    if return_weights {selected=weights}
-    return AttentionResult(output:output,weights:selected)
+    return scores.masked_softmax(visibility,axis:feature_axis)
 }
 
 local func transpose_attention_keys(key:Tensor) Tensor {
