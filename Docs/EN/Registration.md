@@ -87,16 +87,10 @@ executes it at each forward occurrence, and collects its state once. The current
 checkpoint keeps its parameter schema: a shared parameter appears once; Buffer
 and frozen state remain outside that format.
 
-## Keep state hooks explicit
+## Propagate model state
 
-A layer adopting registration inherits `parameters()` and `buffers()` unchanged.
-Older layers without registration can keep a manual override: their list is read
-as an opaque boundary. The registry does not discover children such an override
-keeps only in its fields.
-
-Registration automates collection here. `train`, `eval`, `to(device)`, and `cpu()`
-remain hooks to forward explicitly inside a custom layer. Moving the example’s
-model to GPU therefore requires `block.to(device)` and `scale.to(device)` before
-the forward; collection triggers no transfers. The [composition guide](Composition.md)
-explains those hooks and the [buffer and freezing guide](State.md) explains
-individual state.
+A layer adopting registration inherits parameters(), buffers(), train/eval, and
+to/cpu. [Local state hooks](ModelState.md) customize mode and placement without
+forwarding children. Older overrides without registration remain compatible
+opaque boundaries; collection does not discover their hidden children. The
+[buffer and freezing guide](State.md) explains individual object state.

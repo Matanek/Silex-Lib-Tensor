@@ -2,10 +2,16 @@
 
 ## [Unreleased]
 
+- Layer propagates train/eval, placement, freezing/unfreezing, and zero_grad to
+  unique registered identities, including shared diamonds. Protected local
+  mode/placement hooks and shared is_training with Dropout; names/gradients/devices
+  are prevalidated before mutation or transfer. Older manual boundaries without
+  registration remain compatible. See the [state guide](Docs/EN/ModelState.md).
+
 - Layers explicitly register parameters, buffers, and named children. Inherited
   collection preserves order and names, deduplicates shared identities, and rejects
   cycles and collisions; Sequential collects shared state once while executing
-  the layer at each occurrence. State hooks remain explicit. See the
+  the layer at each occurrence. See the
   [registration guide](Docs/EN/Registration.md).
 
 - Add detached, named and shared `Neural.Buffer` values with checked replacement

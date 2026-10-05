@@ -34,12 +34,14 @@ public nocopy class Layer {
     private var own_buffers:Buffer[]
     private var child_names:str[]
     private var child_layers:Layer[]
+    private var current_training:bool
 
     protected init() {
         self.own_parameters = []
         self.own_buffers = []
         self.child_names = []
         self.child_layers = []
+        self.current_training = true
     }
 
     protected func register_parameter(parameter:Parameter) {
@@ -104,10 +106,75 @@ public nocopy class Layer {
         if !self.has_registration() { return [] }
         return self.collect_state().buffers
     }
-    func train() {}
-    func eval() {}
-    func to(device:GPU.Device) {}
-    func cpu() {}
+    func is_training() bool { return self.current_training }
+    func train() { self.set_training(true) }
+    func eval() { self.set_training(false) }
+    func freeze() { self.set_trainable(false) }
+    func unfreeze() { self.set_trainable(true) }
+    func zero_grad() {
+        var parameters = self.parameters()
+        for var parameter in parameters { parameter.zero_grad() }
+    }
+
+    func to(device:GPU.Device) {
+        var state = self.collect_state()
+        self.require_transfer_gradients(state,"to")
+        for parameter in state.parameters { parameter.value().require_transfer_device(device) }
+        for buffer in state.buffers { buffer.value().require_transfer_device(device) }
+        var parameters = state.parameters
+        for var parameter in parameters { parameter.to(device) }
+        var buffers = state.buffers
+        for var buffer in buffers { buffer.to(device) }
+        var layers = state.layers
+        for var layer in layers {
+            if layer != self && !layer.has_registration() { layer.to(device) }
+            else { layer.moved_to(device) }
+        }
+    }
+    func cpu() {
+        var state = self.collect_state()
+        self.require_transfer_gradients(state,"cpu")
+        var parameters = state.parameters
+        for var parameter in parameters { parameter.cpu() }
+        var buffers = state.buffers
+        for var buffer in buffers { buffer.cpu() }
+        var layers = state.layers
+        for var layer in layers {
+            if layer != self && !layer.has_registration() { layer.cpu() }
+            else { layer.moved_to_cpu() }
+        }
+    }
+
+    protected func training_changed(training:bool) {}
+    protected func moved_to(device:GPU.Device) {}
+    protected func moved_to_cpu() {}
+
+    private func set_training(training:bool) {
+        var state = self.collect_state()
+        var layers = state.layers
+        for var layer in layers {
+            layer.current_training = training
+            if layer != self && !layer.has_registration() {
+                if training { layer.train() } else { layer.eval() }
+            } else { layer.training_changed(training) }
+        }
+    }
+    private func set_trainable(trainable:bool) {
+        var parameters = self.parameters()
+        for parameter in parameters {
+            if parameter.is_trainable() != trainable && parameter.gradient() != null {
+                panic("Tensor.Neural.Layer requires zero_grad before changing trainability")
+            }
+        }
+        for var parameter in parameters {
+            if trainable { parameter.unfreeze() } else { parameter.freeze() }
+        }
+    }
+    private func require_transfer_gradients(state:LayerState, operation:str) {
+        for parameter in state.parameters {
+            if parameter.gradient() != null { panic("Tensor.Neural.Layer.$(operation) requires zero_grad before changing placement") }
+        }
+    }
 
     private func has_registration() bool {
         return !self.own_parameters.is_empty() || !self.own_buffers.is_empty() || !self.child_layers.is_empty()

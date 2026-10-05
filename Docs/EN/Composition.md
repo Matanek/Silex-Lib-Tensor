@@ -75,3 +75,5 @@ lets you inherit collection instead of overriding parameters(). The [buffer and 
 explains the available state primitives. The [training recipe](Recipes/Training.md)
 explains the existing loop; the [gradient guide](Gradients.md) details slots and
 graph consumption.
+
+For a registered model, inherit traversal and use [local notifications](ModelState.md) instead of this example’s manual forwarding.

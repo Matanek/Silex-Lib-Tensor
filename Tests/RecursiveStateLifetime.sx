@@ -1,0 +1,41 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+nocopy class StateModel:Neural.Layer {
+    init() {}
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+
+func recursive_state_cycle(device:GPU.Device) {
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0)); var scale = Neural.Buffer("scale",Tensor.scalar(3.0))
+    var leaf = StateModel(); leaf.add_parameter(weight); leaf.add_buffer(scale)
+    var first = StateModel(); var second = StateModel(); var root = StateModel()
+    first.attach("shared",leaf); second.attach("shared",leaf); root.attach("first",first); root.attach("second",second)
+    var step = 0
+    while step < 4 {
+        root.to(device); root.eval(); root.train(); root.freeze(); root.unfreeze()
+        weight.value().sum().backward(); root.zero_grad(); root.cpu()
+        step++
+    }
+}
+
+test "recursive mode freeze and placement traversals release shared resources" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics(); var profile = Profile(device)
+    var iteration = 0
+    while iteration < 32 {
+        recursive_state_cycle(device)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        iteration++
+    }
+}

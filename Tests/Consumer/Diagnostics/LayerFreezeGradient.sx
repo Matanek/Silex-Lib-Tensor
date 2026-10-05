@@ -1,0 +1,14 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class StateModel:Neural.Layer {
+    init() {}
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+
+func main() { var model = StateModel(); var first = Neural.Parameter("first",Tensor.scalar(1.0)); var second = Neural.Parameter("second",Tensor.scalar(2.0)); model.add_parameter(first); model.add_parameter(second); second.value().sum().backward(); model.freeze() }

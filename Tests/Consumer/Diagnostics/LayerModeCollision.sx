@@ -1,0 +1,24 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class StateModel:Neural.Layer {
+    init() {}
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+
+nocopy class ModeObserver:Neural.Layer {
+    init() {}
+    override func training_changed(training:bool) { print("UNEXPECTED_MODE_MUTATION") }
+}
+func main() {
+    var root = StateModel(); var left = StateModel(); var right = StateModel(); var observer = ModeObserver()
+    root.attach("observer",observer); root.attach("left",left); root.attach("right",right)
+    left.add_parameter(Neural.Parameter("collision",Tensor.scalar(1.0)))
+    right.add_parameter(Neural.Parameter("collision",Tensor.scalar(2.0)))
+    root.eval()
+}

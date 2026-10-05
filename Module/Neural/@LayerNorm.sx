@@ -42,6 +42,4 @@ public nocopy class LayerNorm:Layer {
             .multiply(self.scale.value()).add(self.offset.value())
     }
 
-    override func to(device:GPU.Device) { self.scale.to(device); self.offset.to(device) }
-    override func cpu() { self.scale.cpu(); self.offset.cpu() }
 }

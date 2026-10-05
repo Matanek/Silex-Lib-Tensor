@@ -215,6 +215,15 @@ public struct Tensor {
         return Tensor.from_storage(Storage.cpu(storage), Layout(self.current_layout.shape()))
     }
 
+    package func require_transfer_device(device:GPU.Device) {
+        match self.current_storage {
+            gpu(value) => {
+                if !value.same_device(device) { panic("Tensor.to cannot migrate between GPU devices; call cpu().to(other_device)") }
+            }
+            else => {}
+        }
+    }
+
     func to(device:GPU.Device) Tensor {
         match self.current_storage {
             gpu(value) => { if value.same_device(device) { return self } }

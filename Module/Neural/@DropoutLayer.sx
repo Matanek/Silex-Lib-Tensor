@@ -4,7 +4,6 @@ use Tensor
 public nocopy class Dropout:Layer {
     private let probability:float
     private let seed:int
-    private var training:bool
     private var iteration:int
 
     init(probability:float, seed:int) {
@@ -16,19 +15,16 @@ public nocopy class Dropout:Layer {
         }
         self.probability = probability
         self.seed = seed
-        self.training = true
         self.iteration = 0
     }
 
     override func forward(input:Tensor) Tensor {
         let output = input.dropout(
             self.probability, self.seed,
-            iteration:self.iteration, training:self.training
+            iteration:self.iteration, training:self.is_training()
         )
-        if self.training { self.iteration++ }
+        if self.is_training() { self.iteration++ }
         return output
     }
 
-    override func train() { self.training = true }
-    override func eval() { self.training = false }
 }

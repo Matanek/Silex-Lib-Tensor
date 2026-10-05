@@ -33,6 +33,4 @@ public nocopy class Dense:Layer {
         return input.matmul(self.weight.value()).add(self.bias.value())
     }
 
-    override func to(device:GPU.Device) { self.weight.to(device); self.bias.to(device) }
-    override func cpu() { self.weight.cpu(); self.bias.cpu() }
 }

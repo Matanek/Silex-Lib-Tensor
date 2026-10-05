@@ -78,3 +78,5 @@ explique les primitives d’état disponibles.
 La [recette d’entraînement](Recipes/Training.md) explique la boucle existante,
 et le [guide des gradients](Gradients.md) détaille les slots et la consommation
 du graphe.
+
+Pour un modèle enregistré, héritez des parcours et utilisez les [notifications locales](ModelState.md) plutôt que les relais manuels de cet exemple.

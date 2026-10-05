@@ -79,3 +79,5 @@ manually. [Layer registration](Registration.md)
 collects explicitly registered objects; the current checkpoint only saves its
 parameters, without buffers, frozen state,
 or optimizer moments.
+
+[Model state operations](ModelState.md) propagate mode, freezing, and placement to registered objects.

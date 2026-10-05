@@ -80,3 +80,5 @@ manuellement. Le [registre des couches](Registration.md)
 collecte explicitement les objets enregistrés ; le checkpoint actuel sauvegarde
 uniquement ses paramètres, sans
 buffers, état de gel ni moments d’optimiseur.
+
+Les [opérations d’état du modèle](ModelState.md) propagent mode, gel et placement aux objets enregistrés.

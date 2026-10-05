@@ -2,10 +2,16 @@
 
 ## [Unreleased]
 
+- Layer propage train/eval, placement, gel/dégel et zero_grad aux identités
+  enregistrées uniques, y compris en diamant partagé. Hooks locaux protégés de
+  mode/placement, is_training commun avec Dropout ; noms/gradients/devices
+  prévalidés avant mutation ou transfert. Les anciennes frontières manuelles
+  sans registre restent compatibles. Voir le [guide d’état](Docs/FR/ModelState.md).
+
 - Les couches enregistrent explicitement paramètres, buffers et enfants nommés.
   La collecte héritée conserve ordre et noms, déduplique les identités partagées,
   refuse cycles et collisions ; Sequential collecte l’état partagé une fois
-  tout en exécutant la couche à chaque occurrence. Hooks d’état encore explicites. Voir le
+  tout en exécutant la couche à chaque occurrence. Voir le
   [guide du registre](Docs/FR/Registration.md).
 
 - Ajout de `Neural.Buffer` détaché, nommé et partagé, avec remplacement contrôlé

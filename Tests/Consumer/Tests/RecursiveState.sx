@@ -1,0 +1,131 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+nocopy class StateModel:Neural.Layer {
+    init() {}
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+nocopy class CountedLayer:Neural.Layer {
+    private var mode_calls:int
+    private var gpu_calls:int
+    private var cpu_calls:int
+    init(weight:Neural.Parameter, scale:Neural.Buffer) {
+        self.mode_calls = 0; self.gpu_calls = 0; self.cpu_calls = 0
+        self.register_parameter(weight); self.register_buffer(scale)
+    }
+    override func training_changed(training:bool) {
+        assert(self.is_training() == training)
+        self.mode_calls++
+    }
+    override func moved_to(device:GPU.Device) { self.gpu_calls++ }
+    override func moved_to_cpu() { self.cpu_calls++ }
+    func calls() int[] { return [self.mode_calls,self.gpu_calls,self.cpu_calls] }
+    override func forward(input:Tensor) Tensor {
+        return input.multiply(self.parameters()[0].value()).multiply(self.buffers()[0].value())
+    }
+}
+
+func state_diamond(leaf:Neural.Layer) StateModel {
+    var first = StateModel(); var second = StateModel(); var root = StateModel()
+    first.attach("shared",leaf); second.attach("shared",leaf)
+    root.attach("first",first); root.attach("second",second)
+    return root
+}
+
+nocopy class LegacyHooks:Neural.Layer {
+    private var changes:int
+    init() { self.changes = 0 }
+    override func train() { self.changes++ }
+    override func eval() { self.changes++ }
+    override func to(device:GPU.Device) { self.changes++ }
+    override func cpu() { self.changes++ }
+    func change_count() int { return self.changes }
+}
+
+test "central mode traversal invokes a local shared hook once per call" {
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0)); var scale = Neural.Buffer("scale",Tensor.scalar(3.0))
+    var leaf = CountedLayer(weight,scale); var root = state_diamond(leaf)
+    assert(root.is_training() && leaf.is_training())
+    root.train(); root.eval(); root.eval()
+    assert(!root.is_training() && !leaf.is_training() && leaf.calls()[0] == 3)
+    var children = root.children()
+    for child in children { assert(!child.is_training()) }
+}
+
+test "opaque legacy hooks are called once in a registered diamond" {
+    var leaf = LegacyHooks(); var root = state_diamond(leaf)
+    root.train(); root.eval(); root.cpu()
+    assert(leaf.change_count() == 3)
+}
+
+test "recursive modes preserve shared Dropout behavior" {
+    var dropout = Neural.Dropout(0.5,seed:42)
+    var layers:Neural.Layer[] = [dropout,dropout]; var root = Neural.Sequential(layers)
+    root.eval(); assert(!dropout.is_training() && !root.is_training())
+    let input = Tensor.ones([8])
+    for value in root.forward(input).values() { assert(value == 1.0) }
+    root.train(); assert(dropout.is_training() && root.is_training())
+}
+
+test "model freeze and zero_grad preserve shared parameter identity and old graphs" {
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0)); var scale = Neural.Buffer("scale",Tensor.scalar(3.0))
+    var leaf = CountedLayer(weight,scale); var root = state_diamond(leaf)
+    let old_graph = weight.value().multiply(9.0).sum()
+    root.freeze(); old_graph.backward(); root.freeze()
+    assert(!weight.is_trainable() && root.parameters()[0] == weight)
+    var input = Autograd.Variable(Tensor.scalar(4.0))
+    leaf.forward(input.value()).backward()
+    if let gradient = input.gradient() { assert(gradient.item() == 6.0) } else { panic("frozen model lost input gradient") }
+    var optimizer = Optim.SGD(root.parameters(),learning_rate:0.1,weight_decay:0.2)
+    optimizer.step(); assert(weight.value().item() == 2.0)
+    root.zero_grad(); assert(weight.gradient() == null)
+    root.unfreeze(); root.unfreeze(); assert(weight.is_trainable())
+    leaf.forward(Tensor.scalar(4.0)).backward()
+    if let gradient = weight.gradient() { assert(gradient.item() == 12.0) } else { panic("unfrozen model remained detached") }
+}
+
+test "model placement moves unique registered state and notifies each layer once" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0)); var scale = Neural.Buffer("scale",Tensor.scalar(3.0))
+    var leaf = CountedLayer(weight,scale); var root = state_diamond(leaf)
+    var booleans:bool[] = [true,false]; var flags = Neural.Buffer("flags",Tensor.vector(booleans)); root.add_buffer(flags)
+    var profile = Profile(device)
+    root.to(device)
+    assert(profile.snapshot().uploads == 3 && profile.snapshot().downloads == 0)
+    assert(weight.value().is_gpu() && scale.value().is_gpu() && flags.value().is_gpu() && leaf.calls()[1] == 1)
+    profile.reset(); root.to(device)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && leaf.calls()[1] == 2)
+    var input = Autograd.Variable(Tensor.scalar(4.0).to(device)); profile.reset()
+    leaf.forward(input.value()).backward()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    root.zero_grad(); profile.reset(); root.cpu()
+    assert(profile.snapshot().downloads == 3 && leaf.calls()[2] == 1)
+    assert(weight.value().item() == 2.0 && scale.value().item() == 3.0 && flags.value().bool_values()[0])
+}
+
+test "central placement retains old opaque transfer overrides" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var leaf = LegacyHooks(); var root = state_diamond(leaf)
+    root.to(device); root.cpu(); assert(leaf.change_count() == 2)
+}
+
+test "freeze and placement preserve trainability until explicit unfreeze" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var weight = Neural.Parameter("weight",Tensor.scalar(2.0)); var scale = Neural.Buffer("scale",Tensor.scalar(3.0))
+    var leaf = CountedLayer(weight,scale); var root = state_diamond(leaf)
+    root.freeze(); root.to(device); root.cpu()
+    assert(!weight.is_trainable() && weight.value().item() == 2.0)
+    root.unfreeze(); assert(weight.is_trainable())
+}

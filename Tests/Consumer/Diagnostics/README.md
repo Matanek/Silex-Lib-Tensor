@@ -145,3 +145,9 @@ Layer registration adds `RegistryChildName`, `RegistryChildCollision`,
 and `RegistryLaterCollision` for nonempty local aliases, unique names, acyclic
 registered edges, and unique state names even after child changes. Each name
 refers to its `.sx` fixture.
+
+Recursive state adds `LayerFreezeGradient`, `LayerUnfreezeGradient`,
+`LayerToGradient`, and `LayerCPUGradient` for empty slots before mutation;
+`LayerCrossDeviceBuffer`/`LayerCrossDeviceParameter` for explicit CPU staging;
+`LayerModeCollision` for collecting and validating all names before a mode hook.
+Each name refers to its `.sx` fixture.

@@ -87,16 +87,11 @@ couche, l’exécute à chaque occurrence dans le forward et collectera son éta
 Le checkpoint actuel conserve son schéma de paramètres : un paramètre partagé y
 apparaît une fois ; Buffer et état de gel restent hors de ce format.
 
-## Conserver les hooks explicites
+## Propager l’état du modèle
 
-Une couche qui adopte le registre laisse `parameters()` et `buffers()` hérités.
-Les anciennes couches sans enregistrement peuvent conserver un override manuel :
-leur liste est lue comme une frontière opaque. Le registre ne découvre pas les
-enfants qu’un tel override conserve uniquement dans ses champs.
-
-L’enregistrement automatise ici la collecte. `train`, `eval`, `to(device)` et `cpu()`
-restent des hooks à relayer explicitement dans une couche personnalisée. Les
-transferts du modèle GPU de l’exemple s’écrivent donc `block.to(device)` et
-`scale.to(device)` avant le forward ; aucun transfert n’est déclenché par la collecte.
-Le [guide de composition](Composition.md) décrit ces hooks et le [guide des buffers
-et du gel](State.md) décrit leur état individuel.
+Une couche qui adopte le registre laisse parameters(), buffers(), train/eval et
+to/cpu hérités. Les [hooks locaux d’état](ModelState.md) personnalisent mode et
+placement sans relayer les enfants. Les anciens overrides sans enregistrement
+restent des frontières opaques compatibles ; leurs enfants cachés ne sont pas
+découverts par la collecte. Le [guide des buffers et du gel](State.md) décrit
+l’état individuel des objets.

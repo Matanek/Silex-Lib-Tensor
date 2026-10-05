@@ -1,0 +1,14 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+nocopy class StateModel:Neural.Layer {
+    init() {}
+    func attach(name:str, child:Neural.Layer) { self.register_child(name,child) }
+    func add_parameter(parameter:Neural.Parameter) { self.register_parameter(parameter) }
+    func add_buffer(buffer:Neural.Buffer) { self.register_buffer(buffer) }
+    override func forward(input:Tensor) Tensor { return input }
+}
+
+
+func main() { var first_device = GPU.Device(); var target = GPU.Device(); var model = StateModel(); model.add_parameter(Neural.Parameter("first",Tensor.scalar(1.0))); model.add_parameter(Neural.Parameter("other",Tensor.scalar(2.0).to(first_device))); model.to(target) }

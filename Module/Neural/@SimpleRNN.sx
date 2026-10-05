@@ -61,16 +61,6 @@ public nocopy class SimpleRNN:Layer {
         return state
     }
 
-    override func to(device:GPU.Device) {
-        self.input_weight.to(device)
-        self.recurrent_weight.to(device)
-        self.bias.to(device)
-    }
-    override func cpu() {
-        self.input_weight.cpu()
-        self.recurrent_weight.cpu()
-        self.bias.cpu()
-    }
 }
 func nn_xavier(
     shape:int[], input_features:int, output_features:int, randomizer:Randomizer

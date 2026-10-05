@@ -111,3 +111,5 @@ graph consumption, and Jacobian checking.
 [Buffers and parameter freezing](State.md): detachment, identity, transfers, and retained optimizer state.
 
 [Layer registration](Registration.md): named children, order, identities, cycles, and collisions.
+
+[Recursive model state](ModelState.md): modes, local hooks, freezing, and prevalidated transfers.

@@ -27,6 +27,7 @@ silex install Tensor
 - [French functional gradient guide](Docs/FR/Gradients.md) · [English](Docs/EN/Gradients.md)
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
+- [French model state guide](Docs/FR/ModelState.md) · [English](Docs/EN/ModelState.md)
 - [French layer registration guide](Docs/FR/Registration.md) · [English](Docs/EN/Registration.md)
 - [French buffer and freezing guide](Docs/FR/State.md) · [English](Docs/EN/State.md)
 - [French custom layer guide](Docs/FR/Composition.md) · [English](Docs/EN/Composition.md)
