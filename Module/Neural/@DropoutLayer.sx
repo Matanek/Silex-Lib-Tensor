@@ -1,9 +1,10 @@
 use STD.Math
+use STD.Text
 use Tensor
 
 public nocopy class Dropout:Layer {
     private let probability:float
-    private let seed:int
+    private var seed:int
     private var iteration:int
 
     init(probability:float, seed:int) {
@@ -19,12 +20,31 @@ public nocopy class Dropout:Layer {
     }
 
     override func forward(input:Tensor) Tensor {
+        if self.is_training() && self.iteration>4294967295 {panic("Tensor.Neural.Dropout iteration is exhausted")}
+        var iteration=self.iteration
+        if !self.is_training() {iteration=0}
         let output = input.dropout(
             self.probability, self.seed,
-            iteration:self.iteration, training:self.is_training()
+            iteration:iteration, training:self.is_training()
         )
         if self.is_training() { self.iteration++ }
         return output
+    }
+
+    override package func checkpoint_configuration() str {return "Dropout:"+training_checkpoint_hex(training_checkpoint_float_word(self.probability) as uint64,8)}
+    override package func checkpoint_random_state() str {return "$(self.seed),$(self.iteration)"}
+    override package func checkpoint_validate_random_state(value:str) Result<void,str> {
+        let fields=STD.Text.split(value,",")
+        if fields.count()!=2 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid dropout state")}
+        let seed=try training_checkpoint_integer(fields[0])
+        let iteration=try training_checkpoint_integer(fields[1])
+        if seed>4294967295 || iteration>4294967296 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint dropout state exceeds its RNG domain")}
+        return Result<void,str>.success()
+    }
+    override package func checkpoint_apply_random_state(value:str) {
+        let fields=STD.Text.split(value,",")
+        self.seed=try training_checkpoint_integer(fields[0]) else error {panic(error)}
+        self.iteration=try training_checkpoint_integer(fields[1]) else error {panic(error)}
     }
 
 }

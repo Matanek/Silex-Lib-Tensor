@@ -1,0 +1,111 @@
+use STD.FileSystem
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use Tensor
+use Tensor.DType
+use Tensor.Neural.training_checkpoint_float_word
+use Tensor.Neural.training_checkpoint_word_float
+use Tensor.Neural.training_checkpoint_encode_tensor
+use Tensor.Neural.training_checkpoint_decode_tensor
+use GFX.GPU
+
+func training_encoding_roundtrip(input:Tensor,expected:str) {
+    let encoded=training_checkpoint_encode_tensor(input);assert(encoded==expected)
+    let restored=try training_checkpoint_decode_tensor(encoded,input.shape(),input.dtype()) else error {panic(error)}
+    assert(restored.is_cpu() && restored.dtype()==input.dtype() && restored.count()==input.count())
+    assert(training_checkpoint_encode_tensor(restored)==expected)
+}
+
+test "training checkpoint encoding preserves float32 bits including subnormal signed zero and nan payload" {
+    var words:uint32[]=[0x3dfcd6ea,0x3f800001,0x00000001,0x80000000,0x7f800000,0xff800000,0x7fc12345]
+    var values:float[]=[]
+    for word in words {values.append(training_checkpoint_word_float(word))}
+    training_encoding_roundtrip(Tensor.vector(values),"3dfcd6ea,3f800001,00000001,80000000,7f800000,ff800000,7fc12345")
+    var index=0
+    while index<values.count() {assert(training_checkpoint_float_word(values[index])==words[index]);index++}
+}
+
+test "training checkpoint encoding preserves all integer widths extrema and boolean masks" {
+    var signed8:int8[]=[-128,127];training_encoding_roundtrip(Tensor.vector(signed8),"80,7f")
+    var unsigned8:uint8[]=[0,255];training_encoding_roundtrip(Tensor.vector(unsigned8),"00,ff")
+    var signed16:int16[]=[-32768,32767];training_encoding_roundtrip(Tensor.vector(signed16),"8000,7fff")
+    var unsigned16:uint16[]=[0,65535];training_encoding_roundtrip(Tensor.vector(unsigned16),"0000,ffff")
+    var signed32:int32[]=[-2147483648,2147483647];training_encoding_roundtrip(Tensor.vector(signed32),"80000000,7fffffff")
+    var unsigned32:uint32[]=[0,4294967295];training_encoding_roundtrip(Tensor.vector(unsigned32),"00000000,ffffffff")
+    var signed64:int64[]=[-9223372036854775808,9223372036854775807];training_encoding_roundtrip(Tensor.vector(signed64),"8000000000000000,7fffffffffffffff")
+    var unsigned64:uint64[]=[0,18446744073709551615];training_encoding_roundtrip(Tensor.vector(unsigned64),"0000000000000000,ffffffffffffffff")
+    var boolean:bool[]=[false,true];training_encoding_roundtrip(Tensor.vector(boolean),"00,01")
+}
+
+test "training checkpoint encoding follows logical strides and empty or scalar shapes" {
+    var values:float[]=[1.0,2.0,3.0,4.0]
+    training_encoding_roundtrip(Tensor(values,[2,2]).transpose(),"3f800000,40400000,40000000,40800000")
+    training_encoding_roundtrip(Tensor.scalar(3 as int64),"0000000000000003")
+    training_encoding_roundtrip(Tensor.zeros([0,2,3]),"")
+}
+
+func training_encoding_failure(value:str,shape:int[],dtype:DType) {
+    match training_checkpoint_decode_tensor(value,shape,dtype) {
+        failure(error) => {assert(error!="")}
+        success(result) => {panic("corrupt checkpoint tensor was accepted")}
+    }
+}
+test "training checkpoint decoder rejects corrupt words masks cardinality and shape overflow recoverably" {
+    training_encoding_failure("3f80000z",[1],DType.float32())
+    training_encoding_failure("3f8000",[1],DType.float32())
+    training_encoding_failure("02",[1],DType.boolean())
+    training_encoding_failure("3f800000",[2],DType.float32())
+    training_encoding_failure("",[-1],DType.float32())
+    training_encoding_failure("",[0,9223372036854775807,2],DType.float32())
+    training_encoding_failure("",[9223372036854775807,2],DType.float32())
+    training_encoding_failure("",[9223372036854775807],DType.float32())
+}
+
+test "GPU checkpoint encoding is an explicit readback and remains bit exact" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var values:float[]=[-0.0,1.0,2.0]
+    let gpu=Tensor.vector(values).to(device);device.reset_command_stats()
+    training_encoding_roundtrip(gpu,"80000000,3f800000,40000000")
+    let stats=device.command_stats();assert(stats.uploads==0 && stats.downloads==1)
+}
+
+nocopy class TypedCheckpointModel:Neural.Layer {
+    var weight:Neural.Parameter
+    var state:Neural.Buffer
+    init(value:Tensor) {
+        self.weight=Neural.Parameter("weight",Tensor.scalar(0.12345679))
+        self.state=Neural.Buffer("state",value)
+        self.register_parameter(self.weight);self.register_buffer(self.state)
+    }
+}
+func typed_checkpoint_roundtrip(value:Tensor) {
+    let path="/private/tmp/tensor-training-checkpoint-typed.sxtc"
+    var source=TypedCheckpointModel(value)
+    var dataset=Data.TensorSource(Tensor.ones([2,1]),Tensor.ones([2,1]))
+    var cursor=Data.BatchCursor(dataset,2);var optimizer=Optim.Adam(source.parameters())
+    var progress=Neural.TrainingProgress(step:0,schedule:null)
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+    var target=TypedCheckpointModel(value.detach().cpu());var target_cursor=Data.BatchCursor(dataset,2)
+    var restored=Optim.Adam(target.parameters())
+    let loaded=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+    assert(target.state.value().dtype()==value.dtype() && target.state.value().is_cpu() && target.state.value().is_contiguous())
+    assert(training_checkpoint_encode_tensor(target.state.value())==training_checkpoint_encode_tensor(value))
+    try FileSystem.remove_file(path) else error {panic("remove typed checkpoint")}
+}
+test "full checkpoint wire format roundtrips every storage dtype exact extrema nonfinite floats and logical views" {
+    var fwords:uint32[]=[0x00000001 as uint32,0x80000000,0x7f800000,0x7fc01234 as uint32]
+    var floats:float[]=[]
+    for word in fwords {floats.append(training_checkpoint_word_float(word))}
+    typed_checkpoint_roundtrip(Tensor(floats,[2,2]).transpose())
+    typed_checkpoint_roundtrip(Tensor.zeros([0,2]))
+    var signed8:int8[]=[-128,127];typed_checkpoint_roundtrip(Tensor.vector(signed8))
+    var unsigned8:uint8[]=[0,255];typed_checkpoint_roundtrip(Tensor.vector(unsigned8))
+    var signed16:int16[]=[-32768,32767];typed_checkpoint_roundtrip(Tensor.vector(signed16))
+    var unsigned16:uint16[]=[0,65535];typed_checkpoint_roundtrip(Tensor.vector(unsigned16))
+    var signed32:int32[]=[-2147483648,2147483647];typed_checkpoint_roundtrip(Tensor.vector(signed32))
+    var unsigned32:uint32[]=[0,4294967295];typed_checkpoint_roundtrip(Tensor.vector(unsigned32))
+    var signed64:int64[]=[-9223372036854775808,9223372036854775807];typed_checkpoint_roundtrip(Tensor.vector(signed64))
+    var unsigned64:uint64[]=[0,18446744073709551615];typed_checkpoint_roundtrip(Tensor.vector(unsigned64))
+    var flags:bool[]=[true,false];typed_checkpoint_roundtrip(Tensor.vector(flags))
+}

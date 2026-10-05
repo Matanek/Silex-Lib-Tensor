@@ -73,6 +73,19 @@ public nocopy class BatchNorm:Layer {
         return output
     }
 
+    override package func checkpoint_configuration() str {
+        return "BatchNorm:$(self.features):"+training_checkpoint_hex(training_checkpoint_float_word(self.epsilon) as uint64,8)+":"+
+            training_checkpoint_hex(training_checkpoint_float_word(self.momentum) as uint64,8)
+    }
+    override package func checkpoint_validate_buffers(entries:TrainingTensorState[]) Result<void,str> {
+        for entry in entries {
+            if entry.name==self.batches.name() && entry.value.int64_item()<0 {
+                return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires a non-negative BatchNorm counter")
+            }
+        }
+        return Result<void,str>.success()
+    }
+
     private func require_placement(value:Tensor,input:Tensor) {
         if !value.has_same_placement(input) {panic("Tensor.Neural.BatchNorm.forward requires matching data placements and GPU devices")}
     }

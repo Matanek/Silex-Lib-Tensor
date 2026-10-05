@@ -11,6 +11,8 @@ public nocopy class MaxPool2D:Layer {
         self.padding = padding
     }
 
+    override package func checkpoint_configuration() str {return "MaxPool2D:$(self.kernel_size):$(self.stride):$(self.padding)"}
+
     override func forward(input:Tensor) Tensor {
         return input.max_pool2d(self.kernel_size, self.stride, self.padding)
     }
@@ -25,6 +27,8 @@ public nocopy class AveragePool2D:Layer {
         self.stride = nn_pool_stride(kernel_size, stride, padding, "AveragePool2D")
         self.padding = padding
     }
+
+    override package func checkpoint_configuration() str {return "AveragePool2D:$(self.kernel_size):$(self.stride):$(self.padding)"}
 
     override func forward(input:Tensor) Tensor {
         return input.average_pool2d(self.kernel_size, self.stride, self.padding)

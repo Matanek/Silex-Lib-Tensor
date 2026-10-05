@@ -1,0 +1,47 @@
+use STD.File
+use STD.FileSystem
+use Tensor
+use Tensor.Data
+use Tensor.Neural
+use Tensor.Optim
+
+func model(seed:int) Neural.Sequential {
+    return Neural.Sequential([
+        Neural.Dense("dense",2,2,seed:seed),
+        Neural.BatchNorm("norm",2),Neural.Dropout(0.25,seed:seed)
+    ])
+}
+func train_step(model:Neural.Layer,optimizer:Optim.AdamW,cursor:Data.BatchCursor,progress:Neural.TrainingProgress) Neural.TrainingProgress {
+    var active=model;var optim=optimizer;var reading=cursor
+    if let batch=try reading.next() else error {panic(error)} {
+        if let schedule=progress.schedule {optim.set_learning_rate(schedule.value_at(progress.step))}
+        let error=active.forward(batch.input).subtract(batch.target)
+        error.multiply(error).mean().backward();optim.step();optim.zero_grad()
+        return Neural.TrainingProgress(step:progress.step+1,schedule:progress.schedule)
+    }
+    panic("example corpus exhausted")
+}
+func main() {
+    var inputs:float[]=[1.0,2.0,2.0,4.0,3.0,6.0,4.0,8.0]
+    var source=Data.TensorSource(Tensor(inputs,[4,2]),Tensor.ones([4,2]))
+    var original=model(42);var cursor=Data.BatchCursor(source,2,shuffle:true,seed:42)
+    var optimizer=Optim.AdamW(original.parameters(),learning_rate:0.01)
+    var progress=Neural.TrainingProgress(step:0,schedule:Optim.LearningRateSchedule.step(0.01,step_size:2,gamma:0.5))
+    progress=train_step(original,optimizer,cursor,progress)
+    let path="tensor-training-example.sxtc"
+    try Neural.TrainingCheckpoint.save(original,optimizer,cursor,progress,path) else error {panic(error)}
+    var restored=model(93);var restored_cursor=Data.BatchCursor(source,2,shuffle:true,seed:42)
+    var restored_optimizer=Optim.AdamW(restored.parameters())
+    var restored_progress=try Neural.TrainingCheckpoint.load(restored,restored_optimizer,restored_cursor,path) else error {panic(error)}
+    progress=train_step(original,optimizer,cursor,progress)
+    restored_progress=train_step(restored,restored_optimizer,restored_cursor,restored_progress)
+    var expected=original.parameters();var actual=restored.parameters();var index=0
+    while index<expected.count() {
+        let left=expected[index].value().detach().values();let right=actual[index].value().detach().values();var element=0
+        while element<left.count() {assert(left[element]==right[element]);element++}
+        index++
+    }
+    assert(progress.step==restored_progress.step && cursor.state()==restored_cursor.state())
+    try FileSystem.remove_file(path) else error {panic("cannot remove example checkpoint")}
+    print("Exact continuation after step $(restored_progress.step)")
+}

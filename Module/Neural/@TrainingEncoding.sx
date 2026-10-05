@@ -1,0 +1,159 @@
+use Interop.C
+use STD.Text
+use STD.Text.UTF8
+use Tensor
+use Tensor.DType
+
+// Equal-width local bit reinterpretation only; no external C symbol or ABI.
+func training_checkpoint_bits<T,U>(value:T) U {
+    var stored=value
+    return C.load<U>(C.address_bits(C.mutable_pointer(stored)),0 as uint)
+}
+
+package func training_checkpoint_float_word(value:float) uint32 {
+    return training_checkpoint_bits<float,uint32>(value)
+}
+package func training_checkpoint_word_float(value:uint32) float {
+    return training_checkpoint_bits<uint32,float>(value)
+}
+
+package func training_checkpoint_hex(value:uint64,digits:int) str {
+    let alphabet="0123456789abcdef";var result="";var index=digits-1
+    while index>=0 {
+        let nibble=((value >> (index*4)) & (15 as uint64)) as int
+        result+=Text.slice(alphabet,nibble,nibble+1);index--
+    }
+    return result
+}
+package func training_checkpoint_parse_hex(value:str,digits:int) Result<uint64,str> {
+    let bytes=UTF8.bytes(value)
+    if bytes.count()!=digits || digits<1 || digits>16 {return Result<uint64,str>.failure("Tensor.Neural.TrainingCheckpoint requires an exact-width hexadecimal value")}
+    var result=0 as uint64
+    for byte in bytes {
+        var digit=0 as uint64
+        if byte>=48 && byte<=57 {digit=(byte-48) as uint64}
+        elif byte>=97 && byte<=102 {digit=(byte-97+10) as uint64}
+        else {return Result<uint64,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid hexadecimal value")}
+        result=(result << 4) + digit
+    }
+    return Result<uint64,str>.success(result)
+}
+
+package func training_checkpoint_encode_tensor(value:Tensor) str {
+    let data=value.detach().cpu();var words:str[]=[]
+    if data.dtype()==DType.float32() {
+        for entry in data.values() {words.append(training_checkpoint_hex(training_checkpoint_float_word(entry) as uint64,8))}
+    } elif data.dtype()==DType.boolean() {
+        for entry in data.bool_values() {if entry {words.append("01")} else {words.append("00")}}
+    } elif data.dtype()==DType.int8() {
+        for entry in data.int8_values() {
+            var word=entry as int
+            if word<0 {word+=256}
+            words.append(training_checkpoint_hex(word as uint64,2))
+        }
+    } elif data.dtype()==DType.uint8() {
+        for entry in data.uint8_values() {words.append(training_checkpoint_hex(entry as uint64,2))}
+    } elif data.dtype()==DType.int16() {
+        for entry in data.int16_values() {
+            var word=entry as int
+            if word<0 {word+=65536}
+            words.append(training_checkpoint_hex(word as uint64,4))
+        }
+    } elif data.dtype()==DType.uint16() {
+        for entry in data.uint16_values() {words.append(training_checkpoint_hex(entry as uint64,4))}
+    } elif data.dtype()==DType.int32() {
+        for entry in data.int32_values() {words.append(training_checkpoint_hex(training_checkpoint_bits<int32,uint32>(entry) as uint64,8))}
+    } elif data.dtype()==DType.uint32() {
+        for entry in data.uint32_values() {words.append(training_checkpoint_hex(entry as uint64,8))}
+    } elif data.dtype()==DType.int64() {
+        for entry in data.int64_values() {words.append(training_checkpoint_hex(training_checkpoint_bits<int64,uint64>(entry),16))}
+    } else {
+        for entry in data.uint64_values() {words.append(training_checkpoint_hex(entry,16))}
+    }
+    var result="";var index=0
+    while index<words.count() {
+        if index>0 {result+=","}
+        result+=words[index];index++
+    }
+    return result
+}
+
+package func training_checkpoint_decode_tensor(value:str,shape:int[],dtype:DType) Result<Tensor,str> {
+    var count=1
+    for dimension in shape {
+        if dimension<0 {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint requires non-negative shape dimensions")}
+        if dimension>0 && count>9223372036854775807/dimension {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint shape cardinality overflows int")}
+        count*=dimension
+    }
+    var stride=1;var axis=shape.count()-1
+    while axis>=0 {
+        let dimension=shape[axis]
+        if dimension>0 && stride>9223372036854775807/dimension {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint shape strides overflow int")}
+        stride*=dimension;axis--
+    }
+    if count>9223372036854775807/dtype.byte_width() {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint tensor byte size overflows int")}
+    var fields:str[]=[]
+    if value!="" {fields=Text.split(value,",")}
+    if fields.count()!=count {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint value count disagrees with shape")}
+    var words:uint64[]=[]
+    for field in fields {words.append(try training_checkpoint_parse_hex(field,dtype.byte_width()*2))}
+    if dtype==DType.float32() {
+        var values:float[]=[]
+        for word in words {values.append(training_checkpoint_word_float(word as uint32))}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.boolean() {
+        var values:bool[]=[]
+        for word in words {
+            if word>1 as uint64 {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint boolean values must be 00 or 01")}
+            values.append(word==1 as uint64)
+        }
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.int8() {
+        var values:int8[]=[]
+        for word in words {
+            var signed=word as int
+            if signed>=128 {signed-=256}
+            values.append(signed as int8)
+        }
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.uint8() {
+        var values:uint8[]=[]
+        for word in words {values.append(word as uint8)}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.int16() {
+        var values:int16[]=[]
+        for word in words {
+            var signed=word as int
+            if signed>=32768 {signed-=65536}
+            values.append(signed as int16)
+        }
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.uint16() {
+        var values:uint16[]=[]
+        for word in words {values.append(word as uint16)}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.int32() {
+        var values:int32[]=[]
+        for word in words {values.append(training_checkpoint_bits<uint32,int32>(word as uint32))}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.uint32() {
+        var values:uint32[]=[]
+        for word in words {values.append(word as uint32)}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    if dtype==DType.int64() {
+        var values:int64[]=[]
+        for word in words {values.append(training_checkpoint_bits<uint64,int64>(word))}
+        return Result<Tensor,str>.success(Tensor(values,shape))
+    }
+    var values:uint64[]=[]
+    for word in words {values.append(word)}
+    return Result<Tensor,str>.success(Tensor(values,shape))
+}

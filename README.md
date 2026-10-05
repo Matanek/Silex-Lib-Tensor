@@ -45,5 +45,7 @@ silex install Tensor
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 
 The published baseline requires Silex 0.44.1 or newer. Unreleased supervised
-batches also require the compiler fix for `try` in mutating methods described
-in Silex’s Unreleased notes.
+batches and complete training checkpoints also require the corresponding
+`try` fixes for mutating and static methods in Silex’s Unreleased notes.
+
+Resume the model, optimizer, batch cursor and RNG together using the [complete training checkpoint](Docs/EN/TrainingCheckpoint.md).

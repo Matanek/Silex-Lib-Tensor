@@ -26,6 +26,8 @@ public nocopy class LayerNorm:Layer {
         self.register_parameter(self.offset)
     }
 
+    override package func checkpoint_configuration() str {return "LayerNorm:"+checkpoint_ints(self.normalized_shape)+":"+training_checkpoint_float_text(self.epsilon)}
+
     override func forward(input:Tensor) Tensor {
         if input.rank() < self.normalized_shape.count() {
             panic("Tensor.Neural.LayerNorm.forward requires its normalized trailing shape")

@@ -1,4 +1,5 @@
 use Tensor
+use GFX.GPU
 use Tensor.Neural.Parameter
 
 public struct AdamWState {
@@ -8,6 +9,11 @@ public struct AdamWState {
     let epsilon:float
     let weight_decay:float
     var parameters:AdamMomentState[]
+
+    func to(device:GPU.Device) AdamWState {
+        var saved=adamw_moments(self).to(device)
+        return adamw_state(saved)
+    }
 
     func cpu() AdamWState {
         var saved = adamw_moments(self).cpu()
@@ -32,7 +38,9 @@ public nocopy class AdamW {
     func zero_grad() { self.engine.zero_grad() }
     func step() { self.engine.step() }
     func state() AdamWState { return adamw_state(self.engine.state()) }
+    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return self.engine.checkpoint_parameters(expected)}
     func restore(snapshot:AdamWState) Result<void,str> { return self.engine.restore(adamw_moments(snapshot)) }
+    package func validate_restore(snapshot:AdamWState) Result<void,str> { return self.engine.validate_restore(adamw_moments(snapshot)) }
 
     func clip_grad_norm(
         maximum_norm:float,

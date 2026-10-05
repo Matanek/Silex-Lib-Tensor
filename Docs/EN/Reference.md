@@ -123,3 +123,12 @@ graph consumption, and Jacobian checking.
 [Decoupled decay and schedules](OptimizerUpdates.md): AdamW, explicit step, and next update rate.
 
 [CPU model metadata](HostState.md): explicit CPU buffers and recursive transfers.
+
+
+## Training checkpoint
+
+[TrainingCheckpoint](TrainingCheckpoint.md) restores the model, SGD/Adam/AdamW
+state, supervised cursor, step/schedule, modes, trainability and dropout together
+on CPU. Exact versioned format for every storage dtype; recoverable save/load,
+complete validation before mutation and explicit GPU transfers. The historical
+parameter checkpoint remains separate and compatible.

@@ -1,0 +1,44 @@
+use STD.FileSystem
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+nocopy class CheckpointLifetimeModel:Neural.Layer {
+    var weight:Neural.Parameter
+    init() {self.weight=Neural.Parameter("weight",Tensor.scalar(0.25));self.register_parameter(self.weight)}
+    override func forward(input:Tensor) Tensor {return input.multiply(self.weight.value())}
+}
+func checkpoint_lifetime_step(model:CheckpointLifetimeModel,optimizer:Optim.AdamW,device:GPU.Device) {
+    var active=model;var optim=optimizer
+    active.forward(Tensor.ones([2,2]).to(device)).sum().backward();optim.step();optim.zero_grad()
+}
+func checkpoint_lifetime_cycle(device:GPU.Device,path:str) {
+    var model=CheckpointLifetimeModel();model.to(device)
+    var optimizer=Optim.AdamW(model.parameters());var source=Data.TensorSource(Tensor.ones([4,2]),Tensor.ones([4,2]))
+    var cursor=Data.BatchCursor(source,2);var progress=Neural.TrainingProgress(step:0,schedule:null)
+    checkpoint_lifetime_step(model,optimizer,device)
+    try Neural.TrainingCheckpoint.save(model,optimizer,cursor,progress,path) else error {panic(error)}
+    model.cpu()
+    let restored=try Neural.TrainingCheckpoint.load(model,optimizer,cursor,path) else error {panic(error)}
+    var moments=optimizer.state().to(device);model.to(device)
+    try optimizer.restore(moments) else error {panic(error)}
+    checkpoint_lifetime_step(model,optimizer,device)
+}
+test "complete checkpoint releases staged snapshots models GPU buffers and autograd graphs over 32 lifetimes" {
+    if !GPU.Device.is_supported() {return}
+    let path="/private/tmp/tensor-training-checkpoint-lifetime.sxtc"
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let baseline=autograd_performance_statistics();var cycle=0
+    while cycle<32 {
+        checkpoint_lifetime_cycle(device,path)
+        let now=autograd_performance_statistics()
+        assert(now.live_nodes==baseline.live_nodes && now.retained_edges==baseline.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        cycle++
+    }
+    try FileSystem.remove_file(path) else error {panic("remove checkpoint lifetime fixture")}
+}

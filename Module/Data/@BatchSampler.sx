@@ -78,19 +78,24 @@ public nocopy class BatchSampler {
     }
 
     func restore(state:BatchSamplerState) {
-        if state.count != self.sample_count || state.batch_size != self.batch_size ||
-            state.shuffle != self.shuffled || state.seed != self.seed || state.drop_last != self.drop_last {
-            panic("Tensor.Data.BatchSampler.restore requires matching sampler configuration")
-        }
-        if state.epoch < 0 { panic("Tensor.Data.BatchSampler.restore requires a non-negative epoch") }
-        if state.position < 0 || state.position > self.sample_count ||
-            (state.position != self.sample_count && state.position % self.batch_size != 0) {
-            panic("Tensor.Data.BatchSampler.restore requires a valid batch boundary")
-        }
+        try self.validate_restore(state) else error {panic(error)}
         let next_order = self.build_order(state.epoch)
         self.order = next_order
         self.current_epoch = state.epoch
         self.current_position = state.position
+    }
+
+    package func validate_restore(state:BatchSamplerState) Result<void,str> {
+        if state.count != self.sample_count || state.batch_size != self.batch_size ||
+            state.shuffle != self.shuffled || state.seed != self.seed || state.drop_last != self.drop_last {
+            return Result<void,str>.failure("Tensor.Data.BatchSampler.restore requires matching sampler configuration")
+        }
+        if state.epoch < 0 { return Result<void,str>.failure("Tensor.Data.BatchSampler.restore requires a non-negative epoch") }
+        if state.position < 0 || state.position > self.sample_count ||
+            (state.position != self.sample_count && state.position % self.batch_size != 0) {
+            return Result<void,str>.failure("Tensor.Data.BatchSampler.restore requires a valid batch boundary")
+        }
+        return Result<void,str>.success()
     }
 
     private func mixed_seed(epoch:int) int {

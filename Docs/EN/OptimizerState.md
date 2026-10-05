@@ -71,11 +71,11 @@ momentum buffer when the saved coefficient is zero.
 
 ## Choose placement and the current rate
 
-`state()` and `restore()` retain resident moment placement without transfers.
-`snapshot.cpu()` explicitly creates a CPU copy of moments; its arrays and shapes
-are independent. To restore a CPU snapshot into a GPU model, explicitly transfer
-its entry Tensor values to the model device before `restore`. Moving a parameter
-does not implicitly migrate optimizer state.
+`state()` and `restore()` preserve resident placement without transfers.
+`snapshot.cpu()` explicitly copies moments to CPU; `snapshot.to(device)`
+explicitly transfers them to a device. Each copy has independent entry and
+shape arrays. Move the model as well before restoring its GPU moments.
+The [complete checkpoint](TrainingCheckpoint.md) also saves the model and progress.
 
 `learning_rate()` reads the current rate; `set_learning_rate(value)` requires a
 finite, strictly positive scalar and preserves every moment and counter.

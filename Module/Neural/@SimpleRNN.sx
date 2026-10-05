@@ -31,6 +31,8 @@ public nocopy class SimpleRNN:Layer {
         self.register_parameter(self.bias)
     }
 
+    override package func checkpoint_configuration() str {return "SimpleRNN:$(self.input_features):$(self.hidden_features)"}
+
     override func forward(input:Tensor) Tensor { return self.forward(input, null) }
 
     func forward(input:Tensor, initial_state:Tensor?) Tensor {

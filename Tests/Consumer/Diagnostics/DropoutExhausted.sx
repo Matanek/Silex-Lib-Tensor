@@ -1,0 +1,30 @@
+use STD.File
+use STD.FileSystem
+use STD.Text
+use Tensor
+use Tensor.Data
+use Tensor.Neural
+use Tensor.Optim
+
+func main() {
+    let path="tensor-dropout-exhausted.sxtc"
+    var model=Neural.Sequential([Neural.Dense("dense",1,1,seed:42),Neural.Dropout(0.25,seed:42)])
+    var source=Data.TensorSource(Tensor.ones([2,1]),Tensor.ones([2,1]))
+    var cursor=Data.BatchCursor(source,2);var optimizer=Optim.AdamW(model.parameters())
+    var progress=Neural.TrainingProgress(step:0,schedule:null)
+    try Neural.TrainingCheckpoint.save(model,optimizer,cursor,progress,path) else error {panic(error)}
+    var document=try File.read_text(path,1024*1024) else error {panic(error.detail)}
+    var lines=Text.split(document,"\n");var index=0;var node=0
+    while index<lines.count() {
+        var fields=Text.split(lines[index],"\t")
+        if fields[0]=="node" {
+            if node==2 {fields[3]="34322c34323934393637323936";lines[index]=Text.join(fields,"\t")}
+            node++
+        }
+        index++
+    }
+    try File.write_all(path,Text.join(lines,"\n")) else error {panic(error.detail)}
+    let restored=try Neural.TrainingCheckpoint.load(model,optimizer,cursor,path) else error {panic(error)}
+    try FileSystem.remove_file(path) else error {panic("remove dropout exhaustion fixture")}
+    let output=model.forward(Tensor.ones([2,1]))
+}

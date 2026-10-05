@@ -35,6 +35,8 @@ public nocopy class Conv2D:Layer {
         self.register_parameter(self.bias)
     }
 
+    override package func checkpoint_configuration() str {return "Conv2D:$(self.input_channels):$(self.stride):$(self.padding)"}
+
     override func forward(input:Tensor) Tensor {
         if input.rank() != 4 || input.shape()[1] != self.input_channels {
             panic("Tensor.Neural.Conv2D.forward requires NCHW input with input_channels")

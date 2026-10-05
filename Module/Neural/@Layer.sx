@@ -153,6 +153,41 @@ public nocopy class Layer {
     protected func moved_to(device:GPU.Device) {}
     protected func moved_to_cpu() {}
 
+    package func checkpoint_configuration() str {return ""}
+    package func checkpoint_random_state() str {return ""}
+    package func checkpoint_validate_random_state(value:str) Result<void,str> {
+        if value!="" {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint contains unexpected layer state")}
+        return Result<void,str>.success()
+    }
+    package func checkpoint_apply_random_state(value:str) {}
+    package func checkpoint_validate_buffers(entries:TrainingTensorState[]) Result<void,str> {return Result<void,str>.success()}
+
+    package func checkpoint_restore_local(training:bool,random_state:str) {
+        self.current_training=training
+        self.checkpoint_apply_random_state(random_state)
+        self.training_changed(training)
+    }
+
+    package func checkpoint_nodes() TrainingNode[] {
+        var state=self.collect_state();var nodes:TrainingNode[]=[]
+        for layer in state.layers {
+            var signature=layer.checkpoint_configuration()+"|parameters"
+            for parameter in layer.own_parameters {signature+="|"+checkpoint_name(parameter.name())}
+            signature+="|buffers"
+            for buffer in layer.own_buffers {signature+="|"+checkpoint_name(buffer.name())}
+            signature+="|children"
+            var index=0
+            while index<layer.child_layers.count() {
+                var target=0
+                while state.layers[target]!=layer.child_layers[index] {target++}
+                signature+="|"+checkpoint_name(layer.child_names[index])+":$(target)"
+                index++
+            }
+            nodes.append(TrainingNode(layer:layer,signature:signature))
+        }
+        return nodes
+    }
+
     private func set_training(training:bool) {
         var state = self.collect_state()
         var layers = state.layers

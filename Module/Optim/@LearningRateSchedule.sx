@@ -1,6 +1,6 @@
 use STD.Math
 
-enum RateScheduleKind { constant; step; exponential; cosine }
+package enum RateScheduleKind { constant; step; exponential; cosine }
 
 public struct LearningRateSchedule {
     private let kind:RateScheduleKind
@@ -15,6 +15,29 @@ public struct LearningRateSchedule {
         self.gamma=gamma
         self.interval=interval
         self.minimum_rate=minimum_rate
+    }
+
+    package func checkpoint_state() RateScheduleState {
+        return RateScheduleState(kind:self.kind,initial_rate:self.initial_rate,gamma:self.gamma,interval:self.interval,minimum_rate:self.minimum_rate)
+    }
+    package static func from_checkpoint(state:RateScheduleState) Result<LearningRateSchedule,str> {
+        if !state_positive(state.initial_rate) || !state_positive(state.gamma) || state.interval<=0 ||
+            !state_positive(state.minimum_rate) || state.minimum_rate>state.initial_rate {
+            return Result<LearningRateSchedule,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid learning-rate schedule")
+        }
+        if state.kind==RateScheduleKind.constant && (state.gamma!=1.0 || state.interval!=1 || state.minimum_rate!=state.initial_rate) {
+            return Result<LearningRateSchedule,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid constant schedule")
+        }
+        if state.kind==RateScheduleKind.step && state.minimum_rate!=state.initial_rate {
+            return Result<LearningRateSchedule,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid step schedule")
+        }
+        if state.kind==RateScheduleKind.exponential && (state.interval!=1 || state.minimum_rate!=state.initial_rate) {
+            return Result<LearningRateSchedule,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid exponential schedule")
+        }
+        if state.kind==RateScheduleKind.cosine && state.gamma!=1.0 {
+            return Result<LearningRateSchedule,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid cosine schedule")
+        }
+        return Result<LearningRateSchedule,str>.success(LearningRateSchedule(state.kind,state.initial_rate,state.gamma,state.interval,state.minimum_rate))
     }
 
     static func constant(learning_rate:float) LearningRateSchedule {
@@ -61,4 +84,12 @@ public struct LearningRateSchedule {
         require_positive(rate,"result","LearningRateSchedule.value_at")
         return rate
     }
+}
+
+package struct RateScheduleState {
+    let kind:RateScheduleKind
+    let initial_rate:float
+    let gamma:float
+    let interval:int
+    let minimum_rate:float
 }

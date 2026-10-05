@@ -12,6 +12,8 @@ public nocopy class Activation:Layer {
     static func sigmoid() Activation { return Activation(ActivationKind.sigmoid) }
     static func tanh() Activation { return Activation(ActivationKind.tanh) }
 
+    override package func checkpoint_configuration() str {return match self.kind {relu=>"Activation:relu";sigmoid=>"Activation:sigmoid";tanh=>"Activation:tanh"}}
+
     override func forward(input:Tensor) Tensor {
         return match self.kind {
             relu => input.relu()

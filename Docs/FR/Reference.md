@@ -123,3 +123,12 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Décroissance découplée et calendriers](OptimizerUpdates.md) : AdamW, étape explicite et taux du prochain pas.
 
 [Métadonnées CPU du modèle](HostState.md) : buffers à placement CPU explicite et transferts récursifs.
+
+
+## Checkpoint d’entraînement
+
+[TrainingCheckpoint](TrainingCheckpoint.md) restaure modèle, état SGD/Adam/AdamW,
+curseur supervisé, étape/calendrier, modes, gel et dropout ensemble sur CPU.
+Format versionné exact pour tous les dtypes de stockage ; save/load récupérables,
+validation complète avant mutation, transferts GPU explicites. Le checkpoint de
+paramètres historique reste distinct et compatible.

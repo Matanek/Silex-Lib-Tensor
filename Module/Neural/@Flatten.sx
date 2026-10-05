@@ -3,6 +3,8 @@ use Tensor
 public nocopy class Flatten:Layer {
     init():super() {}
 
+    override package func checkpoint_configuration() str {return "Flatten"}
+
     override func forward(input:Tensor) Tensor {
         if input.rank() < 2 { panic("Tensor.Neural.Flatten.forward requires a batch axis") }
         var features = 1

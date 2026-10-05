@@ -1,0 +1,133 @@
+use STD.Text
+use Tensor
+use Tensor.Data
+use Tensor.Optim
+use Tensor.DType
+
+func training_checkpoint_document(state:TrainingState) str {
+    var document="SILEX_TENSOR_TRAINING\t1\nprogress\t$(state.progress.step)"
+    if let schedule=state.progress.schedule {
+        let saved=schedule.checkpoint_state();var kind="constant"
+        match saved.kind {
+            constant=>{}
+            step=>{kind="step"}
+            exponential=>{kind="exponential"}
+            cosine=>{kind="cosine"}
+        }
+        document+="\t$(kind)\t"+training_checkpoint_float_text(saved.initial_rate)+"\t"+training_checkpoint_float_text(saved.gamma)+
+            "\t$(saved.interval)\t"+training_checkpoint_float_text(saved.minimum_rate)+"\n"
+    } else {document+="\t-\t-\t-\t-\t-\n"}
+    let cursor=state.cursor
+    document+="cursor\t$(cursor.count)\t$(cursor.batch_size)\t"+training_checkpoint_boolean_text(cursor.shuffle)+"\t"+
+        training_checkpoint_signed_text(cursor.seed)+"\t"+training_checkpoint_boolean_text(cursor.drop_last)+"\t$(cursor.epoch)\t$(cursor.position)\n"
+    document+="nodes\t$(state.nodes.count())\n"
+    for node in state.nodes {
+        document+="node\t"+training_checkpoint_text(node.signature)+"\t"+training_checkpoint_boolean_text(node.training)+"\t"+
+            training_checkpoint_text(node.random_state)+"\n"
+    }
+    document+="parameters\t$(state.parameters.count())\n"
+    for entry in state.parameters {document+=training_checkpoint_tensor_line("parameter",entry)}
+    document+="buffers\t$(state.buffers.count())\n"
+    for entry in state.buffers {document+=training_checkpoint_tensor_line("buffer",entry)}
+    document+="optimizer\t$(state.optimizer)\t";var index=0
+    for rate in state.rates {
+        if index>0 {document+=","}
+        document+=training_checkpoint_float_text(rate);index++
+    }
+    document+="\nslots\t$(state.slots.count())\n"
+    for slot in state.slots {
+        var first="-";var second="-"
+        if let tensor=slot.first_moment {first=training_checkpoint_encode_tensor(tensor)}
+        if let tensor=slot.second_moment {second=training_checkpoint_encode_tensor(tensor)}
+        document+="slot\t"+training_checkpoint_text(slot.name)+"\t"+checkpoint_ints(slot.shape)+"\t$(slot.step_count)\t$(first)\t$(second)\n"
+    }
+    return document+"END\n"
+}
+func training_checkpoint_tensor_line(tag:str,entry:TrainingTensorState) str {
+    return "$(tag)\t"+training_checkpoint_text(entry.name)+"\t"+training_checkpoint_dtype_text(entry.value.dtype())+"\t"+
+        checkpoint_ints(entry.value.shape())+"\t"+training_checkpoint_boolean_text(entry.flag)+"\t"+training_checkpoint_encode_tensor(entry.value)+"\n"
+}
+
+class TrainingReader {
+    private let lines:str[]
+    private var index:int
+    init(content:str) {self.lines=Text.split(content,"\n");self.index=0}
+    private func fields(tag:str,count:int) Result<str[],str> {
+        if self.index>=self.lines.count() {return Result<str[],str>.failure("Tensor.Neural.TrainingCheckpoint document is truncated")}
+        let fields=Text.split(self.lines[self.index],"\t");self.index++
+        if fields.count()!=count || fields[0]!=tag {return Result<str[],str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid '$(tag)' fields")}
+        return Result<str[],str>.success(fields)
+    }
+    private func section(tag:str) Result<int,str> {
+        let fields=try self.fields(tag,2);let count=try training_checkpoint_integer(fields[1])
+        if count>self.lines.count()-self.index {return Result<int,str>.failure("Tensor.Neural.TrainingCheckpoint section count exceeds the document")}
+        return Result<int,str>.success(count)
+    }
+    private func tensor(tag:str) Result<TrainingTensorState,str> {
+        let fields=try self.fields(tag,6)
+        let name=try training_checkpoint_read_text(fields[1])
+        if name=="" {return Result<TrainingTensorState,str>.failure("Tensor.Neural.TrainingCheckpoint requires non-empty state names")}
+        let dtype=try training_checkpoint_dtype(fields[2]);let shape=try training_checkpoint_shape(fields[3])
+        let flag=try training_checkpoint_boolean(fields[4]);var value=try training_checkpoint_decode_tensor(fields[5],shape,dtype)
+        return Result<TrainingTensorState,str>.success(TrainingTensorState(name:name,value:value,flag:flag))
+    }
+    func read() Result<TrainingState,str> {
+        let header=try self.fields("SILEX_TENSOR_TRAINING",2)
+        if header[1]!="1" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires schema version 1")}
+        let progress_fields=try self.fields("progress",7)
+        let step=try training_checkpoint_integer(progress_fields[1]);var schedule:Optim.LearningRateSchedule?=null
+        if progress_fields[2]=="-" {
+            var index=3
+            while index<7 {
+                if progress_fields[index]!="-" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid absent schedule")}
+                index++
+            }
+        } else {
+            var kind=Tensor.Optim.RateScheduleKind.constant
+            if progress_fields[2]=="step" {kind=Tensor.Optim.RateScheduleKind.step}
+            elif progress_fields[2]=="exponential" {kind=Tensor.Optim.RateScheduleKind.exponential}
+            elif progress_fields[2]=="cosine" {kind=Tensor.Optim.RateScheduleKind.cosine}
+            elif progress_fields[2]!="constant" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains unknown schedule")}
+            let initial=try training_checkpoint_float(progress_fields[3]);let gamma=try training_checkpoint_float(progress_fields[4])
+            let interval=try training_checkpoint_integer(progress_fields[5]);let minimum=try training_checkpoint_float(progress_fields[6])
+            schedule=try Optim.LearningRateSchedule.from_checkpoint(Tensor.Optim.RateScheduleState(kind:kind,initial_rate:initial,gamma:gamma,interval:interval,minimum_rate:minimum))
+        }
+        let cursor_fields=try self.fields("cursor",8)
+        let count=try training_checkpoint_integer(cursor_fields[1]);let size=try training_checkpoint_integer(cursor_fields[2])
+        let shuffle=try training_checkpoint_boolean(cursor_fields[3]);let seed=try training_checkpoint_signed(cursor_fields[4])
+        let dropped=try training_checkpoint_boolean(cursor_fields[5]);let epoch=try training_checkpoint_integer(cursor_fields[6]);let position=try training_checkpoint_integer(cursor_fields[7])
+        var state=TrainingState(TrainingProgress(step:step,schedule:schedule),Data.BatchSamplerState(count:count,batch_size:size,shuffle:shuffle,seed:seed,drop_last:dropped,epoch:epoch,position:position))
+        let node_count=try self.section("nodes");var index=0
+        while index<node_count {
+            let fields=try self.fields("node",4);let signature=try training_checkpoint_read_text(fields[1])
+            let training=try training_checkpoint_boolean(fields[2]);let random=try training_checkpoint_read_text(fields[3])
+            state.nodes.append(TrainingLocalState(signature:signature,training:training,random_state:random));index++
+        }
+        let parameter_count=try self.section("parameters");index=0
+        while index<parameter_count {state.parameters.append(try self.tensor("parameter"));index++}
+        let buffer_count=try self.section("buffers");index=0
+        while index<buffer_count {state.buffers.append(try self.tensor("buffer"));index++}
+        let optimizer=try self.fields("optimizer",3);state.optimizer=optimizer[1]
+        var rate_count=5
+        if state.optimizer=="SGD" {rate_count=3}
+        elif state.optimizer!="Adam" && state.optimizer!="AdamW" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains unsupported optimizer")}
+        let rates=Text.split(optimizer[2],",")
+        if rates.count()!=rate_count {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid optimizer hyperparameters")}
+        for rate in rates {state.rates.append(try training_checkpoint_float(rate))}
+        let slot_count=try self.section("slots");index=0
+        while index<slot_count {
+            let fields=try self.fields("slot",6);let name=try training_checkpoint_read_text(fields[1])
+            if name=="" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires non-empty slot names")}
+            let shape=try training_checkpoint_shape(fields[2]);let steps=try training_checkpoint_integer(fields[3])
+            var first:Tensor?=null;var second:Tensor?=null
+            if fields[4]!="-" {first=try training_checkpoint_decode_tensor(fields[4],shape,DType.float32())}
+            if fields[5]!="-" {second=try training_checkpoint_decode_tensor(fields[5],shape,DType.float32())}
+            state.slots.append(Optim.AdamMomentState(name:name,shape:shape,step_count:steps,first_moment:first,second_moment:second));index++
+        }
+        let footer=try self.fields("END",1)
+        if self.index!=self.lines.count() && !(self.index==self.lines.count()-1 && self.lines[self.index]=="") {
+            return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains trailing data")
+        }
+        return Result<TrainingState,str>.success(state)
+    }
+}

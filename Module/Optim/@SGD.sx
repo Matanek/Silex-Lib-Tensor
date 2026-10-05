@@ -141,7 +141,12 @@ public nocopy class SGD {
         return SGDState(learning_rate:self.current_learning_rate,momentum:self.momentum,weight_decay:self.weight_decay,parameters:entries)
     }
 
-    func restore(snapshot:SGDState) Result<void,str> {
+    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return validate_checkpoint_parameters(self.parameters,expected)}
+
+    func restore(snapshot:SGDState) Result<void,str> {return self.restore_state(snapshot,true)}
+    package func validate_restore(snapshot:SGDState) Result<void,str> {return self.restore_state(snapshot,false)}
+
+    private func restore_state(snapshot:SGDState,apply:bool) Result<void,str> {
         if !state_positive(snapshot.learning_rate) || !state_nonnegative(snapshot.momentum) || !state_nonnegative(snapshot.weight_decay) {
             return Result<void,str>.failure("Tensor.Optim.SGD.restore requires valid hyperparameters")
         }
@@ -169,10 +174,12 @@ public nocopy class SGD {
             }
             restored.append(slot)
         }
-        self.states=restored
-        self.current_learning_rate=snapshot.learning_rate
-        self.momentum=snapshot.momentum
-        self.weight_decay=snapshot.weight_decay
+        if apply {
+            self.states=restored
+            self.current_learning_rate=snapshot.learning_rate
+            self.momentum=snapshot.momentum
+            self.weight_decay=snapshot.weight_decay
+        }
         return Result<void,str>.success()
     }
 

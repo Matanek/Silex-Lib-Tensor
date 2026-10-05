@@ -36,6 +36,14 @@ public nocopy class BatchCursor {
         self.sampler.restore(state)
     }
 
+    package func checkpoint_restore(state:BatchSamplerState) {self.sampler.restore(state)}
+
+    package func validate_restore(state:BatchSamplerState) Result<void,str> {
+        if self.reading {return Result<void,str>.failure("Tensor.Data.BatchCursor cannot restore during a read")}
+        if self.source.count()!=self.sample_count {return Result<void,str>.failure("Tensor.Data.BatchCursor requires a stable source count")}
+        return self.sampler.validate_restore(state)
+    }
+
     private func require_stable_source() {
         if self.source.count() != self.sample_count { panic("Tensor.Data.BatchCursor requires a stable source count") }
     }

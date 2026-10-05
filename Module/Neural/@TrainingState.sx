@@ -1,0 +1,123 @@
+use Tensor
+use Tensor.DType
+use Tensor.Data
+use Tensor.Optim
+use STD.Text
+use STD.Text.UTF8
+
+public struct TrainingProgress {
+    let step:int
+    let schedule:Optim.LearningRateSchedule?
+}
+
+package struct TrainingNode {
+    var layer:Layer
+    let signature:str
+}
+package struct TrainingTensorState {
+    let name:str
+    var value:Tensor
+    let flag:bool
+}
+struct TrainingLocalState {
+    let signature:str
+    let training:bool
+    let random_state:str
+}
+class TrainingState {
+    var progress:TrainingProgress
+    var cursor:Data.BatchSamplerState
+    var nodes:TrainingLocalState[]
+    var parameters:TrainingTensorState[]
+    var buffers:TrainingTensorState[]
+    var optimizer:str
+    var rates:float[]
+    var slots:Optim.AdamMomentState[]
+    init(progress:TrainingProgress,cursor:Data.BatchSamplerState) {
+        self.progress=progress;self.cursor=cursor
+        self.nodes=[];self.parameters=[];self.buffers=[]
+        self.optimizer="";self.rates=[];self.slots=[]
+    }
+}
+
+package func training_checkpoint_integer(value:str) Result<int,str> {
+    let bytes=UTF8.bytes(value)
+    if bytes.is_empty() {return Result<int,str>.failure("Tensor.Neural.TrainingCheckpoint contains an invalid integer")}
+    var result=0
+    for byte in bytes {
+        if byte<48 || byte>57 {return Result<int,str>.failure("Tensor.Neural.TrainingCheckpoint requires a non-negative decimal integer")}
+        let digit=(byte-48) as int
+        if result>(9223372036854775807-digit)/10 {return Result<int,str>.failure("Tensor.Neural.TrainingCheckpoint integer overflows int")}
+        result=result*10+digit
+    }
+    return Result<int,str>.success(result)
+}
+func training_checkpoint_signed(value:str) Result<int,str> {
+    let word=try training_checkpoint_parse_hex(value,16)
+    return Result<int,str>.success(training_checkpoint_bits<uint64,int64>(word))
+}
+func training_checkpoint_signed_text(value:int) str {return training_checkpoint_hex(training_checkpoint_bits<int64,uint64>(value),16)}
+func training_checkpoint_float(value:str) Result<float,str> {
+    let word=try training_checkpoint_parse_hex(value,8)
+    return Result<float,str>.success(training_checkpoint_word_float(word as uint32))
+}
+func training_checkpoint_float_text(value:float) str {return training_checkpoint_hex(training_checkpoint_float_word(value) as uint64,8)}
+func training_checkpoint_boolean(value:str) Result<bool,str> {
+    if value=="0" {return Result<bool,str>.success(false)}
+    if value=="1" {return Result<bool,str>.success(true)}
+    return Result<bool,str>.failure("Tensor.Neural.TrainingCheckpoint requires boolean 0 or 1")
+}
+func training_checkpoint_boolean_text(value:bool) str {
+    if value {return "1"}
+    return "0"
+}
+func training_checkpoint_text(value:str) str {
+    if value=="" {return "-"}
+    return checkpoint_name(value)
+}
+func training_checkpoint_read_text(value:str) Result<str,str> {
+    if value=="-" {return Result<str,str>.success("")}
+    let bytes=UTF8.bytes(value)
+    if bytes.is_empty() || bytes.count()%2!=0 {return Result<str,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid encoded text")}
+    var decoded:uint8[]=[];var index=0
+    while index<bytes.count() {
+        let word=try training_checkpoint_parse_hex(Text.slice(value,index,index+2),2)
+        decoded.append(word as uint8);index+=2
+    }
+    let view=@decoded[0:decoded.count()]
+    match UTF8.decode(view) {
+        success(text) => {return Result<str,str>.success(text)}
+        failure(error) => {return Result<str,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid UTF-8")}
+    }
+}
+func training_checkpoint_shape(value:str) Result<int[],str> {
+    if value=="-" {return Result<int[],str>.success([])}
+    var shape:int[]=[]
+    for field in Text.split(value,",") {shape.append(try training_checkpoint_integer(field))}
+    return Result<int[],str>.success(shape)
+}
+func training_checkpoint_dtype(value:str) Result<DType,str> {
+    if value=="f32" {return Result<DType,str>.success(DType.float32())}
+    if value=="bool" {return Result<DType,str>.success(DType.boolean())}
+    if value=="i8" {return Result<DType,str>.success(DType.int8())}
+    if value=="u8" {return Result<DType,str>.success(DType.uint8())}
+    if value=="i16" {return Result<DType,str>.success(DType.int16())}
+    if value=="u16" {return Result<DType,str>.success(DType.uint16())}
+    if value=="i32" {return Result<DType,str>.success(DType.int32())}
+    if value=="u32" {return Result<DType,str>.success(DType.uint32())}
+    if value=="i64" {return Result<DType,str>.success(DType.int64())}
+    if value=="u64" {return Result<DType,str>.success(DType.uint64())}
+    return Result<DType,str>.failure("Tensor.Neural.TrainingCheckpoint contains an unsupported dtype")
+}
+func training_checkpoint_dtype_text(dtype:DType) str {
+    if dtype==DType.float32() {return "f32"}
+    if dtype==DType.boolean() {return "bool"}
+    if dtype==DType.int8() {return "i8"}
+    if dtype==DType.uint8() {return "u8"}
+    if dtype==DType.int16() {return "i16"}
+    if dtype==DType.uint16() {return "u16"}
+    if dtype==DType.int32() {return "i32"}
+    if dtype==DType.uint32() {return "u32"}
+    if dtype==DType.int64() {return "i64"}
+    return "u64"
+}

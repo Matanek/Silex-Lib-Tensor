@@ -1,0 +1,230 @@
+use STD.File
+use STD.FileSystem
+use STD.Text
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use Tensor.DType
+use Tensor.Profile
+use GFX.GPU
+
+nocopy class CheckpointStateModel:Neural.Layer {
+    var weight:Neural.Parameter
+    var frozen:Neural.Parameter
+    var integers:Neural.Buffer
+    var flags:Neural.Buffer
+    var dropout:Neural.Dropout
+    init(seed:int,shared:bool=true) {
+        self.weight=Neural.Parameter("weight",Tensor.scalar(0.12345679))
+        self.frozen=Neural.Parameter("frozen",Tensor.scalar(123456.789))
+        var counts:int[]=[-9223372036854775808,9223372036854775807]
+        var flags:bool[]=[true,false]
+        self.integers=Neural.Buffer("integers",Tensor.vector(counts),placement:Neural.BufferPlacement.cpu)
+        self.flags=Neural.Buffer("flags",Tensor.vector(flags))
+        self.dropout=Neural.Dropout(0.2,seed)
+        self.register_parameter(self.weight);self.register_parameter(self.frozen)
+        self.register_buffer(self.integers);self.register_buffer(self.flags)
+        self.register_child("first",self.dropout)
+        if shared {self.register_child("second",self.dropout)}
+        else {self.register_child("second",Neural.Dropout(0.2,seed))}
+    }
+    override func forward(input:Tensor) Tensor {return self.dropout.forward(input.multiply(self.weight.value()))}
+}
+func state_cursor() Data.BatchCursor {
+    var source=Data.TensorSource(Tensor.ones([8,2]),Tensor.ones([8,2]))
+    return Data.BatchCursor(source,2,shuffle:true,seed:-9223372036854775808)
+}
+func state_progress() Neural.TrainingProgress {return Neural.TrainingProgress(step:4,schedule:Optim.LearningRateSchedule.step(0.01,step_size:2,gamma:0.5))}
+func state_read(path:str) str {
+    match File.read_text(path,1024*1024) {success(value)=>{return value}
+        failure(error)=>{panic(error.detail)}}
+}
+func state_write(path:str,value:str) {try File.write_all(path,value) else error {panic(error.detail)}}
+func state_remove(path:str) {try FileSystem.remove_file(path) else error {panic("remove checkpoint fixture")}}
+func state_error(result:Result<Neural.TrainingProgress,str>) str {
+    match result {failure(error)=>{return error}
+        success(progress)=>{panic("expected checkpoint rejection")}}
+}
+func state_change(document:str,tag:str,occurrence:int,field:int,value:str) str {
+    var lines=Text.split(document,"\n");var found=0;var index=0
+    while index<lines.count() {
+        var fields=Text.split(lines[index],"\t")
+        if fields[0]==tag {
+            if found==occurrence {fields[field]=value;lines[index]=Text.join(fields,"\t");return Text.join(lines,"\n")}
+            found++
+        }
+        index++
+    }
+    panic("missing checkpoint fixture field")
+}
+
+test "complete SGD checkpoint preserves exact mixed buffers frozen parameters shared layers and local modes" {
+    let path="/private/tmp/tensor-training-checkpoint-sgd.sxtc";let again=path+".again"
+    var source=CheckpointStateModel(42);var cursor=state_cursor()
+    var optimizer=Optim.SGD(source.parameters(),learning_rate:0.01,momentum:0.9,weight_decay:0.1)
+    source.forward(Tensor.ones([2,2])).sum().backward();optimizer.step();optimizer.zero_grad()
+    source.frozen.freeze();source.dropout.eval();cursor.set_epoch(8)
+    let next=try cursor.next() else error {panic(error)}
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+    var target=CheckpointStateModel(93);var restored_cursor=state_cursor();var restored=Optim.SGD(target.parameters(),learning_rate:1.0)
+    target.eval()
+    let progress=try Neural.TrainingCheckpoint.load(target,restored,restored_cursor,path) else error {panic(error)}
+    assert(target.is_training() && !target.dropout.is_training() && !target.frozen.is_trainable())
+    assert(target.child("first")==target.child("second") && restored_cursor.state()==cursor.state())
+    assert(target.integers.value().int64_values()[0]==-9223372036854775808 && target.integers.value().int64_values()[1]==9223372036854775807)
+    assert(target.flags.value().bool_values()[0] && !target.flags.value().bool_values()[1])
+    try Neural.TrainingCheckpoint.save(target,restored,restored_cursor,progress,again) else error {panic(error)}
+    assert(state_read(path)==state_read(again))
+    source.dropout.train();target.dropout.train()
+    source.forward(Tensor.ones([2,2])).sum().backward();target.forward(Tensor.ones([2,2])).sum().backward()
+    optimizer.step();restored.step();optimizer.zero_grad();restored.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+    try Neural.TrainingCheckpoint.save(target,restored,restored_cursor,progress,again) else error {panic(error)}
+    assert(state_read(path)==state_read(again));state_remove(path);state_remove(again)
+}
+test "complete Adam checkpoint supports uninitialized slots and initialized continuation" {
+    let path="/private/tmp/tensor-training-checkpoint-adam.sxtc";let again=path+".again"
+    for initialized in [false,true] {
+        var source=CheckpointStateModel(42);var cursor=state_cursor();var optimizer=Optim.Adam(source.parameters(),learning_rate:0.01)
+        if initialized {source.forward(Tensor.ones([2,2])).sum().backward();optimizer.step();optimizer.zero_grad()}
+        try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+        var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.Adam(target.parameters(),learning_rate:1.0)
+        let progress=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+        source.forward(Tensor.ones([2,2])).sum().backward();target.forward(Tensor.ones([2,2])).sum().backward()
+        optimizer.step();restored.step();optimizer.zero_grad();restored.zero_grad()
+        try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+        try Neural.TrainingCheckpoint.save(target,restored,target_cursor,progress,again) else error {panic(error)}
+        assert(state_read(path)==state_read(again))
+    }
+    state_remove(path);state_remove(again)
+}
+test "checkpoint rejects corrupt model optimizer cursor RNG schedule and trailing fields without any target mutation" {
+    let path="/private/tmp/tensor-training-checkpoint-corruption.sxtc";let before_path=path+".before";let after_path=path+".after"
+    var source=CheckpointStateModel(42);var source_cursor=state_cursor();var source_optimizer=Optim.AdamW(source.parameters(),learning_rate:0.01)
+    source.forward(Tensor.ones([2,2])).sum().backward();source.frozen.value().sum().backward();source_optimizer.step();source_optimizer.zero_grad();source.frozen.freeze()
+    try Neural.TrainingCheckpoint.save(source,source_optimizer,source_cursor,state_progress(),path) else error {panic(error)}
+    let valid=state_read(path)
+    var target=CheckpointStateModel(93);var cursor=state_cursor();var optimizer=Optim.AdamW(target.parameters(),learning_rate:0.9)
+    target.eval();cursor.set_epoch(3)
+    try Neural.TrainingCheckpoint.save(target,optimizer,cursor,state_progress(),before_path) else error {panic(error)}
+    let before=state_read(before_path)
+    var cases:str[]=[
+        state_change(valid,"SILEX_TENSOR_TRAINING",0,1,"2"),
+        state_change(valid,"progress",0,1,"9223372036854775808"),
+        state_change(valid,"progress",0,4,"7fc00000"),
+        state_change(valid,"cursor",0,7,"1"),
+        state_change(valid,"cursor",0,4,"000000000000002a"),
+        state_change(valid,"node",1,3,"343239343936373239362c30"),
+        state_change(valid,"node",1,1,"bad"),
+        state_change(valid,"parameter",1,1,"776569676874"),
+        state_change(valid,"parameter",1,2,"i64"),
+        state_change(valid,"parameter",1,3,"2"),
+        state_change(valid,"parameter",1,4,"2"),
+        state_change(valid,"parameter",1,5,"not-hex"),
+        state_change(valid,"buffer",0,4,"0"),
+        state_change(valid,"buffer",1,5,"01,02"),
+        state_change(valid,"optimizer",0,1,"Adam"),
+        state_change(valid,"optimizer",0,2,"00000000,3f4ccccd,3f666666,322bcc77,3c23d70a"),
+        state_change(valid,"slot",1,3,"0"),
+        state_change(valid,"slot",1,5,"-"),
+        state_change(valid,"slots",0,1,"9223372036854775807"),
+        valid+"trailing\n",Text.slice(valid,0,valid.count()-5)
+    ]
+    var case_index=0
+    for document in cases {
+        print("corruption $(case_index)");case_index++
+        state_write(path,document)
+        assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path))!="")
+        try Neural.TrainingCheckpoint.save(target,optimizer,cursor,state_progress(),after_path) else error {panic(error)}
+        assert(state_read(after_path)==before)
+    }
+    state_write(path,valid)
+    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:8))!="")
+    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:0))!="")
+    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path+".missing"))!="")
+    var unrelated=CheckpointStateModel(93);var wrong_optimizer=Optim.AdamW(unrelated.parameters())
+    assert(state_error(Neural.TrainingCheckpoint.load(target,wrong_optimizer,cursor,path))=="Tensor.Neural.TrainingCheckpoint optimizer must own the model parameters")
+    var unshared=CheckpointStateModel(93,shared:false);var unshared_optim=Optim.AdamW(unshared.parameters())
+    assert(state_error(Neural.TrainingCheckpoint.load(unshared,unshared_optim,cursor,path))!="")
+    state_remove(path);state_remove(before_path);state_remove(after_path)
+}
+
+test "checkpoint save reads GPU state explicitly and load never moves a model or moments implicitly" {
+    if !GPU.Device.is_supported() {return}
+    let path="/private/tmp/tensor-training-checkpoint-placements.sxtc"
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var source=CheckpointStateModel(42)
+    var cursor=state_cursor();source.to(device);var optimizer=Optim.AdamW(source.parameters())
+    source.forward(Tensor.ones([2,2]).to(device)).sum().backward();optimizer.step();optimizer.zero_grad()
+    var profile=Profile(device)
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+    assert(profile.snapshot().downloads>0 && profile.snapshot().uploads==0)
+    profile.reset()
+    assert(state_error(Neural.TrainingCheckpoint.load(source,optimizer,cursor,path))=="Tensor.Neural.TrainingCheckpoint requires model.cpu before loading")
+    assert(profile.snapshot().downloads==0 && profile.snapshot().uploads==0)
+    var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.AdamW(target.parameters())
+    let progress=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+    assert(profile.snapshot().downloads==0 && profile.snapshot().uploads==0)
+    assert(target.weight.value().is_cpu() && target.flags.value().is_cpu())
+    var moments=restored.state().to(device);target.to(device)
+    try restored.restore(moments) else error {panic(error)}
+    assert(target.integers.value().is_cpu() && target.flags.value().is_gpu())
+    assert(profile.snapshot().uploads>0 && profile.snapshot().downloads==0)
+    state_remove(path)
+}
+
+test "checkpoint distinguishes built-in configurations and preserves the final dropout RNG iteration for evaluation" {
+    let path="/private/tmp/tensor-training-checkpoint-config.sxtc"
+    var source=CheckpointStateModel(42);var cursor=state_cursor();var optimizer=Optim.AdamW(source.parameters())
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+    let valid=state_read(path)
+    state_write(path,state_change(valid,"node",1,3,"34322c34323934393637323935"))
+    let progress=try Neural.TrainingCheckpoint.load(source,optimizer,cursor,path) else error {panic(error)}
+    let final=source.forward(Tensor.ones([2,2]));source.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+    assert(Text.contains(state_read(path),"34322c34323934393637323936"))
+    var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.AdamW(target.parameters())
+    let resumed=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+    target.eval();assert(target.forward(Tensor.ones([2,2])).values()[0]==target.weight.value().item())
+    var changed=Neural.Sequential([Neural.Dense("dense",2,2,seed:42),Neural.BatchNorm("norm",2,epsilon:0.001),Neural.Dropout(0.25,42)])
+    var normal=Neural.Sequential([Neural.Dense("dense",2,2,seed:42),Neural.BatchNorm("norm",2),Neural.Dropout(0.25,42)])
+    var normal_optimizer=Optim.AdamW(normal.parameters());var changed_optimizer=Optim.AdamW(changed.parameters())
+    try Neural.TrainingCheckpoint.save(normal,normal_optimizer,cursor,state_progress(),path) else error {panic(error)}
+    assert(state_error(Neural.TrainingCheckpoint.load(changed,changed_optimizer,target_cursor,path))=="Tensor.Neural.TrainingCheckpoint layer graph or configuration mismatch")
+    state_remove(path)
+}
+
+test "complete SGD checkpoint resumes GPU momentum after explicit snapshot movement" {
+    if !GPU.Device.is_supported() {return}
+    let path="/private/tmp/tensor-training-checkpoint-sgd-gpu.sxtc";let again=path+".again"
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var source=CheckpointStateModel(42);source.to(device)
+    var cursor=state_cursor();var optimizer=Optim.SGD(source.parameters(),learning_rate:0.01,momentum:0.9)
+    source.forward(Tensor.ones([2,2]).to(device)).sum().backward();optimizer.step();optimizer.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+    var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.SGD(target.parameters(),learning_rate:1.0)
+    let progress=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+    var moments=restored.state().to(device);target.to(device)
+    try restored.restore(moments) else error {panic(error)}
+    source.forward(Tensor.ones([2,2]).to(device)).sum().backward();target.forward(Tensor.ones([2,2]).to(device)).sum().backward()
+    optimizer.step();restored.step();optimizer.zero_grad();restored.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+    try Neural.TrainingCheckpoint.save(target,restored,target_cursor,progress,again) else error {panic(error)}
+    assert(state_read(path)==state_read(again));state_remove(path);state_remove(again)
+}
+test "complete Adam checkpoint resumes GPU moments after explicit snapshot movement" {
+    if !GPU.Device.is_supported() {return}
+    let path="/private/tmp/tensor-training-checkpoint-adam-gpu.sxtc";let again=path+".again"
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var source=CheckpointStateModel(42);source.to(device)
+    var cursor=state_cursor();var optimizer=Optim.Adam(source.parameters(),learning_rate:0.01)
+    source.forward(Tensor.ones([2,2]).to(device)).sum().backward();optimizer.step();optimizer.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
+    var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.Adam(target.parameters())
+    let progress=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
+    var moments=restored.state().to(device);target.to(device)
+    try restored.restore(moments) else error {panic(error)}
+    source.forward(Tensor.ones([2,2]).to(device)).sum().backward();target.forward(Tensor.ones([2,2]).to(device)).sum().backward()
+    optimizer.step();restored.step();optimizer.zero_grad();restored.zero_grad()
+    try Neural.TrainingCheckpoint.save(source,optimizer,cursor,progress,path) else error {panic(error)}
+    try Neural.TrainingCheckpoint.save(target,restored,target_cursor,progress,again) else error {panic(error)}
+    assert(state_read(path)==state_read(again));state_remove(path);state_remove(again)
+}

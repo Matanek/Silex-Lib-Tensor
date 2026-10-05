@@ -1,0 +1,89 @@
+use STD.File
+use STD.FileSystem
+use Tensor
+use Tensor.Data
+use Tensor.Neural
+use Tensor.Optim
+use GFX.GPU
+
+func checkpoint_source() Data.TensorSource {
+    var inputs:float[]=[0.2,1.2,0.4,1.4,0.6,1.6,0.8,1.8,1.0,2.0,1.2,2.2,1.4,2.4,1.6,2.6]
+    var targets:float[]=[0.1,0.4,0.2,0.5,0.3,0.6,0.4,0.7,0.5,0.8,0.6,0.9,0.7,1.0,0.8,1.1]
+    return Data.TensorSource(Tensor(inputs,[8,2]),Tensor(targets,[8,2]))
+}
+func checkpoint_model(seed:int) Neural.Sequential {
+    var dense=Neural.Dense("dense",2,2,seed:seed)
+    var norm=Neural.BatchNorm("norm",2)
+    var dropout=Neural.Dropout(0.25,seed:seed)
+    return Neural.Sequential([dense,norm,dropout])
+}
+func checkpoint_batch(cursor:Data.BatchCursor) Data.Batch {
+    var reading=cursor
+    var batch=try reading.next() else error {panic(error)}
+    if let value=batch {return value}
+    reading.set_epoch(reading.state().epoch+1)
+    if let value=try reading.next() else error {panic(error)} {return value}
+    panic("empty checkpoint corpus")
+}
+func checkpoint_step(model:Neural.Layer,optimizer:Optim.AdamW,cursor:Data.BatchCursor,progress:Neural.TrainingProgress,device:GPU.Device?) Neural.TrainingProgress {
+    var active=model;var optim=optimizer
+    var batch=checkpoint_batch(cursor)
+    if let gpu=device {batch.input=batch.input.to(gpu);batch.target=batch.target.to(gpu)}
+    if let schedule=progress.schedule {optim.set_learning_rate(schedule.value_at(progress.step))}
+    let difference=active.forward(batch.input).subtract(batch.target)
+    difference.multiply(difference).mean().backward()
+    optim.step();optim.zero_grad()
+    return Neural.TrainingProgress(step:progress.step+1,schedule:progress.schedule)
+}
+func checkpoint_text(path:str) str {
+    match File.read_text(path,1024*1024) {
+        success(content)=>{return content}
+        failure(error)=>{panic(error.detail)}
+    }
+}
+func checkpoint_remove(path:str) {
+    match FileSystem.remove_file(path) {success=>{}
+        failure(error)=>{panic("checkpoint temporary file cleanup failed")}}
+}
+func checkpoint_resume(device:GPU.Device?) {
+    let left_path="/private/tmp/tensor-training-checkpoint-left.sxtc"
+    let right_path="/private/tmp/tensor-training-checkpoint-right.sxtc"
+    var boundary=0
+    while boundary<=5 {
+        var left=checkpoint_model(42);var source=checkpoint_source()
+        var cursor=Data.BatchCursor(source,2,shuffle:true,seed:-9223372036854775808)
+        cursor.set_epoch(7)
+        if let gpu=device {left.to(gpu)}
+        var optimizer=Optim.AdamW(left.parameters(),learning_rate:0.02,beta1:0.8,beta2:0.9,weight_decay:0.01)
+        var progress=Neural.TrainingProgress(step:0,schedule:Optim.LearningRateSchedule.cosine(0.02,duration:8,minimum_rate:0.002))
+        var step=0
+        while step<boundary {progress=checkpoint_step(left,optimizer,cursor,progress,device);step++}
+        try Neural.TrainingCheckpoint.save(left,optimizer,cursor,progress,left_path) else error {panic(error)}
+        var right=checkpoint_model(93);var resumed_cursor=Data.BatchCursor(source,2,shuffle:true,seed:-9223372036854775808)
+        var resumed=Optim.AdamW(right.parameters(),learning_rate:1.0)
+        var restored=try Neural.TrainingCheckpoint.load(right,resumed,resumed_cursor,left_path) else error {panic(error)}
+        assert(restored.step==progress.step && resumed_cursor.state()==cursor.state())
+        try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,restored,right_path) else error {panic(error)}
+        assert(checkpoint_text(left_path)==checkpoint_text(right_path))
+        if let gpu=device {
+            var moments=resumed.state().to(gpu)
+            right.to(gpu)
+            try resumed.restore(moments) else error {panic(error)}
+        }
+        while step<8 {
+            progress=checkpoint_step(left,optimizer,cursor,progress,device)
+            restored=checkpoint_step(right,resumed,resumed_cursor,restored,device)
+            try Neural.TrainingCheckpoint.save(left,optimizer,cursor,progress,left_path) else error {panic(error)}
+            try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,restored,right_path) else error {panic(error)}
+            assert(checkpoint_text(left_path)==checkpoint_text(right_path))
+            step++
+        }
+        boundary++
+    }
+    checkpoint_remove(left_path);checkpoint_remove(right_path)
+}
+test "complete checkpoint resumes CPU BatchNorm dropout AdamW shuffled epochs and cosine rates exactly at six boundaries" {checkpoint_resume(null)}
+test "complete checkpoint resumes GPU training with explicit model and moment uploads exactly at six boundaries" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));checkpoint_resume(device)
+}

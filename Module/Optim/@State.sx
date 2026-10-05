@@ -1,6 +1,7 @@
 use STD.Math
 use Tensor
 use Tensor.DType
+use GFX.GPU
 use Tensor.Neural.Parameter
 
 public struct SGDMomentumState {
@@ -14,6 +15,16 @@ public struct SGDState {
     let momentum:float
     let weight_decay:float
     var parameters:SGDMomentumState[]
+
+    func to(device:GPU.Device) SGDState {
+        var parameters:SGDMomentumState[]=[]
+        for entry in self.parameters {
+            var momentum:Tensor?=null
+            if let value=entry.momentum {momentum=value.detach().to(device)}
+            parameters.append(SGDMomentumState(name:entry.name,shape:optimizer_state_shape(entry.shape),momentum:momentum))
+        }
+        return SGDState(learning_rate:self.learning_rate,momentum:self.momentum,weight_decay:self.weight_decay,parameters:parameters)
+    }
 
     func cpu() SGDState {
         var parameters:SGDMomentumState[]=[]
@@ -41,6 +52,17 @@ public struct AdamState {
     let epsilon:float
     let weight_decay:float
     var parameters:AdamMomentState[]
+
+    func to(device:GPU.Device) AdamState {
+        var parameters:AdamMomentState[]=[]
+        for entry in self.parameters {
+            var first:Tensor?=null;var second:Tensor?=null
+            if let value=entry.first_moment {first=value.detach().to(device)}
+            if let value=entry.second_moment {second=value.detach().to(device)}
+            parameters.append(AdamMomentState(name:entry.name,shape:optimizer_state_shape(entry.shape),step_count:entry.step_count,first_moment:first,second_moment:second))
+        }
+        return AdamState(learning_rate:self.learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:parameters)
+    }
 
     func cpu() AdamState {
         var parameters:AdamMomentState[]=[]
@@ -70,4 +92,14 @@ func optimizer_state_shape(shape:int[]) int[] {
     var result:int[]=[]
     for dimension in shape {result.append(dimension)}
     return result
+}
+
+package func validate_checkpoint_parameters(actual:Parameter[],expected:Parameter[]) Result<void,str> {
+    if actual.count()!=expected.count() {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint optimizer must own the model parameters")}
+    for parameter in expected {
+        var found=false
+        for candidate in actual {if candidate==parameter {found=true}}
+        if !found {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint optimizer must own the model parameters")}
+    }
+    return Result<void,str>.success()
 }

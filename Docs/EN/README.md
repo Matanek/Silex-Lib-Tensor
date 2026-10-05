@@ -6,6 +6,8 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Interrupt and [resume a complete training run](TrainingCheckpoint.md).
+
 - Normalize a [dense or NCHW batch and evaluate with running statistics](BatchNorm.md).
 - Iterate [supervised batches with custom collation](SupervisedBatches.md).
 - Iterate [reproducible index batches and resume their cursor](BatchSampling.md).

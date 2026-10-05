@@ -1,0 +1,179 @@
+use STD.File
+use Tensor
+use Tensor.Data
+use Tensor.Optim
+
+public static class TrainingCheckpoint {
+    func save(model:Layer,optimizer:Optim.SGD,cursor:Data.BatchCursor,progress:TrainingProgress,path:str) Result<void,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        let snapshot=active.state();try active.validate_restore(snapshot)
+        var state=try training_checkpoint_capture(model,cursor,progress)
+        state.optimizer="SGD";state.rates=[snapshot.learning_rate,snapshot.momentum,snapshot.weight_decay]
+        for entry in snapshot.parameters {
+            var count=0
+            if entry.momentum!=null {count=1}
+            state.slots.append(Optim.AdamMomentState(name:entry.name,shape:entry.shape,step_count:count,first_moment:entry.momentum,second_moment:null))
+        }
+        return training_checkpoint_write(state,path)
+    }
+    func save(model:Layer,optimizer:Optim.Adam,cursor:Data.BatchCursor,progress:TrainingProgress,path:str) Result<void,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        let snapshot=active.state();try active.validate_restore(snapshot)
+        var state=try training_checkpoint_capture(model,cursor,progress)
+        training_checkpoint_adam_capture(state,"Adam",snapshot)
+        return training_checkpoint_write(state,path)
+    }
+    func save(model:Layer,optimizer:Optim.AdamW,cursor:Data.BatchCursor,progress:TrainingProgress,path:str) Result<void,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        let snapshot=active.state();try active.validate_restore(snapshot)
+        var state=try training_checkpoint_capture(model,cursor,progress)
+        training_checkpoint_adam_capture(state,"AdamW",Optim.AdamState(learning_rate:snapshot.learning_rate,beta1:snapshot.beta1,beta2:snapshot.beta2,epsilon:snapshot.epsilon,weight_decay:snapshot.weight_decay,parameters:snapshot.parameters))
+        return training_checkpoint_write(state,path)
+    }
+    func load(model:Layer,optimizer:Optim.SGD,cursor:Data.BatchCursor,path:str,maximum_bytes:int=16*1024*1024) Result<TrainingProgress,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        var state=try training_checkpoint_read(path,maximum_bytes)
+        if state.optimizer!="SGD" {return Result<TrainingProgress,str>.failure("Tensor.Neural.TrainingCheckpoint optimizer type mismatch")}
+        var entries:Optim.SGDMomentumState[]=[]
+        for slot in state.slots {
+            if slot.second_moment!=null || slot.step_count>1 || (slot.step_count==0)!=(slot.first_moment==null) {
+                return Result<TrainingProgress,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid SGD momentum state")
+            }
+            entries.append(Optim.SGDMomentumState(name:slot.name,shape:slot.shape,momentum:slot.first_moment))
+        }
+        var snapshot=Optim.SGDState(learning_rate:state.rates[0],momentum:state.rates[1],weight_decay:state.rates[2],parameters:entries)
+        try training_checkpoint_validate(model,cursor,state)
+        try active.validate_restore(snapshot)
+        try active.restore(snapshot)
+        training_checkpoint_apply(model,cursor,state)
+        return Result<TrainingProgress,str>.success(state.progress)
+    }
+    func load(model:Layer,optimizer:Optim.Adam,cursor:Data.BatchCursor,path:str,maximum_bytes:int=16*1024*1024) Result<TrainingProgress,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        var state=try training_checkpoint_read(path,maximum_bytes)
+        if state.optimizer!="Adam" {return Result<TrainingProgress,str>.failure("Tensor.Neural.TrainingCheckpoint optimizer type mismatch")}
+        let snapshot=training_checkpoint_adam_state(state)
+        try training_checkpoint_validate(model,cursor,state)
+        try active.validate_restore(snapshot)
+        try active.restore(snapshot)
+        training_checkpoint_apply(model,cursor,state)
+        return Result<TrainingProgress,str>.success(state.progress)
+    }
+    func load(model:Layer,optimizer:Optim.AdamW,cursor:Data.BatchCursor,path:str,maximum_bytes:int=16*1024*1024) Result<TrainingProgress,str> {
+        var active=optimizer
+        try active.checkpoint_parameters(model.parameters())
+        var state=try training_checkpoint_read(path,maximum_bytes)
+        if state.optimizer!="AdamW" {return Result<TrainingProgress,str>.failure("Tensor.Neural.TrainingCheckpoint optimizer type mismatch")}
+        let saved=training_checkpoint_adam_state(state)
+        let snapshot=Optim.AdamWState(learning_rate:saved.learning_rate,beta1:saved.beta1,beta2:saved.beta2,epsilon:saved.epsilon,weight_decay:saved.weight_decay,parameters:saved.parameters)
+        try training_checkpoint_validate(model,cursor,state)
+        try active.validate_restore(snapshot)
+        try active.restore(snapshot)
+        training_checkpoint_apply(model,cursor,state)
+        return Result<TrainingProgress,str>.success(state.progress)
+    }
+}
+
+func training_checkpoint_adam_capture(state:TrainingState,kind:str,snapshot:Optim.AdamState) {
+    var saved=state;saved.optimizer=kind
+    saved.rates=[snapshot.learning_rate,snapshot.beta1,snapshot.beta2,snapshot.epsilon,snapshot.weight_decay]
+    saved.slots=snapshot.parameters
+}
+func training_checkpoint_adam_state(state:TrainingState) Optim.AdamState {
+    return Optim.AdamState(learning_rate:state.rates[0],beta1:state.rates[1],beta2:state.rates[2],epsilon:state.rates[3],weight_decay:state.rates[4],parameters:state.slots)
+}
+func training_checkpoint_capture(model:Layer,cursor:Data.BatchCursor,progress:TrainingProgress) Result<TrainingState,str> {
+    if progress.step<0 {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires a non-negative training step")}
+    var reading=cursor;let cursor_state=reading.state();try reading.validate_restore(cursor_state)
+    var state=TrainingState(progress,cursor_state)
+    for parameter in model.parameters() {
+        if parameter.gradient()!=null {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires zero_grad before saving")}
+        state.parameters.append(TrainingTensorState(name:parameter.name(),value:parameter.value().detach(),flag:parameter.is_trainable()))
+    }
+    for buffer in model.buffers() {
+        state.buffers.append(TrainingTensorState(name:buffer.name(),value:buffer.value(),flag:buffer.placement_policy()==BufferPlacement.cpu))
+    }
+    var root=model
+    for node in root.checkpoint_nodes() {
+        let random=node.layer.checkpoint_random_state()
+        var layer=node.layer;try layer.checkpoint_validate_random_state(random)
+        try layer.checkpoint_validate_buffers(state.buffers)
+        state.nodes.append(TrainingLocalState(signature:node.signature,training:layer.is_training(),random_state:random))
+    }
+    return Result<TrainingState,str>.success(state)
+}
+func training_checkpoint_validate(model:Layer,cursor:Data.BatchCursor,state:TrainingState) Result<void,str> {
+    var reading=cursor;try reading.validate_restore(state.cursor)
+    var parameters=model.parameters();var buffers=model.buffers()
+    if state.parameters.count()!=parameters.count() || state.buffers.count()!=buffers.count() {
+        return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires matching registered state")
+    }
+    var index=0
+    while index<parameters.count() {
+        var parameter=parameters[index];let entry=state.parameters[index]
+        if parameter.gradient()!=null {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires zero_grad before loading")}
+        if !parameter.value().is_cpu() {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires model.cpu before loading")}
+        try training_checkpoint_match(parameter.name(),parameter.value(),entry)
+        index++
+    }
+    index=0
+    while index<buffers.count() {
+        var buffer=buffers[index];let entry=state.buffers[index]
+        if !buffer.value().is_cpu() {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires model.cpu before loading")}
+        try training_checkpoint_match(buffer.name(),buffer.value(),entry)
+        if entry.flag!=(buffer.placement_policy()==BufferPlacement.cpu) {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint buffer placement policy mismatch")}
+        index++
+    }
+    var root=model;var nodes=root.checkpoint_nodes()
+    if nodes.count()!=state.nodes.count() {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint requires matching registered layer graph")}
+    index=0
+    while index<nodes.count() {
+        if nodes[index].signature!=state.nodes[index].signature {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint layer graph or configuration mismatch")}
+        var layer=nodes[index].layer
+        try layer.checkpoint_validate_random_state(state.nodes[index].random_state)
+        try layer.checkpoint_validate_buffers(state.buffers)
+        index++
+    }
+    return Result<void,str>.success()
+}
+func training_checkpoint_match(name:str,value:Tensor,entry:TrainingTensorState) Result<void,str> {
+    if entry.name!=name {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint registered state names or order mismatch")}
+    if entry.value.dtype()!=value.dtype() {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint state dtype mismatch")}
+    if !checkpoint_shapes_equal(entry.value.shape(),value.shape()) {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint state shape mismatch")}
+    return Result<void,str>.success()
+}
+func training_checkpoint_apply(model:Layer,cursor:Data.BatchCursor,state:TrainingState) {
+    var reading=cursor;reading.checkpoint_restore(state.cursor)
+    var parameters=model.parameters();var buffers=model.buffers();var index=0
+    while index<parameters.count() {
+        parameters[index].apply(state.parameters[index].value)
+        if state.parameters[index].flag {parameters[index].unfreeze()} else {parameters[index].freeze()}
+        index++
+    }
+    index=0
+    while index<buffers.count() {buffers[index].replace(state.buffers[index].value);index++}
+    var root=model;var nodes=root.checkpoint_nodes();index=0
+    while index<nodes.count() {
+        nodes[index].layer.checkpoint_restore_local(state.nodes[index].training,state.nodes[index].random_state)
+        index++
+    }
+}
+func training_checkpoint_read(path:str,maximum_bytes:int) Result<TrainingState,str> {
+    if maximum_bytes<=0 {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires positive maximum_bytes")}
+    match File.read_text(path,maximum_bytes) {
+        failure(error)=>{return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint.load failed: $(error.detail)")}
+        success(content)=>{var reader=TrainingReader(content);return reader.read()}
+    }
+}
+func training_checkpoint_write(state:TrainingState,path:str) Result<void,str> {
+    let document=training_checkpoint_document(state)
+    match File.write_all(path,document) {
+        failure(error)=>{return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint.save failed: $(error.detail)")}
+        success=>{return Result<void,str>.success()}
+    }
+}

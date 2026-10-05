@@ -6,6 +6,8 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Interrompez et [reprenez un entraînement complet](TrainingCheckpoint.md).
+
 - Normalisez un [lot dense ou NCHW et utilisez les statistiques en évaluation](BatchNorm.md).
 - Parcourez des [lots supervisés avec une collation personnalisée](SupervisedBatches.md).
 - Parcourez des [lots d’indices reproductibles et reprenez leur curseur](BatchSampling.md).

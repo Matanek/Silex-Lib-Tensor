@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.TrainingCheckpoint` exactly saves and restores the registered model, SGD/Adam/AdamW, cursor, step/schedule, modes, trainability and dropout. Prevalidated CPU loading uses recoverable errors; optimizer snapshots expose explicit GPU movement.
+
 - BatchNorm normalizes dense or NCHW batches on CPU/GPU with gradients, optional affine state, detached running statistics, and an exact CPU int64 counter. Population/unbiased conventions and train/eval modes are documented in the [guide](Docs/EN/BatchNorm.md).
 
 - Buffers can declare BufferPlacement.cpu to retain exact CPU state during model transfers. The model policy remains the compatible default; conflicting direct transfers are rejected without conversion or hidden readback. See the [guide](Docs/EN/HostState.md).

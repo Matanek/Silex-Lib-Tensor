@@ -73,12 +73,12 @@ le coefficient sauvegardé est nul.
 
 ## Choisir le placement et le taux courant
 
-`state()` et `restore()` conservent le placement résident des moments sans
-transfert. `snapshot.cpu()` crée explicitement une copie des moments sur CPU ;
-les tableaux et dimensions de cette copie sont indépendants. Pour restaurer un
-snapshot CPU dans un modèle GPU, transférez explicitement les Tensor de ses
-entrées vers le device du modèle avant `restore`. Il n’existe pas de migration
-implicite des états lors du déplacement d’un paramètre.
+`state()` et `restore()` conservent le placement résident sans transfert.
+`snapshot.cpu()` copie explicitement les moments sur CPU ; `snapshot.to(device)`
+les transfère explicitement vers un device. Les tableaux et dimensions de chaque
+copie sont indépendants. Déplacez également le modèle avant de restaurer ses
+moments sur GPU. Le [checkpoint complet](TrainingCheckpoint.md) conserve le
+modèle et la progression en plus de ces snapshots.
 
 `learning_rate()` lit le taux courant ; `set_learning_rate(value)` exige un
 scalaire fini strictement positif et conserve tous les moments et compteurs.

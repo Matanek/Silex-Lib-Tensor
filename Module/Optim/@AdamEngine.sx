@@ -173,7 +173,12 @@ nocopy class AdamEngine {
         return AdamState(learning_rate:self.current_learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:entries)
     }
 
-    func restore(snapshot:AdamState) Result<void,str> {
+    func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return validate_checkpoint_parameters(self.parameters,expected)}
+
+    func restore(snapshot:AdamState) Result<void,str> {return self.restore_state(snapshot,true)}
+    func validate_restore(snapshot:AdamState) Result<void,str> {return self.restore_state(snapshot,false)}
+
+    private func restore_state(snapshot:AdamState,apply:bool) Result<void,str> {
         if !state_positive(snapshot.learning_rate) || !state_unit_interval(snapshot.beta1) || !state_unit_interval(snapshot.beta2) ||
             !state_positive(snapshot.epsilon) || !state_nonnegative(snapshot.weight_decay) {
             return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires valid hyperparameters")
@@ -209,12 +214,14 @@ nocopy class AdamEngine {
             }
             restored.append(slot)
         }
-        self.states=restored
-        self.current_learning_rate=snapshot.learning_rate
-        self.beta1=snapshot.beta1
-        self.beta2=snapshot.beta2
-        self.epsilon=snapshot.epsilon
-        self.weight_decay=snapshot.weight_decay
+        if apply {
+            self.states=restored
+            self.current_learning_rate=snapshot.learning_rate
+            self.beta1=snapshot.beta1
+            self.beta2=snapshot.beta2
+            self.epsilon=snapshot.epsilon
+            self.weight_decay=snapshot.weight_decay
+        }
         return Result<void,str>.success()
     }
 
