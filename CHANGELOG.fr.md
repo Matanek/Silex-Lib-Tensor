@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fusionne l’addition d’epsilon et sqrt dans LayerNorm GPU float32 : six passes au lieu de sept, gradients et durées de vie qualifiés, réductions inchangées. Sur Apple M3 Pro/Metal, gains admis de 9,50 %, 10,38 % et 9,08 % sur les petites normalisations et la vue stridée ; les six modèles et les autres tailles restent indéterminés. Corpus de 457 tests, six cibles compilées/liées, campagnes et limites documentées dans le [profilage](Docs/FR/Profiling.md).
+
 - Réutilise les buffers GPU prêts à taille/dtype exacts dans un cache privé borné à 32 entrées et 1 MiB par device, vidé au dernier stockage. Le profil distingue créations natives, réutilisations, réservations en cache et mémoire utilisée par les valeurs. Sur Apple M3 Pro/Metal, trois étapes Transformer ont un gain apparié admis de 5,89 % ; les cinq autres familles et microcas restent indéterminés. Les données brutes et le coût mémoire sont conservés dans Silex-Benchmarks.
 
 - Les gardes de durée de vie de MultiHeadAttention, Transformer et de la chaîne résidente vérifient des bornes par variante avec tous les ancêtres retenus, indépendantes de la vitesse de complétion GPU, ainsi que les nombres exacts d’allocations et la libération complète.

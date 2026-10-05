@@ -508,6 +508,17 @@ public struct Tensor {
         return self.binary(other, operation)
     }
 
+    module func shifted_square_root(offset:float) Tensor {
+        if self.is_cpu() { return self.add(offset).sqrt() }
+        self.require_gpu_float_compute("layer_norm")
+        var storage = self.gpu_storage()
+        let result = Tensor.from_storage(
+            Storage.gpu(storage.shifted_square_root(self.current_layout, offset)),
+            Layout(self.shape())
+        )
+        return autograd_record_shifted_square_root(result, self, offset)
+    }
+
     module func unary(operation:UnaryOperation) Tensor {
         if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         if self.is_gpu() {

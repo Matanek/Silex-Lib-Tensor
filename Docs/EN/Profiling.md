@@ -152,3 +152,39 @@ to `Silex-Benchmarks/Sources/TensorStableCompute/Baselines/` under
 `2026-10-05-macos-arm64-ready-buffer-reuse-models`. This result concerns these
 workloads, hardware and binaries; no performance generalization to other
 targets is established.
+
+## Qualified normalization fusion
+
+GPU float32 `Tensor.layer_norm` computes epsilon addition and square root in
+one elementwise pass. One normalization emits six passes instead of seven,
+avoiding one temporary, submission and fence. Mean and variance reductions
+keep their order. The APIs and CPU computation preserve their behavior;
+gradients, views, aliases and nonfinite values are qualified.
+
+On October 6, 2026, Apple M3 Pro / Metal native Release measurements with
+16 pairs and eight A/A controls per binary admit three gains: 9.50% for one
+value, 10.38% for seven values and 9.08% for a transpose/narrow view of 49 values.
+Their paired MADs are 0.87, 0.85 and 0.94 percentage points; all 16 pairs are
+favorable in each case. Samples complete 512 normalizations after 16 warmups,
+with epsilon 0.25. Sizes 257/4096/65536, all six model families and all cold
+costs remain indeterminate. No regression is admitted; this does not prove
+neutrality for those cases.
+
+All 108,800 scalar observations across the six model families agree at the
+fixed tolerance 2e-5 (AdamW epsilon 1e-4). Transformer avoids six passes over
+three steps, with no admitted timing gain on this workload. Median model
+process RSS changes from 86,392,832 to 87,441,408 bytes; microcase RSS changes
+from 72,925,184 to 72,679,424 bytes. These measurements include the driver and
+do not represent physical GPU memory.
+
+The fusion also preserves the previously observed float32 GPU mean bias for
+seven values of 1000 with epsilon 0.25: output −0.00012207031, identical to
+eager computation. This witness is kept separately from the independent
+scalar oracle; no tolerance is widened to hide it.
+
+Recomputable campaigns belong to
+`Silex-Benchmarks/Sources/TensorStableCompute/Baselines/` under
+`2026-10-06-macos-arm64-admitted-normalization-fusion-micro` and
+`2026-10-06-macos-arm64-admitted-normalization-fusion-models`.
+Compilation and linking cover the six distributed targets; execution and
+performance are established only on macOS arm64 / Metal.

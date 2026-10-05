@@ -142,7 +142,7 @@ binaire. Trois étapes résidentes Transformer passent de 40,260 ms à 37,853 ms
 en médiane ; la différence appariée médiane est −5,89 %, avec MAD 1,20 point
 et 14 paires favorables sur 16. Les contrôles sont valides selon la règle
 fixée avant mesure. Les 1 700 valeurs complètes des six modèles, gradients et
-états compris, restent qualifiées à la tolérance 2e-5 avec AdamW epsilon1e-4.
+états compris, restent qualifiées à la tolérance 2e-5 avec AdamW epsilon 1e-4.
 
 Les cinq autres modèles et les douze microcas ne démontrent pas de gain selon
 la règle d’admission. Les coûts froids restent indéterminés. Les créations
@@ -159,3 +159,39 @@ appartiennent à `Silex-Benchmarks/Sources/TensorStableCompute/Baselines/` sous
 `2026-10-05-macos-arm64-ready-buffer-reuse-models`. Ce résultat concerne ces
 charges, ce matériel et ces binaires ; aucune généralisation de performance
 aux autres cibles n’est établie.
+
+## Fusion qualifiée de la normalisation
+
+`Tensor.layer_norm` GPU float32 calcule l’addition d’epsilon et la racine carrée
+en une passe élémentaire. Une normalisation émet six passes au lieu de sept,
+avec un temporaire, une soumission et une fence de moins. Les réductions de
+moyenne et de variance gardent leur ordre. Les API et le calcul CPU conservent
+leur comportement ; les gradients, vues, alias et non-finis sont qualifiés.
+
+Le 6 octobre 2026, sur Apple M3 Pro / Metal en Release, 16 paires et huit
+contrôles A/A par binaire admettent trois gains : 9,50 % pour une valeur,
+10,38 % pour sept valeurs et 9,08 % pour la vue transpose/narrow de 49 valeurs.
+Les MAD appariées sont respectivement 0,87, 0,85 et 0,94 point ; les 16 paires
+sont favorables pour chaque cas. Le gain concerne 512 normalisations achevées
+par échantillon après 16 warmups, avec epsilon 0.25. Les tailles 257/4096/65536,
+les six modèles et tous les coûts froids restent indéterminés ; aucune
+régression n’est admise, sans que cela prouve leur neutralité.
+
+Les 108 800 scalaires d’état des six modèles concordent à la tolérance fixée
+2e-5 (AdamW epsilon 1e-4). Transformer évite six passes sur trois étapes,
+sans gain de temps admis pour cette charge. Le RSS médian du processus modèles
+passe de 86 392 832 à 87 441 408 octets ; celui des microcharges passe de
+72 925 184 à 72 679 424 octets. Ces mesures incluent le pilote et ne sont pas
+la mémoire physique GPU.
+
+La fusion préserve aussi le biais de moyenne float32 déjà observé sur le GPU
+pour sept valeurs 1000 avec epsilon 0.25 : −0,00012207031 en sortie, identique
+au calcul eager. Ce témoin est conservé séparément de l’oracle scalaire
+indépendant ; aucune tolérance n’est élargie pour le masquer.
+
+Les campagnes recomputables se trouvent sous
+`Silex-Benchmarks/Sources/TensorStableCompute/Baselines/` dans
+`2026-10-06-macos-arm64-admitted-normalization-fusion-micro` et
+`2026-10-06-macos-arm64-admitted-normalization-fusion-models`.
+La compilation et la liaison couvrent les six cibles distribuées ; exécution
+et gains sont établis uniquement sur macOS arm64 / Metal.

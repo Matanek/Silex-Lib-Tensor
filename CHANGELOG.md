@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fuse epsilon addition and sqrt in GPU float32 LayerNorm: six passes instead of seven, qualified gradients and lifetimes, unchanged reductions. Apple M3 Pro/Metal admits gains of 9.50%, 10.38% and 9.08% on small normalizations and the strided view; all six models and other sizes remain indeterminate. A 457-test corpus, six compiled/linked targets, campaigns and limitations are documented in [profiling](Docs/EN/Profiling.md).
+
 - Reuse ready GPU buffers with exact size/dtype keys in a private per-device cache bounded to 32 entries and 1 MiB, cleared at the last storage. Profiling distinguishes native creation, reuse, cached reservations and bytes in use by values. Three Transformer steps on Apple M3 Pro/Metal show an admitted paired gain of 5.89%; the five other families and microcases remain indeterminate. Raw data and memory costs are retained in Silex-Benchmarks.
 
 - MultiHeadAttention, Transformer and resident-chain lifetime guards check per-variant bounds with all ancestors retained, independently of GPU completion speed, plus exact allocation counts and complete release.

@@ -7,6 +7,7 @@ enum AutogradRule {
     binary(AutogradInput, AutogradInput, BinaryOperation)
     scalar(AutogradInput, float, BinaryOperation)
     unary(AutogradInput, Tensor, UnaryOperation)
+    shifted_square_root(AutogradInput, Tensor, float)
     reshape(AutogradInput)
     expand(AutogradInput)
     standard_deviation(AutogradInput, Tensor)
@@ -361,6 +362,12 @@ func autograd_record_unary(result:Tensor, input:Tensor, operation:UnaryOperation
     return autograd_record(result, AutogradRule.unary(autograd_input(input), result.autograd_detached(), operation))
 }
 
+func autograd_record_shifted_square_root(result:Tensor, input:Tensor, offset:float) Tensor {
+    return autograd_record(result, AutogradRule.shifted_square_root(
+        autograd_input(input), result.autograd_detached(), offset
+    ))
+}
+
 func autograd_record_reshape(result:Tensor, input:Tensor) Tensor {
     return autograd_record(result, AutogradRule.reshape(autograd_input(input)))
 }
@@ -448,6 +455,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
         binary(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         scalar(input, value, operation) => { append_autograd_parent(input, result) }
         unary(input, output, operation) => { append_autograd_parent(input, result) }
+        shifted_square_root(input, output, offset) => { append_autograd_parent(input, result) }
         reshape(input) => { append_autograd_parent(input, result) }
         expand(input) => { append_autograd_parent(input, result) }
         standard_deviation(input, output) => { append_autograd_parent(input, result) }
@@ -537,6 +545,7 @@ func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
         binary(left, right, operation) => backward_binary(left, right, operation, gradient)
         scalar(input, value, operation) => backward_scalar(input, value, operation, gradient)
         unary(input, output, operation) => backward_unary(input, output, operation, gradient)
+        shifted_square_root(input, output, offset) => one_contribution(input, gradient.divide(output.multiply(2.0)))
         reshape(input) => one_contribution(input, gradient.contiguous().reshape(input.value.shape()))
         expand(input) => one_contribution(input, reduce_autograd_shape(gradient, input.value.shape()))
         standard_deviation(input, output) => one_contribution(input, backward_standard_deviation(output, gradient))

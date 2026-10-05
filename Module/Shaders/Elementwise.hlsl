@@ -64,5 +64,9 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     else if (header.x == 10) outputValues[index] = 1.0 / (1.0 + exp(-value));
     else if (header.x == 11) outputValues[index] = tanh(value);
     else if (header.x == 12) outputValues[index] = value > 0.0 ? 1.0 : (value < 0.0 ? -1.0 : 0.0);
+    else if (header.x == 15) {
+        precise float shifted = value + scalar;
+        outputValues[index] = sqrt(shifted);
+    }
     else outputValues[index] = value > 0.0 ? 1.0 : 0.0;
 }

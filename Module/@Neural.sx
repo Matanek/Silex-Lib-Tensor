@@ -55,6 +55,7 @@ extend Tensor {
         let mean = self.mean(axes, true)
         let centered = self.subtract(mean)
         let variance = centered.multiply(centered).mean(axes, true)
+        if self.is_gpu() { return centered.divide(variance.shifted_square_root(epsilon)) }
         return centered.divide(variance.add(epsilon).sqrt())
     }
 

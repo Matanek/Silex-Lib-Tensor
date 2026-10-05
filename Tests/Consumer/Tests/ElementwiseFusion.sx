@@ -1,0 +1,260 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func fusion_near(actual:Tensor, expected:float[], tolerance:float = 0.00002) {
+    let values = actual.detach().cpu().values()
+    assert(values.count() == expected.count())
+    var index = 0
+    while index < values.count() {
+        if !Math.is_finite(values[index]) || Math.abs(values[index] - expected[index]) > tolerance {
+            print("FUSION_MISMATCH index=$(index) actual=$(values[index]) expected=$(expected[index]) tolerance=$(tolerance)")
+        }
+        assert(Math.is_finite(values[index]) && Math.abs(values[index] - expected[index]) <= tolerance)
+        index++
+    }
+}
+
+func normalization_eager(input:Tensor, dimensions:int, epsilon:float) Tensor {
+    var axes:int[] = []
+    var axis = input.rank() - dimensions
+    while axis < input.rank() { axes.append(axis); axis++ }
+    let mean = input.mean(axes, true)
+    let centered = input.subtract(mean)
+    let variance = centered.multiply(centered).mean(axes, true)
+    return centered.divide(variance.add(epsilon).sqrt())
+}
+
+struct NormalizationOracle {
+    let values:float[]
+    let gradient:float[]
+}
+
+// Independent scalar population mean/variance and analytic seeded derivative.
+func normalization_oracle(input:Tensor, dimensions:int, epsilon:float, seeds:float[]) NormalizationOracle {
+    let source = input.values()
+    var count = 1
+    var axis = input.rank() - dimensions
+    while axis < input.rank() { count *= input.shape()[axis]; axis++ }
+    var values:float[] = []
+    var gradient:float[] = []
+    var row = 0
+    while row < source.count() / count {
+        let start = row * count
+        var mean:float = 0.0
+        var mean_seed:float = 0.0
+        var index = 0
+        while index < count { mean += source[start + index]; mean_seed += seeds[start + index]; index++ }
+        mean /= count as float
+        mean_seed /= count as float
+        var variance:float = 0.0
+        var covariance:float = 0.0
+        index = 0
+        while index < count {
+            let centered = source[start + index] - mean
+            variance += centered * centered
+            covariance += centered * seeds[start + index]
+            index++
+        }
+        variance /= count as float
+        covariance /= count as float
+        let denominator = Math.sqrt(variance + epsilon)
+        index = 0
+        while index < count {
+            let centered = source[start + index] - mean
+            values.append(centered / denominator)
+            gradient.append((seeds[start + index] - mean_seed - centered * covariance / (variance + epsilon)) / denominator)
+            index++
+        }
+        row++
+    }
+    return NormalizationOracle(values:values, gradient:gradient)
+}
+
+func normalization_witness(device:GPU.Device, source:Tensor, dimensions:int, epsilon:float) {
+    var seeds:float[] = []
+    var index = 0
+    while index < source.count() { seeds.append((index % 11) as float / 4.0 - 1.0); index++ }
+    print("FUSION_WITNESS rank=$(source.rank()) count=$(source.count()) dimensions=$(dimensions) epsilon=$(epsilon)")
+    let expected = normalization_oracle(source, dimensions, epsilon, seeds)
+    let input = source.to(device)
+    fusion_near(input.layer_norm(dimensions, epsilon), expected.values)
+    fusion_near(input.layer_norm(dimensions, epsilon), normalization_eager(input, dimensions, epsilon).cpu().values(), 0.0)
+    var variable = Autograd.Variable(input)
+    let output = variable.value().layer_norm(dimensions, epsilon)
+    var gradient = Autograd.grad(output, [variable.value()], seed:Tensor(seeds, source.shape()).to(device))
+    fusion_near(gradient[0], expected.gradient)
+    assert(variable.gradient() == null)
+}
+
+test "fused layer norm preserves full values and independent analytic gradients across ranks and trailing dimensions" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [-1.0, 0.0, 1.0, 2.5, -0.5, 0.75]
+    normalization_witness(device, Tensor(values, [2, 3]), 1, 0.25)
+    normalization_witness(device, Tensor(values, [2, 3]), 2, 0.25)
+    normalization_witness(device, Tensor(values, [1, 1, 2, 1, 3]), 3, 0.25)
+    normalization_witness(device, Tensor.full([3, 7], 1.0), 1, 0.25)
+    normalization_witness(device, Tensor(values, [6, 1]), 1, 0.25)
+    var long_values:float[] = []
+    var index = 0
+    while index < 514 { long_values.append((index % 13) as float / 3.0 - 2.0); index++ }
+    normalization_witness(device, Tensor(long_values, [2, 257]), 1, 0.00001)
+}
+
+test "fused layer norm follows permuted offset and broadcast views and their nonzero source gradients" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [0.125, -0.75, 1.5, -2.25, 0.5, -0.125]
+    let cpu = Tensor(values, [2, 3])
+    var input = Autograd.Variable(cpu.to(device))
+    var reference = Autograd.Variable(cpu)
+    let gpu_view = input.value().transpose().narrow(0, 1, 2)
+    let cpu_view = reference.value().transpose().narrow(0, 1, 2)
+    let output = gpu_view.layer_norm(1, 0.25)
+    let expected = cpu_view.layer_norm(1, 0.25)
+    fusion_near(output, expected.detach().values())
+    var seed_values:float[] = [1.0, -2.0, 3.0, -1.0]
+    let seed = Tensor(seed_values, output.shape())
+    var gradient = Autograd.grad(output, [input.value()], seed:seed.to(device))
+    var expected_gradient = Autograd.grad(expected, [reference.value()], seed:seed)
+    fusion_near(gradient[0], expected_gradient[0].values())
+    let expanded = cpu.narrow(0, 0, 1).expand([5, 3])
+    normalization_witness(device, expanded, 1, 0.25)
+    let resident = cpu.to(device).narrow(0, 0, 1).expand([5, 3])
+    fusion_near(resident.layer_norm(1, 0.25), expanded.layer_norm(1, 0.25).values())
+}
+
+func normalization_loss(device:GPU.Device, values:float[], seeds:float[]) float {
+    let input = Tensor(values, [2, 3]).to(device)
+    let weights = Tensor(seeds, [2, 3]).to(device)
+    return input.layer_norm(1, 0.25).multiply(weights).sum().cpu().item()
+}
+
+test "fused GPU normalization seeded derivative agrees with central finite differences" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [-1.0, 0.0, 1.0, 2.5, -0.5, 0.75]
+    var seeds:float[] = [1.0, -2.0, 3.0, -1.0, 0.5, 2.0]
+    var input = Autograd.Variable(Tensor(values, [2, 3]).to(device))
+    let output = input.value().layer_norm(1, 0.25)
+    var gradients = Autograd.grad(output, [input.value()], seed:Tensor(seeds, [2, 3]).to(device))
+    let actual = gradients[0].cpu().values()
+    var index = 0
+    while index < values.count() {
+        var plus = values
+        var minus = values
+        plus[index] += 0.001
+        minus[index] -= 0.001
+        let numerical = (normalization_loss(device, plus, seeds) - normalization_loss(device, minus, seeds)) / 0.002
+        assert(Math.abs(actual[index] - numerical) <= 0.003)
+        index++
+    }
+}
+
+func warm_normalization(input:Tensor) {
+    fusion_near(input.layer_norm(1, 0.25), normalization_eager(input, 1, 0.25).cpu().values(), 0.0)
+}
+
+test "normalization fusion issues six passes instead of seven with faithful neutral overlapping profiles" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [-1.0, 0.0, 1.0, 2.5, -0.5, 0.75]
+    let input = Tensor(values, [2, 3]).to(device)
+    warm_normalization(input)
+    var outer = Profile(device)
+    var inner = Profile(device)
+    let fused = input.layer_norm(1, 0.25)
+    let stats = inner.snapshot()
+    assert(stats.compute_passes == 6 && stats.pipeline_bindings == 6 && stats.dispatches == 6)
+    assert(stats.submissions == 6 && stats.fence_creations == 6)
+    assert(stats.buffer_allocations + stats.buffer_reuses == 6)
+    assert(stats.pipeline_compilations == 0 && stats.uploads == 0 && stats.downloads == 0)
+    inner.reset()
+    let eager = normalization_eager(input, 1, 0.25)
+    let legacy = inner.snapshot()
+    assert(legacy.compute_passes == 7 && legacy.submissions == 7 && legacy.fence_creations == 7)
+    let combined = outer.snapshot()
+    assert(combined.compute_passes == 13 && combined.submissions == 13)
+    let repeated = outer.snapshot()
+    assert(repeated.submissions == combined.submissions && repeated.buffer_reuses == combined.buffer_reuses)
+    assert(repeated.live_buffers == repeated.in_use_buffers + repeated.cached_buffers)
+    assert(repeated.allocated_bytes == repeated.active_bytes + repeated.cached_bytes)
+    fusion_near(fused, eager.cpu().values(), 0.0)
+}
+
+func retained_normalization(device:GPU.Device) {
+    var values:float[] = [-1.0, 0.0, 1.0, 2.5, -0.5, 0.75]
+    let input = Tensor(values, [2, 3]).to(device)
+    let kept = input.layer_norm(1, 0.25)
+    let alias = kept.reshape([6])
+    let expected = normalization_oracle(Tensor(values, [2, 3]), 1, 0.25, values).values
+    var saved:Tensor[] = []
+    var index = 0
+    while index < 1024 {
+        let result = input.layer_norm(1, 0.25)
+        if index % 128 == 0 { saved.append(result) }
+        index++
+    }
+    fusion_near(kept, expected)
+    fusion_near(alias, expected)
+    for tensor in saved { fusion_near(tensor, expected) }
+    fusion_near(input, values, 0.0)
+}
+
+test "fused normalization preserves aliases across thousands of calls and releases all resources with profiles alive on two devices" {
+    if !GPU.Device.is_supported() { return }
+    var first = GPU.Device(GPU.DeviceSettings(debug:true))
+    var second = GPU.Device(GPU.DeviceSettings(debug:true))
+    var first_profile = Profile(first)
+    var second_profile = Profile(second)
+    retained_normalization(first)
+    assert(second_profile.snapshot().compute_passes == 0)
+    retained_normalization(second)
+    let a = first_profile.snapshot()
+    let b = second_profile.snapshot()
+    assert(a.compute_passes == 6150 && b.compute_passes == 6150)
+    assert(a.live_buffers == 0 && a.in_use_buffers == 0 && a.cached_buffers == 0)
+    assert(b.live_buffers == 0 && b.in_use_buffers == 0 && b.cached_buffers == 0)
+    assert(a.active_bytes == 0 && a.cached_bytes == 0 && a.allocated_bytes == 0)
+    assert(b.active_bytes == 0 && b.cached_bytes == 0 && b.allocated_bytes == 0)
+    assert(a.buffer_allocations == a.buffer_releases && b.buffer_allocations == b.buffer_releases)
+}
+
+test "fused normalization keeps empty outer shapes and legacy nonfinite classifications" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let empty = Tensor.zeros([0, 3]).to(device)
+    var profile = Profile(device)
+    let result = empty.layer_norm(1, 0.25)
+    assert(result.count() == 0 && result.shape()[0] == 0 && result.shape()[1] == 3)
+    assert(profile.snapshot().compute_passes == 0 && profile.snapshot().submissions == 0)
+    // Large translations expose the pre-existing approximate GPU mean.
+    // Preserve its eager result exactly; do not pretend the ideal CPU zero is
+    // the actual float32 GPU reference for this ill-conditioned witness.
+    let translated = Tensor.full([3, 7], 1000.0).to(device)
+    let old_values = normalization_eager(translated, 1, 0.25).cpu().values()
+    fusion_near(translated.layer_norm(1, 0.25), old_values, 0.0)
+    var tracked = Autograd.Variable(translated)
+    var legacy_tracked = Autograd.Variable(translated)
+    var seed_values:float[] = []
+    var seed_index = 0
+    while seed_index < 21 { seed_values.append((seed_index % 11) as float / 4.0 - 1.0); seed_index++ }
+    let seed = Tensor(seed_values, [3, 7]).to(device)
+    var current_gradient = Autograd.grad(tracked.value().layer_norm(1, 0.25), [tracked.value()], seed:seed)
+    var legacy_gradient = Autograd.grad(normalization_eager(legacy_tracked.value(), 1, 0.25), [legacy_tracked.value()], seed:seed)
+    fusion_near(current_gradient[0], legacy_gradient[0].cpu().values())
+    let infinity = Math.exp(1000.0)
+    let nan = Math.sqrt(-1.0)
+    var values:float[] = [infinity, 1.0, -infinity, nan, 0.0, 1.0, 3.4028234663852886e38, -3.4028234663852886e38, 0.0]
+    let input = Tensor(values, [3, 3]).to(device)
+    let actual = input.layer_norm(1, 0.25).cpu().values()
+    let expected = normalization_eager(input, 1, 0.25).cpu().values()
+    var index = 0
+    while index < actual.count() {
+        assert(actual[index] == expected[index] || (actual[index] != actual[index] && expected[index] != expected[index]))
+        index++
+    }
+}

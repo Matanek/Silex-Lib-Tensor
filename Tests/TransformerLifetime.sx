@@ -22,7 +22,9 @@ test "Transformer optional graphs stay within retained-ancestor bounds and relea
     var device=GPU.Device(GPU.DeviceSettings(debug:true))
     let baseline=autograd_performance_statistics();var profile=Profile(device);var cycle=0;var peak=0
     var bounds:int[]=[6252,6252,6180,6180,2332,2332,6252,6252,6180,6180,2332,2332]
-    var allocations:int[]=[202,202,198,198,81,81,202,202,198,198,81,81]
+    // Two LayerNorm add-sqrt fusions avoid exactly two forward leases.
+    // Backward scalar-add already forwarded its gradient without a GPU pass.
+    var allocations:int[]=[200,200,196,196,79,79,200,200,196,196,79,79]
     while cycle<16 {
         var index=0
         for norm_first in [true,false] {

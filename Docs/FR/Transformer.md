@@ -99,7 +99,9 @@ Pour `norm_first:true`, le bloc calcule `r=x+dropout(attention(norm1(x)))`,
 puis `y=r+dropout(MLP(norm2(r)))`. Pour `false`, il calcule
 `r=norm1(x+dropout(attention(x)))`, puis `y=norm2(r+dropout(MLP(r)))`.
 LayerNorm utilise la variance de population sur les features, puis ajoute
-epsilon avant la racine carrée.
+epsilon avant la racine carrée. Sur GPU float32, cette paire est fusionnée en
+une passe ; moyenne, variance et dérivation conservent leur ordre. Les preuves
+et les limites des gains sont décrites dans le [profilage](Profiling.md).
 
 La visibilité suit les [masques d’attention](Attention.md) : `true` autorise,
 padding et causalité sont explicites. Elle ne porte que sur la branche attention.

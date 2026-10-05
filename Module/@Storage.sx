@@ -608,11 +608,19 @@ nocopy class GPUStorage {
     }
 
     func scalar(layout:Layout, operation:BinaryOperation, value:float) GPUStorage {
+        return self.scalar_result(layout, binary_code(operation), value, "Tensor float32 result")
+    }
+
+    func shifted_square_root(layout:Layout, offset:float) GPUStorage {
+        return self.scalar_result(layout, 15, offset, "Tensor float32 shifted sqrt result")
+    }
+
+    private func scalar_result(layout:Layout, operation:int, value:float, name:str) GPUStorage {
         let count = layout.count()
-        var metadata = elementwise_metadata(binary_code(operation), layout)
+        var metadata = elementwise_metadata(operation, layout)
         if count == 0 { return self }
         var output = GPUStorage.allocate_buffer(
-            self.current_device, checked_byte_count(count, 4), "Tensor float32 result"
+            self.current_device, checked_byte_count(count, 4), name
         )
         var pipeline = self.kernel_cache.elementwise()
         var commands = self.current_device.commands()
