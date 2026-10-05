@@ -1,0 +1,28 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+
+func demonstrate_masked_probabilities(device:GPU.Device?) {
+    var scores=Tensor.ones([3,4])
+    var mask=Neural.sequence_mask([0,2,4],4)
+    if let gpu=device {scores=scores.to(gpu);mask=mask.to(gpu)}
+    var input=Autograd.Variable(scores)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let probabilities=input.value().masked_softmax(mask,axis:1)
+    probabilities.sum().backward()
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    let values=probabilities.detach().cpu().values()
+    assert(values[0]==0.0 && values[1]==0.0 && values[2]==0.0 && values[3]==0.0)
+    assert(values[4]==0.5 && values[5]==0.5 && values[6]==0.0 && values[7]==0.0)
+    assert(values[8]==0.25 && values[9]==0.25 && values[10]==0.25 && values[11]==0.25)
+    if let gradient=input.gradient() {for value in gradient.cpu().values() {assert(value==0.0)}}
+    else {panic("expected masked softmax gradient")}
+}
+func main() {
+    demonstrate_masked_probabilities(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));demonstrate_masked_probabilities(device)}
+    print("Masked probabilities: empty row and gradients preserved")
+}

@@ -1,3 +1,5 @@
+use STD.Math
+
 extend Tensor {
     func softmax(axis:int) Tensor {
         require_neural_float(self, "softmax")
@@ -6,6 +8,31 @@ extend Tensor {
         let shifted = self.subtract(maximum)
         let exponentials = shifted.exp()
         return exponentials.divide(exponentials.sum([axis], true))
+    }
+
+    func masked_softmax(mask:Tensor, axis:int) Tensor {
+        require_neural_float(self, "masked_softmax")
+        require_axis(axis, self.rank(), "masked_softmax")
+        if !mask.dtype().is_boolean() {panic("Tensor.masked_softmax mask requires dtype boolean")}
+        if mask.is_cpu()!=self.is_cpu() {panic("Tensor.masked_softmax requires matching placements")}
+        if !mask.has_same_placement(self) {panic("Tensor.masked_softmax requires tensors on the same GPU device")}
+        let broadcasted=broadcast_shape(self.shape(),mask.shape(),"masked_softmax")
+        if !shapes_equal(broadcasted,self.shape()) {panic("Tensor.masked_softmax mask must broadcast to the input shape")}
+        let visible=mask.expand(self.shape())
+        if self.count()==0 {return self.multiply(0.0)}
+        let zero=self.autograd_constant(0.0)
+        let one=self.autograd_constant(1.0)
+        let present=Tensor.where(visible,one,zero).sum([axis],true).greater_than(0.0)
+        // Exclude values before arithmetic, and detach the translation of each row.
+        let masked=Tensor.where(visible,self.detach(),self.autograd_constant(Math.log(0.0)))
+        let maximum=masked.max([axis],true)
+        let safe_maximum=Tensor.where(present,maximum,maximum.autograd_constant(0.0))
+        let valid_scores=Tensor.where(visible,self,zero)
+        let shifted=Tensor.where(visible,valid_scores.subtract(safe_maximum),zero)
+        let exponentials=Tensor.where(visible,shifted.exp(),zero)
+        let total=exponentials.sum([axis],true)
+        let denominator=Tensor.where(present,total,total.autograd_constant(1.0))
+        return exponentials.divide(denominator)
     }
 
     func log_softmax(axis:int) Tensor {

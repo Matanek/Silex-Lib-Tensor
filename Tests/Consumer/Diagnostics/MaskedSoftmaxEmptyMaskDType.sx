@@ -1,0 +1,5 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+func main() {let output=Tensor.zeros([2,0]).masked_softmax(Tensor.scalar(1.0),axis:1)}

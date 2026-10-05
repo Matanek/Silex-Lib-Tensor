@@ -1,0 +1,35 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func softmax_near(actual:Tensor, expected:float[], tolerance:float = 0.00001) {
+    let values=actual.detach().cpu().values()
+    assert(values.count()==expected.count())
+    var i=0
+    while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<=tolerance);i++}
+}
+func masked_softmax_witness(device:GPU.Device?) {
+    let nan=Math.sqrt(-1.0);let infinity=Math.exp(1000.0)
+    var values:float[]=[1000.0,1000.0,nan,-infinity,nan,infinity,-infinity,nan,-1000.0,nan,-1000.0,infinity]
+    var flags:bool[]=[true,true,false,false,false,false,false,false,true,false,true,false]
+    var seed_values:float[]=[1.0,3.0,100.0,100.0,100.0,100.0,100.0,100.0,2.0,100.0,-2.0,100.0]
+    var scores=Tensor(values,[3,4]);var mask=Tensor(flags,[3,4]);var seed=Tensor(seed_values,[3,4])
+    if let gpu=device {scores=scores.to(gpu);mask=mask.to(gpu);seed=seed.to(gpu)}
+    var input=Autograd.Variable(scores)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let output=input.value().masked_softmax(mask,axis:1)
+    var gradients=Autograd.grad(output,[input.value()],seed:seed)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    softmax_near(output,[0.5,0.5,0.0,0.0,0.0,0.0,0.0,0.0,0.5,0.0,0.5,0.0])
+    softmax_near(gradients[0],[-0.5,0.5,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0,-1.0,0.0])
+    assert(input.gradient()==null)
+}
+func main() {
+    masked_softmax_witness(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));masked_softmax_witness(device)}
+    print("Masked softmax adversarial witness passed")
+}

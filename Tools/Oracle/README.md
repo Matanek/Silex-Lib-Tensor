@@ -90,3 +90,15 @@ without Python. Weight conversion is direct row-major `[vocabulary,features]`
 float32; indices are exact int32 and no bias, transpose or gate reorder applies.
 Padding rows are read normally; their declared lookup derivative is zero.
 Finite-difference qualification excludes that deliberately stopped row.
+
+## Masked softmax Decimal fixture
+
+`masked_softmax_decimal.py` uses Python’s standard Decimal at 60 decimal digits.
+Its small finite inputs use direct exp normalization without Tensor or the
+implementation’s max-shift stabilization. The independent VJP is
+`probability * (seed - sum(probability * seed))`; excluded positions and empty
+rows are zero. No external framework, weights, transpose or gate ordering.
+`MASKED_SOFTMAX_REPORT.json` pins inputs, visibility, seed, outputs, gradients
+and absolute tolerance 0.000002. The generated CPU/Metal consumer is hermetic.
+Regenerate voluntarily with `python3 Tools/Oracle/masked_softmax_decimal.py`,
+then check with the same command plus `--check` and review both diffs.

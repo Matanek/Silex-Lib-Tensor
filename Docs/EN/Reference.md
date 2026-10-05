@@ -31,6 +31,7 @@ contract.
 | `Autograd.apply` | external `float32` rule | resident external `float32` rule | detached contributions validated before accumulation |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
+| `masked_softmax(mask,axis)` | `float32` scores, boolean mask | same, resident computation | scores; masked rows have zero gradient |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
 
 “All nine” means `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -147,3 +148,7 @@ parameter checkpoint remains separate and compatible.
 ## Sequence masks
 
 `Neural.sequence_mask(lengths:int[],maximum_length:int)` and `Neural.causal_mask(query_length:int,key_length:int,query_offset:int=0)`: CPU boolean masks, exact lengths and positions, explicit transfer. Conventions and composition in the [sequence visibility guide](SequenceMasks.md).
+
+## Masked softmax
+
+`tensor.masked_softmax(mask:Tensor,axis:int)`: boolean visibility broadcast to float32 scores, finite visible-value normalization, excluded positions/rows have zero output and gradient. Shapes, placements and limits in the [guide](MaskedSoftmax.md).

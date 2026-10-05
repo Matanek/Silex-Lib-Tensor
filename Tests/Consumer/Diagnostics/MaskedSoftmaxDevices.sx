@@ -1,0 +1,5 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+func main() {var first=GPU.Device();var second=GPU.Device();let output=Tensor.ones([2,3]).to(first).masked_softmax(Tensor.scalar(true).to(second),axis:1)}

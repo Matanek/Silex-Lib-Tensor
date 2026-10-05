@@ -1,0 +1,5 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use GFX.GPU
+func main() {let output=Tensor.ones([3]).masked_softmax(Tensor.ones([2,3],DType.boolean()),axis:0)}

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Tensor.masked_softmax(mask,axis)` normalizes finite visible scores and defines zero outputs/gradients for excluded positions and fully masked rows. Excluded nonfinite values, empty shapes and resident CPU/Metal computation are qualified by oracle and gradcheck; see the [guide](Docs/EN/MaskedSoftmax.md).
+
 - Sequence masks `Neural.sequence_mask` and `Neural.causal_mask`: CPU booleans, exact prefixes and positions, explicit offset, composition and GPU transfer; selection gradients qualified on CPU/Metal.
 
 - `Neural.Embedding` learns a seeded float32 table from batch-first int32 indices, with repeated dense gradients and a stopped padding derivative. Layer composition, state/resume and resident CPU/Metal lookup are qualified; see the [guide](Docs/EN/Embeddings.md).

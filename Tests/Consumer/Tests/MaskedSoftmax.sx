@@ -1,0 +1,89 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func softmax_near(actual:Tensor, expected:float[], tolerance:float = 0.00001) {
+    let values=actual.detach().cpu().values()
+    assert(values.count()==expected.count())
+    var i=0
+    while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<=tolerance);i++}
+}
+func masked_softmax_witness(device:GPU.Device?) {
+    let nan=Math.sqrt(-1.0);let infinity=Math.exp(1000.0)
+    var values:float[]=[1000.0,1000.0,nan,-infinity,nan,infinity,-infinity,nan,-1000.0,nan,-1000.0,infinity]
+    var flags:bool[]=[true,true,false,false,false,false,false,false,true,false,true,false]
+    var seed_values:float[]=[1.0,3.0,100.0,100.0,100.0,100.0,100.0,100.0,2.0,100.0,-2.0,100.0]
+    var scores=Tensor(values,[3,4]);var mask=Tensor(flags,[3,4]);var seed=Tensor(seed_values,[3,4])
+    if let gpu=device {scores=scores.to(gpu);mask=mask.to(gpu);seed=seed.to(gpu)}
+    var input=Autograd.Variable(scores)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let output=input.value().masked_softmax(mask,axis:1)
+    var gradients=Autograd.grad(output,[input.value()],seed:seed)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    softmax_near(output,[0.5,0.5,0.0,0.0,0.0,0.0,0.0,0.0,0.5,0.0,0.5,0.0])
+    softmax_near(gradients[0],[-0.5,0.5,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0,-1.0,0.0])
+    assert(input.gradient()==null)
+}
+test "masked softmax excludes nonfinite scores and returns zero rows and derivatives on CPU" {masked_softmax_witness(null)}
+test "masked softmax excludes nonfinite scores and returns zero rows and derivatives on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));masked_softmax_witness(device)
+}
+func masked_softmax_function(inputs:Tensor[]) Tensor {
+    var flags:bool[]=[true,false,true,false,false,false]
+    return inputs[0].masked_softmax(Tensor(flags,[2,3]),axis:1)
+}
+test "masked softmax full Jacobian agrees with finite differences including all false row" {
+    var values:float[]=[0.2,-0.3,0.7,1.0,2.0,3.0]
+    let check=Autograd.gradcheck(masked_softmax_function,[Tensor(values,[2,3])],epsilon:0.001,absolute_tolerance:0.0001,relative_tolerance:0.001)
+    assert(check.passed && check.checked_derivatives==36)
+}
+
+func masked_softmax_shapes(device:GPU.Device?) {
+    var values:float[]=[0.125,-0.75,1.5,-2.25,0.5,-0.125]
+    var flags:bool[]=[true,false,true]
+    var base=Tensor(values,[2,3]);var mask=Tensor.vector(flags)
+    if let gpu=device {base=base.to(gpu);mask=mask.to(gpu)}
+    let output=base.masked_softmax(mask,axis:1)
+    let shifted=base.add(1000.0).masked_softmax(mask,axis:1)
+    softmax_near(shifted,output.cpu().values())
+    let columns=base.transpose().masked_softmax(mask.unsqueeze(1),axis:0)
+    softmax_near(columns.transpose(),output.cpu().values())
+    let all_true=mask.logical_or(true)
+    softmax_near(base.masked_softmax(all_true,axis:1),base.softmax(1).cpu().values())
+    var extremes:float[]=[3.4028234663852886e38,-3.4028234663852886e38,-3.4028234663852886e38,-3.4028234663852886e38]
+    var extreme=Tensor(extremes,[2,2]);var all=Tensor.ones([2,2]).greater_than(0.0)
+    if let gpu=device {extreme=extreme.to(gpu);all=all.to(gpu)}
+    var seed=Tensor.ones([2,2])
+    if let gpu=device {seed=seed.to(gpu)}
+    var input=Autograd.Variable(extreme)
+    let result=input.value().masked_softmax(all,axis:1)
+    var gradients=Autograd.grad(result,[input.value()],seed:seed)
+    softmax_near(result,[1.0,0.0,0.5,0.5])
+    softmax_near(gradients[0],[0.0,0.0,0.0,0.0])
+}
+test "masked softmax translations strided axes and finite extremes stay stable on CPU and Metal" {
+    masked_softmax_shapes(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));masked_softmax_shapes(device)}
+}
+func empty_masked_softmax(device:GPU.Device?, shape:int[], axis:int) {
+    var values=Tensor.zeros(shape);var mask=Tensor.scalar(true)
+    if let gpu=device {values=values.to(gpu);mask=mask.to(gpu)}
+    var input=Autograd.Variable(values)
+    let output=input.value().masked_softmax(mask,axis:axis)
+    var gradients=Autograd.grad(output.sum(),[input.value()])
+    assert(output.count()==0 && gradients[0].count()==0)
+    assert(output.rank()==shape.count() && gradients[0].rank()==shape.count())
+    var i=0;while i<shape.count() {assert(output.shape()[i]==shape[i] && gradients[0].shape()[i]==shape[i]);i++}
+}
+test "empty softmax axes and outer dimensions preserve shape and zero gradients on CPU and Metal" {
+    empty_masked_softmax(null,[2,0],1);empty_masked_softmax(null,[0,3],1);empty_masked_softmax(null,[0],0)
+    if GPU.Device.is_supported() {
+        var device=GPU.Device(GPU.DeviceSettings(debug:true))
+        empty_masked_softmax(device,[2,0],1);empty_masked_softmax(device,[0,3],1);empty_masked_softmax(device,[0],0)
+    }
+}

@@ -31,6 +31,7 @@ contrats de chaque opération.
 | `Autograd.apply` | règle extérieure `float32` | règle extérieure résidente `float32` | contributions détachées validées avant accumulation |
 | `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
 | `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |
+| `masked_softmax(mask,axis)` | scores `float32`, masque booléen | idem, calcul résident | scores ; lignes masquées à gradient nul |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
 
 « Les neuf » désigne `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -147,3 +148,7 @@ paramètres historique reste distinct et compatible.
 ## Masques de séquence
 
 `Neural.sequence_mask(lengths:int[],maximum_length:int)` et `Neural.causal_mask(query_length:int,key_length:int,query_offset:int=0)` : masques CPU booléens, longueurs et positions exactes, transfert explicite. Conventions et composition dans le [guide des séquences](SequenceMasks.md).
+
+## Softmax masqué
+
+`tensor.masked_softmax(mask:Tensor,axis:int)` : visibilité booléenne broadcastée vers les scores float32, normalisation des valeurs visibles finies, positions/lignes exclues à sortie et gradient nuls. Formes, placements et limites dans le [guide](MaskedSoftmax.md).

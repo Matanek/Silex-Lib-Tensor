@@ -1,0 +1,30 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func masked_softmax_graph(device:GPU.Device, mode:int) {
+    let mask=Neural.sequence_mask([0,2,4],4).to(device)
+    var input=Autograd.Variable(Tensor.ones([3,4]).to(device))
+    let output=input.value().masked_softmax(mask,axis:1)
+    if mode==0 {output.sum().backward()}
+    elif mode==1 {var gradients=Autograd.grad(output.sum(),[input.value()]);assert(gradients[0].count()==12)}
+}
+test "masked softmax releases backward grad and unconsumed graphs across cycles" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics()
+    var profile=Profile(device)
+    var cycle=0
+    while cycle<32 {
+        masked_softmax_graph(device,0);masked_softmax_graph(device,1);masked_softmax_graph(device,2)
+        let stats=profile.snapshot()
+        assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+}
