@@ -372,6 +372,8 @@ l'optimiseur n'a encore créé aucun état. Après initialisation de cet état, 
 changement de placement est refusé atomiquement à l'étape suivante plutôt que
 de migrer silencieusement une partie du modèle.
 
+[Reprise des optimiseurs](OptimizerState.md) : moments nommés, restauration atomique et taux courant.
+
 ## Composer et entraîner un réseau
 
 `Tensor.Neural.Layer` est le contrat commun des couches et `Sequential` les exécute

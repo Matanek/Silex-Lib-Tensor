@@ -117,3 +117,5 @@ graph consumption, and Jacobian checking.
 [Reproducible index batches](BatchSampling.md): seed, epoch, final batch and cursor snapshot.
 
 [Supervised batches](SupervisedBatches.md): external sources, collation, recoverable errors and placement.
+
+[Optimizer restoration](OptimizerState.md): named moments, atomic restoration, and current learning rate.

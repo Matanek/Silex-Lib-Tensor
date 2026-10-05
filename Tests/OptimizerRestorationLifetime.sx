@@ -1,0 +1,49 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+use Tensor.Autograd.Variable
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func restore_tracked_moments(adam:Optim.Adam,sgd:Optim.SGD,device:GPU.Device) {
+    var tracked=Variable(Tensor.ones([2]).to(device))
+    var adam_entries:Optim.AdamMomentState[]=[Optim.AdamMomentState(name:"weight",shape:[2],step_count:3,first_moment:tracked.value().multiply(2.0),second_moment:tracked.value().multiply(4.0))]
+    var sgd_entries:Optim.SGDMomentumState[]=[Optim.SGDMomentumState(name:"weight",shape:[2],momentum:tracked.value().multiply(3.0))]
+    try adam.restore(Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:adam_entries)) else error {panic(error)}
+    try sgd.restore(Optim.SGDState(learning_rate:0.1,momentum:0.5,weight_decay:0.0,parameters:sgd_entries)) else error {panic(error)}
+}
+
+func optimizer_restore_cycle(device:GPU.Device) {
+    var parameter=Parameter("weight",Tensor.ones([2]).to(device))
+    var adam=Optim.Adam([parameter]);var sgd=Optim.SGD([parameter],learning_rate:0.1,momentum:0.5)
+    parameter.value().sum().backward();adam.step();adam.zero_grad()
+    parameter.value().sum().backward();sgd.step();sgd.zero_grad()
+    var saved_adam=adam.state();var saved_sgd=sgd.state()
+    var other=Parameter("weight",parameter.value().detach())
+    var resumed_adam=Optim.Adam([other]);var resumed_sgd=Optim.SGD([other],learning_rate:0.7)
+    try resumed_adam.restore(saved_adam) else error {panic(error)}
+    try resumed_sgd.restore(saved_sgd) else error {panic(error)}
+    other.value().sum().backward();resumed_adam.step();resumed_adam.zero_grad()
+    other.value().sum().backward();resumed_sgd.step();resumed_sgd.zero_grad()
+    // Keep both optimizers alive after the supplied tracked moments leave scope.
+    let before=autograd_performance_statistics()
+    restore_tracked_moments(resumed_adam,resumed_sgd,device)
+    let after=autograd_performance_statistics()
+    assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+    var explicit_cpu=resumed_adam.state().cpu();var sgd_cpu=saved_sgd.cpu()
+}
+
+test "optimizer snapshots restored slots tracked inputs and cpu copies release all resources" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let before=autograd_performance_statistics()
+    var index=0
+    while index<32 {
+        optimizer_restore_cycle(device)
+        let after=autograd_performance_statistics()
+        assert(after.live_nodes==before.live_nodes && after.retained_edges==before.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        index++
+    }
+}

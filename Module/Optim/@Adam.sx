@@ -2,7 +2,7 @@ use STD.Math
 use Tensor
 use Tensor.Neural.Parameter
 
-class AdamState {
+class AdamSlot {
     var step_count:int
     var first_moment:Tensor
     var second_moment:Tensor
@@ -16,12 +16,12 @@ class AdamState {
 
 public nocopy class Adam {
     private var parameters:Parameter[]
-    private var states:AdamState[]
-    private let learning_rate:float
-    private let beta1:float
-    private let beta2:float
-    private let epsilon:float
-    private let weight_decay:float
+    private var states:AdamSlot[]
+    private var current_learning_rate:float
+    private var beta1:float
+    private var beta2:float
+    private var epsilon:float
+    private var weight_decay:float
 
     init(
         parameters:Parameter[], learning_rate:float = 0.001,
@@ -35,12 +35,18 @@ public nocopy class Adam {
         require_non_negative(weight_decay, "weight_decay", "Adam")
         self.parameters = optimizer_parameters(parameters, "Adam")
         self.states = []
-        for parameter in self.parameters { self.states.append(AdamState()) }
-        self.learning_rate = learning_rate
+        for parameter in self.parameters { self.states.append(AdamSlot()) }
+        self.current_learning_rate = learning_rate
         self.beta1 = beta1
         self.beta2 = beta2
         self.epsilon = epsilon
         self.weight_decay = weight_decay
+    }
+
+    func learning_rate() float {return self.current_learning_rate}
+    func set_learning_rate(value:float) {
+        require_positive(value,"learning_rate","Adam.set_learning_rate")
+        self.current_learning_rate=value
     }
 
     func zero_grad() { optimizer_zero_grad(self.parameters) }
@@ -105,6 +111,9 @@ public nocopy class Adam {
                 )
             }
             let gradient = optimizer_gradient(parameter, "Adam.step")
+            if gradient!=null && self.states[index].step_count==9223372036854775807 {
+                panic("Tensor.Optim.Adam.step counter overflows int")
+            }
             index++
         }
 
@@ -131,7 +140,7 @@ public nocopy class Adam {
                 let numerator = first.divide(first_correction)
                 let denominator = second.divide(second_correction).sqrt().add(self.epsilon)
                 let next_value = parameter.value().detach().subtract(
-                    numerator.divide(denominator).multiply(self.learning_rate)
+                    numerator.divide(denominator).multiply(self.current_learning_rate)
                 ).detach()
                 parameter.apply(next_value)
                 state.first_moment = first.detach()
@@ -140,6 +149,64 @@ public nocopy class Adam {
             }
             index++
         }
+    }
+
+    func state() AdamState {
+        var entries:AdamMomentState[]=[]
+        var index=0
+        while index<self.parameters.count() {
+            var first:Tensor?=null
+            var second:Tensor?=null
+            if self.states[index].step_count>0 {first=self.states[index].first_moment.detach();second=self.states[index].second_moment.detach()}
+            entries.append(AdamMomentState(name:self.parameters[index].name(),shape:optimizer_state_shape(self.parameters[index].value().shape()),step_count:self.states[index].step_count,first_moment:first,second_moment:second))
+            index++
+        }
+        return AdamState(learning_rate:self.current_learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:entries)
+    }
+
+    func restore(snapshot:AdamState) Result<void,str> {
+        if !state_positive(snapshot.learning_rate) || !state_unit_interval(snapshot.beta1) || !state_unit_interval(snapshot.beta2) ||
+            !state_positive(snapshot.epsilon) || !state_nonnegative(snapshot.weight_decay) {
+            return Result<void,str>.failure("Tensor.Optim.Adam.restore requires valid hyperparameters")
+        }
+        if snapshot.parameters.count()!=self.parameters.count() {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+        var restored:AdamSlot[]=[]
+        for parameter in self.parameters {
+            if parameter.gradient()!=null {return Result<void,str>.failure("Tensor.Optim.restore requires zero_grad before restoring state")}
+            var found=-1
+            var index=0
+            while index<snapshot.parameters.count() {
+                if snapshot.parameters[index].name==parameter.name() {
+                    if found>=0 {return Result<void,str>.failure("Tensor.Optim.restore requires unique parameter names")}
+                    found=index
+                }
+                index++
+            }
+            if found<0 {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+            var entry=snapshot.parameters[found]
+            if !optimizer_shapes_equal(entry.shape,parameter.value().shape()) {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter shapes")}
+            if entry.step_count<0 {return Result<void,str>.failure("Tensor.Optim.Adam.restore requires non-negative step counts")}
+            var slot=AdamSlot()
+            if entry.step_count==0 {
+                if entry.first_moment!=null || entry.second_moment!=null {return Result<void,str>.failure("Tensor.Optim.Adam.restore requires absent moments at step zero")}
+            } else {
+                if let first=entry.first_moment {
+                    if let second=entry.second_moment {
+                        try validate_state_tensor(parameter,first)
+                        try validate_state_tensor(parameter,second)
+                        slot.first_moment=first.detach();slot.second_moment=second.detach();slot.step_count=entry.step_count
+                    } else {return Result<void,str>.failure("Tensor.Optim.Adam.restore requires both moments after step zero")}
+                } else {return Result<void,str>.failure("Tensor.Optim.Adam.restore requires both moments after step zero")}
+            }
+            restored.append(slot)
+        }
+        self.states=restored
+        self.current_learning_rate=snapshot.learning_rate
+        self.beta1=snapshot.beta1
+        self.beta2=snapshot.beta2
+        self.epsilon=snapshot.epsilon
+        self.weight_decay=snapshot.weight_decay
+        return Result<void,str>.success()
     }
 
     package func first_moment_state(name:str) Tensor? { return self.moment_state(name, true) }
@@ -167,11 +234,13 @@ public nocopy class Adam {
 }
 
 func optimizer_power(base:float, exponent:int) float {
-    var result = 1.0
-    var index = 0
-    while index < exponent {
-        result *= base
-        index++
+    var result:float=1.0
+    var power=base
+    var remaining=exponent
+    while remaining>0 {
+        if remaining%2==1 {result*=power}
+        remaining/=2
+        if remaining>0 {power*=power}
     }
     return result
 }

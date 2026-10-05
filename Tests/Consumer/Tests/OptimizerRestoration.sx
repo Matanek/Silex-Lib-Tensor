@@ -1,0 +1,349 @@
+use STD.Math
+use Tensor
+use Tensor.DType
+use Tensor.Neural.Parameter
+use Tensor.Optim
+use GFX.GPU
+
+func resume_tensor(value:Tensor?) Tensor {
+    if let tensor=value {return tensor}
+    panic("expected initialized optimizer state")
+}
+
+func resume_equal(left:Tensor?,right:Tensor?) bool {
+    if left==null || right==null {return left==null && right==null}
+    let a=resume_tensor(left).cpu().values()
+    let b=resume_tensor(right).cpu().values()
+    if a.count()!=b.count() {return false}
+    var index=0
+    while index<a.count() {if a[index]!=b[index] {return false}
+        index++}
+    return true
+}
+
+func resume_adam_equal(left:Optim.AdamState,right:Optim.AdamState) bool {
+    if left.learning_rate!=right.learning_rate || left.beta1!=right.beta1 || left.beta2!=right.beta2 ||
+        left.epsilon!=right.epsilon || left.weight_decay!=right.weight_decay || left.parameters.count()!=right.parameters.count() {return false}
+    var index=0
+    while index<left.parameters.count() {
+        var a=left.parameters[index];var b=right.parameters[index]
+        if a.name!=b.name || a.step_count!=b.step_count || !resume_equal(a.first_moment,b.first_moment) || !resume_equal(a.second_moment,b.second_moment) {return false}
+        if a.shape.count()!=b.shape.count() {return false}
+        var axis=0
+        while axis<a.shape.count() {if a.shape[axis]!=b.shape[axis] {return false}
+            axis++}
+        index++
+    }
+    return true
+}
+
+func resume_sgd_equal(left:Optim.SGDState,right:Optim.SGDState) bool {
+    if left.learning_rate!=right.learning_rate || left.momentum!=right.momentum || left.weight_decay!=right.weight_decay || left.parameters.count()!=right.parameters.count() {return false}
+    var index=0
+    while index<left.parameters.count() {
+        var a=left.parameters[index];var b=right.parameters[index]
+        if a.name!=b.name || !resume_equal(a.momentum,b.momentum) || a.shape.count()!=b.shape.count() {return false}
+        var axis=0
+        while axis<a.shape.count() {if a.shape[axis]!=b.shape[axis] {return false}
+            axis++}
+        index++
+    }
+    return true
+}
+
+func resume_adam_failure(optimizer:Optim.Adam,snapshot:Optim.AdamState) {
+    var before=optimizer.state()
+    match optimizer.restore(snapshot) {
+        success => {panic("invalid Adam state accepted")}
+        failure(error) => {assert(error!="")}
+    }
+    assert(resume_adam_equal(before,optimizer.state()))
+}
+
+func resume_sgd_failure(optimizer:Optim.SGD,snapshot:Optim.SGDState) {
+    var before=optimizer.state()
+    match optimizer.restore(snapshot) {
+        success => {panic("invalid SGD state accepted")}
+        failure(error) => {assert(error!="")}
+    }
+    assert(resume_sgd_equal(before,optimizer.state()))
+}
+
+func resume_adam_sequence(initial:Tensor,gradient:Tensor) {
+    var boundary=0
+    while boundary<5 {
+        var continuous=Parameter("weight",initial)
+        var frozen=Parameter("frozen",initial);frozen.freeze()
+        var idle=Parameter("idle",initial)
+        var optimizer=Optim.Adam([continuous,frozen,idle],learning_rate:0.031,beta1:0.8,beta2:0.9,epsilon:0.00001,weight_decay:0.07)
+        var step=0
+        while step<boundary {
+            continuous.value().multiply(gradient.multiply(step as float+1.0)).sum().backward()
+            optimizer.step();optimizer.zero_grad();step++
+        }
+        var saved=optimizer.state()
+        var restored=Parameter("weight",continuous.value().detach())
+        var restored_idle=Parameter("idle",idle.value().detach())
+        var restored_frozen=Parameter("frozen",frozen.value().detach());restored_frozen.freeze()
+        // Parameter and snapshot order are intentionally different.
+        var resumed=Optim.Adam([restored_idle,restored,restored_frozen])
+        try resumed.restore(saved) else error {panic(error)}
+        assert(resumed.learning_rate()==0.031 && !restored_frozen.is_trainable())
+        while step<6 {
+            if step==4 {optimizer.set_learning_rate(0.017);resumed.set_learning_rate(0.017)}
+            let current=gradient.multiply(step as float+1.0)
+            continuous.value().multiply(current).sum().backward()
+            restored.value().multiply(current).sum().backward()
+            optimizer.step();resumed.step();optimizer.zero_grad();resumed.zero_grad()
+            assert(resume_equal(continuous.value().detach(),restored.value().detach()))
+            var a=optimizer.state();var b=resumed.state()
+            assert(a.parameters[0].step_count==b.parameters[1].step_count)
+            assert(resume_equal(a.parameters[0].first_moment,b.parameters[1].first_moment))
+            assert(resume_equal(a.parameters[0].second_moment,b.parameters[1].second_moment))
+            assert(b.parameters[0].step_count==0 && b.parameters[2].step_count==0)
+            step++
+        }
+        assert(saved.parameters[0].step_count==boundary)
+        boundary++
+    }
+}
+
+func resume_sgd_sequence(initial:Tensor,gradient:Tensor) {
+    var boundary=0
+    while boundary<5 {
+        var continuous=Parameter("weight",initial)
+        var frozen=Parameter("frozen",initial);frozen.freeze()
+        var idle=Parameter("idle",initial)
+        var optimizer=Optim.SGD([continuous,frozen,idle],learning_rate:0.031,momentum:0.8,weight_decay:0.07)
+        var step=0
+        while step<boundary {
+            continuous.value().multiply(gradient.multiply(step as float+1.0)).sum().backward()
+            optimizer.step();optimizer.zero_grad();step++
+        }
+        var saved=optimizer.state()
+        var restored=Parameter("weight",continuous.value().detach())
+        var restored_idle=Parameter("idle",idle.value().detach())
+        var restored_frozen=Parameter("frozen",frozen.value().detach());restored_frozen.freeze()
+        var resumed=Optim.SGD([restored_idle,restored,restored_frozen],learning_rate:1.0)
+        try resumed.restore(saved) else error {panic(error)}
+        while step<6 {
+            if step==4 {optimizer.set_learning_rate(0.017);resumed.set_learning_rate(0.017)}
+            let current=gradient.multiply(step as float+1.0)
+            continuous.value().multiply(current).sum().backward()
+            restored.value().multiply(current).sum().backward()
+            optimizer.step();resumed.step();optimizer.zero_grad();resumed.zero_grad()
+            assert(resume_equal(continuous.value().detach(),restored.value().detach()))
+            var a=optimizer.state();var b=resumed.state()
+            assert(resume_equal(a.parameters[0].momentum,b.parameters[1].momentum))
+            assert(b.parameters[0].momentum==null && b.parameters[2].momentum==null)
+            step++
+        }
+        assert(resumed.learning_rate()==0.017 && !restored_frozen.is_trainable())
+        boundary++
+    }
+}
+
+test "resume Adam exactly at five CPU boundaries and retain frozen or idle slots" {
+    var values:float[]=[1.0,-2.0];var gradients:float[]=[0.3,-0.2]
+    resume_adam_sequence(Tensor.vector(values),Tensor.vector(gradients))
+}
+
+test "resume SGD exactly at five CPU boundaries and retain frozen or idle slots" {
+    var values:float[]=[1.0,-2.0];var gradients:float[]=[0.3,-0.2]
+    resume_sgd_sequence(Tensor.vector(values),Tensor.vector(gradients))
+}
+
+test "resume both optimizers exactly at five GPU boundaries" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[]=[1.0,-2.0];var gradients:float[]=[0.3,-0.2]
+    let initial=Tensor.vector(values).to(device);let gradient=Tensor.vector(gradients).to(device)
+    resume_adam_sequence(initial,gradient);resume_sgd_sequence(initial,gradient)
+}
+
+test "capture independent entry and shape arrays without mutating model values" {
+    var parameter=Parameter("weight",Tensor.ones([2]))
+    var adam=Optim.Adam([parameter]);var sgd=Optim.SGD([parameter],learning_rate:0.1)
+    var saved=adam.state();var copied=saved.cpu()
+    var shape=saved.parameters[0].shape;shape[0]=77
+    assert(parameter.value().shape()[0]==2 && adam.state().parameters[0].shape[0]==2 && copied.parameters[0].shape[0]==2)
+    var entries=saved.parameters;entries.clear()
+    assert(adam.state().parameters.count()==1 && copied.parameters.count()==1)
+    var sgd_saved=sgd.state();var sgd_cpu=sgd_saved.cpu();var sgd_shape=sgd_saved.parameters[0].shape;sgd_shape[0]=88
+    assert(parameter.value().shape()[0]==2 && sgd.state().parameters[0].shape[0]==2 && sgd_cpu.parameters[0].shape[0]==2)
+}
+
+test "changing current learning rate preserves initialized moments and counters" {
+    var parameter=Parameter("weight",Tensor.scalar(2.0))
+    var adam=Optim.Adam([parameter],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001)
+    parameter.value().multiply(3.0).backward();adam.step();adam.zero_grad()
+    var saved=adam.state();let first=resume_tensor(saved.parameters[0].first_moment).item()
+    adam.set_learning_rate(0.01)
+    var changed=adam.state()
+    assert(changed.learning_rate==0.01 && changed.parameters[0].step_count==1)
+    assert(resume_equal(saved.parameters[0].first_moment,changed.parameters[0].first_moment))
+    parameter.value().multiply(4.0).backward();adam.step();adam.zero_grad()
+    assert(saved.parameters[0].step_count==1 && resume_tensor(saved.parameters[0].first_moment).item()==first)
+    var sgd=Optim.SGD([parameter],learning_rate:0.2,momentum:0.5)
+    parameter.value().multiply(3.0).backward();sgd.step();sgd.zero_grad()
+    var momentum=sgd.state();sgd.set_learning_rate(0.01)
+    assert(sgd.learning_rate()==0.01 && resume_equal(momentum.parameters[0].momentum,sgd.state().parameters[0].momentum))
+}
+
+test "Adam rejects an invalid last slot atomically across all state fields" {
+    var a=Parameter("a",Tensor.scalar(2.0));var b=Parameter("b",Tensor.scalar(4.0))
+    var optimizer=Optim.Adam([a,b],learning_rate:0.1,beta1:0.5,beta2:0.5)
+    a.value().sum().backward();b.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    var before=optimizer.state()
+    var bad:Optim.AdamMomentState[]=[
+        Optim.AdamMomentState(name:"a",shape:[],step_count:11,first_moment:Tensor.scalar(8.0),second_moment:Tensor.scalar(16.0)),
+        Optim.AdamMomentState(name:"b",shape:[],step_count:3,first_moment:Tensor.scalar(3.0),second_moment:Tensor.ones([1]))
+    ]
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.7,beta1:0.2,beta2:0.3,epsilon:0.01,weight_decay:0.6,parameters:bad))
+    assert(resume_adam_equal(before,optimizer.state()) && a.value().detach().item()<2.0 && b.value().detach().item()<4.0)
+}
+
+test "Adam rejects bad names shapes counters moments dtype configuration and pending gradients" {
+    var parameter=Parameter("weight",Tensor.scalar(2.0));var optimizer=Optim.Adam([parameter])
+    var variants:Optim.AdamMomentState[]=[
+        Optim.AdamMomentState(name:"other",shape:[],step_count:0,first_moment:null,second_moment:null),
+        Optim.AdamMomentState(name:"weight",shape:[1],step_count:0,first_moment:null,second_moment:null),
+        Optim.AdamMomentState(name:"weight",shape:[],step_count:-1,first_moment:null,second_moment:null),
+        Optim.AdamMomentState(name:"weight",shape:[],step_count:0,first_moment:Tensor.scalar(0.0),second_moment:null),
+        Optim.AdamMomentState(name:"weight",shape:[],step_count:1,first_moment:Tensor.scalar(0.0),second_moment:null),
+        Optim.AdamMomentState(name:"weight",shape:[],step_count:1,first_moment:Tensor.scalar(0 as int32),second_moment:Tensor.scalar(0.0))
+    ]
+    for entry in variants {resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.2,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:[entry]))}
+    var saved=optimizer.state()
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.0,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:saved.parameters))
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.1,beta1:1.0,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:saved.parameters))
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:-0.1,epsilon:0.001,weight_decay:0.0,parameters:saved.parameters))
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0,weight_decay:0.0,parameters:saved.parameters))
+    resume_adam_failure(optimizer,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:-1.0,parameters:saved.parameters))
+    parameter.value().sum().backward();resume_adam_failure(optimizer,saved)
+    assert(parameter.gradient()!=null && parameter.value().detach().item()==2.0)
+}
+
+test "duplicate or missing names are recoverable without replacing earlier slots" {
+    var a=Parameter("a",Tensor.scalar(1.0));var b=Parameter("b",Tensor.scalar(2.0))
+    var adam=Optim.Adam([a,b]);var sgd=Optim.SGD([a,b],learning_rate:0.1)
+    var adam_saved=adam.state();var sgd_saved=sgd.state()
+    var adam_entries=adam_saved.parameters;adam_entries[1]=adam_entries[0]
+    var sgd_entries=sgd_saved.parameters;sgd_entries[1]=sgd_entries[0]
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:adam_entries))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:0.1,momentum:0.0,weight_decay:0.0,parameters:sgd_entries))
+    adam_entries.clear();sgd_entries.clear()
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:adam_entries))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:0.1,momentum:0.0,weight_decay:0.0,parameters:sgd_entries))
+}
+
+test "SGD rejects invalid last momentum without changing slots or hyperparameters" {
+    var a=Parameter("a",Tensor.scalar(2.0));var b=Parameter("b",Tensor.scalar(4.0))
+    var optimizer=Optim.SGD([a,b],learning_rate:0.1,momentum:0.5,weight_decay:0.01)
+    a.value().sum().backward();b.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    var entries:Optim.SGDMomentumState[]=[Optim.SGDMomentumState(name:"a",shape:[],momentum:Tensor.scalar(7.0)),Optim.SGDMomentumState(name:"b",shape:[],momentum:Tensor.ones([1]))]
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.7,momentum:0.3,weight_decay:0.9,parameters:entries))
+    entries[1]=Optim.SGDMomentumState(name:"b",shape:[],momentum:Tensor.scalar(0 as int32))
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.7,momentum:0.3,weight_decay:0.9,parameters:entries))
+    var saved=optimizer.state()
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.7,momentum:0.0,weight_decay:0.9,parameters:saved.parameters))
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.0,momentum:0.3,weight_decay:0.9,parameters:saved.parameters))
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.7,momentum:-0.3,weight_decay:0.9,parameters:saved.parameters))
+    resume_sgd_failure(optimizer,Optim.SGDState(learning_rate:0.7,momentum:0.3,weight_decay:-0.9,parameters:saved.parameters))
+    b.value().sum().backward();resume_sgd_failure(optimizer,saved);assert(b.gradient()!=null)
+}
+
+test "SGD without momentum restores empty state and leaves model values untouched" {
+    var source=Parameter("weight",Tensor.scalar(2.0));var optimizer=Optim.SGD([source],learning_rate:0.1)
+    source.value().sum().backward();optimizer.step();optimizer.zero_grad()
+    var saved=optimizer.state();assert(saved.parameters[0].momentum==null)
+    var destination=Parameter("weight",Tensor.scalar(9.0));destination.freeze()
+    var restored=Optim.SGD([destination],learning_rate:0.7,momentum:0.5)
+    try restored.restore(saved) else error {panic(error)}
+    assert(destination.value().item()==9.0 && !destination.is_trainable())
+    destination.unfreeze();destination.value().sum().backward();restored.step()
+    assert(Math.abs(destination.value().detach().item()-8.9)<0.00001)
+}
+
+test "Adam advances a near maximal restored counter with bounded bias correction" {
+    var parameter=Parameter("weight",Tensor.scalar(2.0));var optimizer=Optim.Adam([parameter])
+    var entries:Optim.AdamMomentState[]=[Optim.AdamMomentState(name:"weight",shape:[],step_count:9223372036854775806,first_moment:Tensor.scalar(1.5),second_moment:Tensor.scalar(4.0))]
+    try optimizer.restore(Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.25,epsilon:0.001,weight_decay:0.0,parameters:entries)) else error {panic(error)}
+    parameter.value().multiply(2.0).backward();optimizer.step();optimizer.zero_grad()
+    var state=optimizer.state()
+    assert(state.parameters[0].step_count==9223372036854775807)
+    assert(resume_tensor(state.parameters[0].first_moment).item()==1.75 && resume_tensor(state.parameters[0].second_moment).item()==4.0)
+    assert(Math.abs(parameter.value().detach().item()-1.91254373)<0.000001)
+    // No gradient and a frozen parameter do not advance the maximum counter.
+    parameter.freeze();optimizer.step();parameter.unfreeze();optimizer.step()
+    assert(optimizer.state().parameters[0].step_count==9223372036854775807)
+}
+
+test "resident snapshots restore without transfers and cpu explicitly downloads moments" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var parameter=Parameter("weight",Tensor.ones([2]).to(device))
+    var adam=Optim.Adam([parameter]);var sgd=Optim.SGD([parameter],learning_rate:0.1,momentum:0.5)
+    parameter.value().sum().backward();adam.step();adam.zero_grad()
+    parameter.value().sum().backward();sgd.step();sgd.zero_grad()
+    device.reset_command_stats()
+    var a=adam.state();var s=sgd.state()
+    try adam.restore(a) else error {panic(error)};try sgd.restore(s) else error {panic(error)}
+    let resident=device.command_stats();assert(resident.uploads==0 && resident.downloads==0)
+    var a_cpu=a.cpu();var s_cpu=s.cpu()
+    let readback=device.command_stats();assert(readback.uploads==0 && readback.downloads==3)
+    assert(!resume_tensor(a_cpu.parameters[0].first_moment).is_gpu() && !resume_tensor(s_cpu.parameters[0].momentum).is_gpu())
+    resume_adam_failure(adam,a_cpu);resume_sgd_failure(sgd,s_cpu)
+}
+
+test "reject states on another GPU device and retain the original optimizer" {
+    if !GPU.Device.is_supported() {return}
+    var first=GPU.Device(GPU.DeviceSettings(debug:true));var second=GPU.Device(GPU.DeviceSettings(debug:true))
+    var parameter=Parameter("weight",Tensor.scalar(2.0).to(first))
+    var adam=Optim.Adam([parameter]);var sgd=Optim.SGD([parameter],learning_rate:0.1,momentum:0.5)
+    let moment=Tensor.scalar(3.0).to(second)
+    var a:Optim.AdamMomentState[]=[Optim.AdamMomentState(name:"weight",shape:[],step_count:1,first_moment:moment,second_moment:moment)]
+    var s:Optim.SGDMomentumState[]=[Optim.SGDMomentumState(name:"weight",shape:[],momentum:moment)]
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:a))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:0.1,momentum:0.5,weight_decay:0.0,parameters:s))
+    assert(parameter.value().detach().cpu().item()==2.0)
+}
+
+test "resume initialized frozen slots and unfreeze without discarding moments" {
+    var original=Parameter("weight",Tensor.scalar(2.0))
+    var adam=Optim.Adam([original],learning_rate:0.1,beta1:0.5,beta2:0.5)
+    var sgd=Optim.SGD([original],learning_rate:0.1,momentum:0.5)
+    original.value().multiply(3.0).backward();adam.step();adam.zero_grad()
+    original.value().multiply(4.0).backward();sgd.step();sgd.zero_grad()
+    var a=adam.state();var s=sgd.state()
+    var destination=Parameter("weight",original.value().detach());destination.freeze()
+    var restored_adam=Optim.Adam([destination]);var restored_sgd=Optim.SGD([destination],learning_rate:1.0)
+    try restored_adam.restore(a) else error {panic(error)};try restored_sgd.restore(s) else error {panic(error)}
+    restored_adam.step();restored_sgd.step()
+    assert(resume_adam_equal(a,restored_adam.state()) && resume_sgd_equal(s,restored_sgd.state()))
+    destination.unfreeze()
+    original.value().multiply(2.0).backward();destination.value().multiply(2.0).backward()
+    adam.step();restored_adam.step();adam.zero_grad();restored_adam.zero_grad()
+    assert(resume_equal(original.value().detach(),destination.value().detach()))
+    original.value().multiply(5.0).backward();destination.value().multiply(5.0).backward()
+    sgd.step();restored_sgd.step();sgd.zero_grad();restored_sgd.zero_grad()
+    assert(resume_equal(original.value().detach(),destination.value().detach()))
+}
+
+test "reject nonfinite hyperparameters and raw gradients from a frozen old graph" {
+    var parameter=Parameter("weight",Tensor.scalar(2.0))
+    var adam=Optim.Adam([parameter]);var sgd=Optim.SGD([parameter],learning_rate:0.1)
+    var a=adam.state();var s=sgd.state()
+    let nan=Math.sqrt(-1.0);let infinity=1.0/0.0
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:nan,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:a.parameters))
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:infinity,beta2:0.5,epsilon:0.001,weight_decay:0.0,parameters:a.parameters))
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:nan,epsilon:0.001,weight_decay:0.0,parameters:a.parameters))
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:infinity,weight_decay:0.0,parameters:a.parameters))
+    resume_adam_failure(adam,Optim.AdamState(learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.001,weight_decay:nan,parameters:a.parameters))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:infinity,momentum:0.5,weight_decay:0.0,parameters:s.parameters))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:0.1,momentum:nan,weight_decay:0.0,parameters:s.parameters))
+    resume_sgd_failure(sgd,Optim.SGDState(learning_rate:0.1,momentum:0.5,weight_decay:infinity,parameters:s.parameters))
+    let old_graph=parameter.value().sum();parameter.freeze();old_graph.backward()
+    resume_adam_failure(adam,a);resume_sgd_failure(sgd,s)
+    assert(!parameter.is_trainable() && parameter.gradient()!=null)
+}

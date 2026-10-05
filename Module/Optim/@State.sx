@@ -1,0 +1,73 @@
+use STD.Math
+use Tensor
+use Tensor.DType
+use Tensor.Neural.Parameter
+
+public struct SGDMomentumState {
+    let name:str
+    let shape:int[]
+    var momentum:Tensor?
+}
+
+public struct SGDState {
+    let learning_rate:float
+    let momentum:float
+    let weight_decay:float
+    var parameters:SGDMomentumState[]
+
+    func cpu() SGDState {
+        var parameters:SGDMomentumState[]=[]
+        for entry in self.parameters {
+            var momentum:Tensor?=null
+            if let value=entry.momentum {momentum=value.detach().cpu()}
+            parameters.append(SGDMomentumState(name:entry.name,shape:optimizer_state_shape(entry.shape),momentum:momentum))
+        }
+        return SGDState(learning_rate:self.learning_rate,momentum:self.momentum,weight_decay:self.weight_decay,parameters:parameters)
+    }
+}
+
+public struct AdamMomentState {
+    let name:str
+    let shape:int[]
+    let step_count:int
+    var first_moment:Tensor?
+    var second_moment:Tensor?
+}
+
+public struct AdamState {
+    let learning_rate:float
+    let beta1:float
+    let beta2:float
+    let epsilon:float
+    let weight_decay:float
+    var parameters:AdamMomentState[]
+
+    func cpu() AdamState {
+        var parameters:AdamMomentState[]=[]
+        for entry in self.parameters {
+            var first:Tensor?=null
+            var second:Tensor?=null
+            if let value=entry.first_moment {first=value.detach().cpu()}
+            if let value=entry.second_moment {second=value.detach().cpu()}
+            parameters.append(AdamMomentState(name:entry.name,shape:optimizer_state_shape(entry.shape),step_count:entry.step_count,first_moment:first,second_moment:second))
+        }
+        return AdamState(learning_rate:self.learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:parameters)
+    }
+}
+
+func state_positive(value:float) bool {return Math.is_finite(value) && value>0.0}
+func state_nonnegative(value:float) bool {return Math.is_finite(value) && value>=0.0}
+func state_unit_interval(value:float) bool {return Math.is_finite(value) && value>=0.0 && value<1.0}
+
+func validate_state_tensor(parameter:Parameter,value:Tensor) Result<void,str> {
+    if value.dtype()!=DType.float32() {return Result<void,str>.failure("Tensor.Optim.restore requires float32 state")}
+    if !optimizer_shapes_equal(value.shape(),parameter.value().shape()) {return Result<void,str>.failure("Tensor.Optim.restore requires matching state shapes")}
+    if !value.same_optimizer_placement(parameter.value()) {return Result<void,str>.failure("Tensor.Optim.restore requires matching state placements and GPU devices")}
+    return Result<void,str>.success()
+}
+
+func optimizer_state_shape(shape:int[]) int[] {
+    var result:int[]=[]
+    for dimension in shape {result.append(dimension)}
+    return result
+}

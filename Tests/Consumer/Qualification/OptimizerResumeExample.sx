@@ -1,0 +1,17 @@
+use Tensor
+use Tensor.Neural.Parameter
+use Tensor.Optim
+
+func main() {
+    var parameter=Parameter("weight",Tensor.scalar(2.0))
+    var optimizer=Optim.Adam([parameter],learning_rate:0.1,beta1:0.5,beta2:0.5,epsilon:0.0001)
+    parameter.value().multiply(3.0).backward();optimizer.step();optimizer.zero_grad()
+    var saved=optimizer.state()
+    var restored_parameter=Parameter("weight",parameter.value().detach())
+    var restored=Optim.Adam([restored_parameter])
+    try restored.restore(saved) else error {panic(error)}
+    parameter.value().multiply(4.0).backward();optimizer.step()
+    restored_parameter.value().multiply(4.0).backward();restored.step()
+    assert(parameter.value().detach().item()==restored_parameter.value().detach().item())
+    assert(optimizer.state().parameters[0].step_count==2 && restored.state().parameters[0].step_count==2)
+}

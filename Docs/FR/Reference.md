@@ -117,3 +117,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Lots d’indices reproductibles](BatchSampling.md) : seed, époque, dernier lot et snapshot du curseur.
 
 [Lots supervisés](SupervisedBatches.md) : sources extérieures, collation, erreurs récupérables et placement.
+
+[Reprise des optimiseurs](OptimizerState.md) : moments nommés, restauration atomique et taux courant.

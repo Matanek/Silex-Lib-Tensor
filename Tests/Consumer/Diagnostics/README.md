@@ -167,3 +167,10 @@ Supervised sources add `SourceCountNegative`, `SourceCountWidth`, and
 leading axes and placements; `CursorRestoreConfiguration` for sampler forwarding.
 Each name refers to its `.sx` fixture. Recoverable source/collation errors are
 asserted in `Tests/BatchCursor.sx`, including unchanged cursor state and retry.
+
+Optimizer restoration adds `SGDLearningRateZero`, `SGDLearningRateNaN`,
+`SGDLearningRateInfinity`, `AdamLearningRateZero`, `AdamLearningRateNaN`, and
+`AdamLearningRateInfinity` for finite positive current rates; `AdamCounterOverflow`
+for prevalidation before an active maximal counter advances. Each name refers
+to its `.sx` fixture. Recoverable invalid snapshots and unchanged prior state
+are asserted in `Tests/OptimizerRestoration.sx`.

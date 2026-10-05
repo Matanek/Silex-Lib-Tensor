@@ -363,6 +363,8 @@ parameter may call `to(device)` or `cpu()` after `zero_grad()` while its
 optimizer has not created state yet. Once state exists, the next step rejects
 a placement change atomically instead of silently migrating part of a model.
 
+[Optimizer restoration](OptimizerState.md): named moments, atomic restoration, and current learning rate.
+
 ## Compose and train a network
 
 `Tensor.Neural.Layer` is the common layer contract. `Sequential` executes layers

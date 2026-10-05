@@ -29,6 +29,7 @@ silex install Tensor
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
 - [French supervised batch guide](Docs/FR/SupervisedBatches.md) · [English](Docs/EN/SupervisedBatches.md)
 - [French batch sampling guide](Docs/FR/BatchSampling.md) · [English](Docs/EN/BatchSampling.md)
+- [French optimizer restoration guide](Docs/FR/OptimizerState.md) · [English](Docs/EN/OptimizerState.md)
 - [French model state guide](Docs/FR/ModelState.md) · [English](Docs/EN/ModelState.md)
 - [French layer registration guide](Docs/FR/Registration.md) · [English](Docs/EN/Registration.md)
 - [French buffer and freezing guide](Docs/FR/State.md) · [English](Docs/EN/State.md)

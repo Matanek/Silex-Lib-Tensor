@@ -2,7 +2,7 @@ use STD.Math
 use Tensor
 use Tensor.Neural.Parameter
 
-class SGDState {
+class SGDSlot {
     var initialized:bool
     var momentum_buffer:Tensor
 
@@ -14,10 +14,10 @@ class SGDState {
 
 public nocopy class SGD {
     private var parameters:Parameter[]
-    private var states:SGDState[]
-    private let learning_rate:float
-    private let momentum:float
-    private let weight_decay:float
+    private var states:SGDSlot[]
+    private var current_learning_rate:float
+    private var momentum:float
+    private var weight_decay:float
 
     init(
         parameters:Parameter[], learning_rate:float,
@@ -28,10 +28,16 @@ public nocopy class SGD {
         require_non_negative(weight_decay, "weight_decay", "SGD")
         self.parameters = optimizer_parameters(parameters, "SGD")
         self.states = []
-        for parameter in self.parameters { self.states.append(SGDState()) }
-        self.learning_rate = learning_rate
+        for parameter in self.parameters { self.states.append(SGDSlot()) }
+        self.current_learning_rate = learning_rate
         self.momentum = momentum
         self.weight_decay = weight_decay
+    }
+
+    func learning_rate() float {return self.current_learning_rate}
+    func set_learning_rate(value:float) {
+        require_positive(value,"learning_rate","SGD.set_learning_rate")
+        self.current_learning_rate=value
     }
 
     func zero_grad() { optimizer_zero_grad(self.parameters) }
@@ -111,7 +117,7 @@ public nocopy class SGD {
                     }
                 }
                 let next_value = parameter.value().detach().subtract(
-                    direction.multiply(self.learning_rate)
+                    direction.multiply(self.current_learning_rate)
                 ).detach()
                 parameter.apply(next_value)
                 if self.momentum != 0.0 {
@@ -121,6 +127,53 @@ public nocopy class SGD {
             }
             index++
         }
+    }
+
+    func state() SGDState {
+        var entries:SGDMomentumState[]=[]
+        var index=0
+        while index<self.parameters.count() {
+            var value:Tensor?=null
+            if self.states[index].initialized {value=self.states[index].momentum_buffer.detach()}
+            entries.append(SGDMomentumState(name:self.parameters[index].name(),shape:optimizer_state_shape(self.parameters[index].value().shape()),momentum:value))
+            index++
+        }
+        return SGDState(learning_rate:self.current_learning_rate,momentum:self.momentum,weight_decay:self.weight_decay,parameters:entries)
+    }
+
+    func restore(snapshot:SGDState) Result<void,str> {
+        if !state_positive(snapshot.learning_rate) || !state_nonnegative(snapshot.momentum) || !state_nonnegative(snapshot.weight_decay) {
+            return Result<void,str>.failure("Tensor.Optim.SGD.restore requires valid hyperparameters")
+        }
+        if snapshot.parameters.count()!=self.parameters.count() {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+        var restored:SGDSlot[]=[]
+        for parameter in self.parameters {
+            if parameter.gradient()!=null {return Result<void,str>.failure("Tensor.Optim.restore requires zero_grad before restoring state")}
+            var found=-1
+            var index=0
+            while index<snapshot.parameters.count() {
+                if snapshot.parameters[index].name==parameter.name() {
+                    if found>=0 {return Result<void,str>.failure("Tensor.Optim.restore requires unique parameter names")}
+                    found=index
+                }
+                index++
+            }
+            if found<0 {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter names")}
+            var entry=snapshot.parameters[found]
+            if !optimizer_shapes_equal(entry.shape,parameter.value().shape()) {return Result<void,str>.failure("Tensor.Optim.restore requires matching parameter shapes")}
+            var slot=SGDSlot()
+            if let value=entry.momentum {
+                if snapshot.momentum==0.0 {return Result<void,str>.failure("Tensor.Optim.SGD.restore cannot restore momentum with momentum zero")}
+                try validate_state_tensor(parameter,value)
+                slot.momentum_buffer=value.detach();slot.initialized=true
+            }
+            restored.append(slot)
+        }
+        self.states=restored
+        self.current_learning_rate=snapshot.learning_rate
+        self.momentum=snapshot.momentum
+        self.weight_decay=snapshot.weight_decay
+        return Result<void,str>.success()
     }
 
     package func momentum_state(name:str) Tensor? {
