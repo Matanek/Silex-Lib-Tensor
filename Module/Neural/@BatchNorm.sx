@@ -1,0 +1,79 @@
+use STD.Math
+use Tensor
+use Tensor.DType
+
+public nocopy class BatchNorm:Layer {
+    private let features:int
+    private let epsilon:float
+    private let momentum:float
+    private var scale:Parameter?
+    private var offset:Parameter?
+    private var running_mean:Buffer
+    private var running_variance:Buffer
+    private var batches:Buffer
+
+    init(name:str,features:int,epsilon:float = 0.00001,momentum:float = 0.1,affine:bool = true) {
+        if name=="" {panic("Tensor.Neural.BatchNorm requires a non-empty name")}
+        if features<=0 {panic("Tensor.Neural.BatchNorm requires features > 0")}
+        if !Math.is_finite(epsilon) || epsilon<=0.0 {panic("Tensor.Neural.BatchNorm requires finite epsilon > 0")}
+        if !Math.is_finite(momentum) || momentum<0.0 || momentum>1.0 {panic("Tensor.Neural.BatchNorm requires finite 0 <= momentum <= 1")}
+        self.features=features;self.epsilon=epsilon;self.momentum=momentum
+        self.scale=null;self.offset=null
+        var shape:int[]=[features]
+        self.running_mean=Buffer(name+".running_mean",Tensor.zeros(shape))
+        self.running_variance=Buffer(name+".running_variance",Tensor.ones(shape))
+        self.batches=Buffer(name+".batches_tracked",Tensor.scalar(0 as int64),placement:BufferPlacement.cpu)
+        if affine {
+            self.scale=Parameter(name+".weight",Tensor.ones(shape))
+            self.offset=Parameter(name+".bias",Tensor.zeros(shape))
+            if let scale=self.scale {self.register_parameter(scale)}
+            if let offset=self.offset {self.register_parameter(offset)}
+        }
+        self.register_buffer(self.running_mean);self.register_buffer(self.running_variance);self.register_buffer(self.batches)
+    }
+
+    override func forward(input:Tensor) Tensor {
+        if input.dtype()!=DType.float32() {panic("Tensor.Neural.BatchNorm.forward requires float32 input")}
+        if input.rank()!=2 && input.rank()!=4 {panic("Tensor.Neural.BatchNorm.forward requires dense [N,F] or NCHW [N,C,H,W] input")}
+        if input.shape()[1]!=self.features {panic("Tensor.Neural.BatchNorm.forward requires matching features on axis 1")}
+        self.require_placement(self.running_mean.value(),input)
+        self.require_placement(self.running_variance.value(),input)
+        if let scale=self.scale {self.require_placement(scale.value(),input)}
+        if let offset=self.offset {self.require_placement(offset.value(),input)}
+        let tracked=self.batches.value().int64_item()
+        if tracked<0 {panic("Tensor.Neural.BatchNorm.forward requires a non-negative batch counter")}
+        let population=input.count()/self.features
+        if self.is_training() {
+            if population<=1 {panic("Tensor.Neural.BatchNorm.forward training requires more than one observation per feature")}
+            if tracked==9223372036854775807 {panic("Tensor.Neural.BatchNorm.forward batch counter overflows int64")}
+        }
+        var axes:int[]=[0]
+        var broadcast_shape:int[]=[1,self.features]
+        if input.rank()==4 {axes=[0,2,3];broadcast_shape=[1,self.features,1,1]}
+        var mean=self.running_mean.value().reshape(broadcast_shape)
+        var variance=self.running_variance.value().reshape(broadcast_shape)
+        if self.is_training() {
+            mean=input.mean(axes,true)
+            variance=input.variance(0,axes,true)
+        }
+        var output=input.subtract(mean).divide(variance.add(self.epsilon).sqrt())
+        if let scale=self.scale {output=output.multiply(scale.value().reshape(broadcast_shape))}
+        if let offset=self.offset {output=output.add(offset.value().reshape(broadcast_shape))}
+        if self.is_training() {
+            var state_shape:int[]=[self.features]
+            let next_mean=self.running_mean.value().multiply(1.0-self.momentum)
+                .add(mean.detach().reshape(state_shape).multiply(self.momentum))
+            let correction=(population as float)/((population-1) as float)
+            let next_variance=self.running_variance.value().multiply(1.0-self.momentum)
+                .add(variance.detach().reshape(state_shape).multiply(correction*self.momentum))
+            self.running_mean.replace(next_mean)
+            self.running_variance.replace(next_variance)
+            self.batches.replace(Tensor.scalar(tracked+1))
+        }
+        return output
+    }
+
+    private func require_placement(value:Tensor,input:Tensor) {
+        if !value.has_same_placement(input) {panic("Tensor.Neural.BatchNorm.forward requires matching data placements and GPU devices")}
+    }
+}

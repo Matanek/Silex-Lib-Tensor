@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Normalisez un [lot dense ou NCHW et utilisez les statistiques en évaluation](BatchNorm.md).
 - Parcourez des [lots supervisés avec une collation personnalisée](SupervisedBatches.md).
 - Parcourez des [lots d’indices reproductibles et reprenez leur curseur](BatchSampling.md).
 - Propagez [mode, placement et gel du modèle](ModelState.md).
@@ -406,7 +407,7 @@ optimizer.step()
 Les poids de `Dense` suivent `[entrées, sorties]`. `Conv2D` attend NCHW et
 stocke ses noyaux OIHW. `SimpleRNN` accepte `[batch, temps, features]`, déroule
 une récurrence tanh unidirectionnelle et retourne l'état final. `train()` et
-`eval()` se propagent dans `Sequential` ; seul `Dropout` change alors son
+`eval()` se propagent dans `Sequential` ; `Dropout` et `BatchNorm` changent alors leur
 comportement. `model.to(device)` et `model.cpu()` déplacent tous les paramètres
 après `zero_grad()` selon les règles de l'optimiseur.
 
@@ -420,7 +421,8 @@ checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.
 
 La composition personnalisée peut [dériver de Layer](Composition.md) ou rester
 un type ou une fonction applicative qui assemble les opérations Tensor publiques. La version 0.2.0 ne fournit pas
-BatchNorm, convolution groupée ou transposée, LSTM/GRU, embedding ni attention.
+convolution groupée ou transposée, LSTM/GRU, embedding ni attention.
+Le socle courant ajoute [BatchNorm dense et NCHW](BatchNorm.md) avec buffers nommés.
 
 ## Passer sur GPU
 

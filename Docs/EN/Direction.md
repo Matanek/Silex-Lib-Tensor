@@ -44,10 +44,13 @@ not extend it automatically when their own APIs evolve.
 
 Version 0.2.0 does not include integer GPU computation, sparse tensors,
 quantization, deferred graphs, multi-device distribution, higher-order
-derivatives, AdamW, BatchNorm, grouped or transposed convolutions, LSTM/GRU,
+derivatives, grouped or transposed convolutions, LSTM/GRU,
 embeddings, or attention.
 
-A checkpoint contains parameters only: no code, autograd graph, device, or
+The current foundation adds [AdamW and schedules](OptimizerUpdates.md) and
+[dense/NCHW BatchNorm](BatchNorm.md).
+
+A schema 1 checkpoint contains parameters only: no code, autograd graph, device, or
 optimizer state. Observing a GPU value and saving a GPU model remain explicit
 synchronization and readback points.
 

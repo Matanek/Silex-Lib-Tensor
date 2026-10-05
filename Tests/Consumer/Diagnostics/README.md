@@ -184,3 +184,11 @@ cover exact boundaries and restart order.
 Explicit CPU buffers add `HostBufferGPUValue` (initial CPU value required),
 `HostBufferTo` (direct transfer conflicts with policy), and `HostBufferReplace`
 (replacement still preserves placement).
+
+BatchNorm validates configuration and input before changing any running state:
+
+- `BatchNormName`, `BatchNormFeatures`, `BatchNormEpsilon*`, `BatchNormMomentum*`: nonempty name, positive features/finite epsilon, finite momentum in [0,1];
+- `BatchNormDType`, `BatchNormRank`, `BatchNormAxis`: float32 dense or NCHW channel contract;
+- `BatchNormEmpty`, `BatchNormSingleton`: at least two training observations per feature;
+- `BatchNormCounter`, `BatchNormOverflow`: nonnegative exact int64 counter and checked increment;
+- `BatchNormPlacement`, `BatchNormAffinePlacement`, `BatchNormBufferPlacement`, `BatchNormDevice`: matching placements and devices for input and all numerical state.

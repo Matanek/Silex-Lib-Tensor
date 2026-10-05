@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- BatchNorm normalizes dense or NCHW batches on CPU/GPU with gradients, optional affine state, detached running statistics, and an exact CPU int64 counter. Population/unbiased conventions and train/eval modes are documented in the [guide](Docs/EN/BatchNorm.md).
+
 - Buffers can declare BufferPlacement.cpu to retain exact CPU state during model transfers. The model policy remains the compatible default; conflicting direct transfers are rejected without conversion or hidden readback. See the [guide](Docs/EN/HostState.md).
 
 - AdamW applies decay independently of moments, with distinct named state and atomic restoration. LearningRateSchedule provides constant, step, exponential, and bounded cosine rates from an explicit step; finite positive rates and rate/update/increment order are documented in the [guide](Docs/EN/OptimizerUpdates.md).

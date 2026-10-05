@@ -1,0 +1,35 @@
+use STD.Math
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+func batchnorm_dense(input:Tensor) {
+    var model=Neural.BatchNorm("norm",2,epsilon:0.00001,momentum:0.5)
+    if input.is_gpu() {panic("GPU case requires an explicitly moved model")}
+    let output=model.forward(input).detach().values()
+    assert(Math.abs(output[0]+0.999995)<0.000001 && Math.abs(output[3]-0.99999875)<0.000001)
+    var buffers=model.buffers()
+    assert(buffers[0].value().values()[0]==1.0 && buffers[0].value().values()[1]==2.0)
+    // Population variances [1,4], unbiased running update with momentum 0.5.
+    assert(buffers[1].value().values()[0]==1.5 && buffers[1].value().values()[1]==4.5)
+    assert(buffers[2].value().int64_item()==1)
+    model.eval();let evaluated=model.forward(input).detach().values()
+    assert(Math.abs(evaluated[0])<0.000001 && Math.abs(evaluated[3]-1.885616)<0.00001)
+    assert(buffers[2].value().int64_item()==1)
+}
+
+test "BatchNorm dense uses population variance and unbiased running statistics" {
+    var values:float[]=[1.0,2.0,3.0,6.0];batchnorm_dense(Tensor.matrix(values,2,2))
+}
+
+test "BatchNorm dense forward and named state stay resident except explicit CPU counter" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var model=Neural.BatchNorm("norm",2,momentum:0.5)
+    var values:float[]=[1.0,2.0,3.0,6.0];let input=Tensor.matrix(values,2,2).to(device);model.to(device)
+    device.reset_command_stats();let result=model.forward(input)
+    let stats=device.command_stats();assert(stats.uploads==0 && stats.downloads==0)
+    assert(model.buffers()[0].value().is_gpu() && model.buffers()[2].value().is_cpu())
+    assert(model.buffers()[2].value().int64_item()==1)
+    let output=result.detach().cpu().values()
+    assert(Math.abs(output[0]+0.999995)<0.000001 && Math.abs(output[3]-0.99999875)<0.000001)
+}

@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Normalize a [dense or NCHW batch and evaluate with running statistics](BatchNorm.md).
 - Iterate [supervised batches with custom collation](SupervisedBatches.md).
 - Iterate [reproducible index batches and resume their cursor](BatchSampling.md).
 - Propagate [model mode, placement, and freezing](ModelState.md).
@@ -396,7 +397,7 @@ optimizer.step()
 `Dense` stores weights as `[inputs, outputs]`. `Conv2D` expects NCHW and stores
 OIHW kernels. `SimpleRNN` accepts `[batch, time, features]`, unfolds a
 unidirectional tanh recurrence, and returns the final state. `train()` and
-`eval()` propagate through `Sequential`; only `Dropout` changes behavior.
+`eval()` propagate through `Sequential`; `Dropout` and `BatchNorm` change behavior.
 `model.to(device)` and `model.cpu()` move every parameter after `zero_grad()`
 under the optimizer placement rules.
 
@@ -410,8 +411,10 @@ optimizer state.
 
 Custom composition can [derive from Layer](Composition.md) or remain an
 application type or function assembling public Tensor operations. Version 0.2.0
-does not provide BatchNorm, grouped or transposed convolution, LSTM/GRU, embeddings,
+does not provide grouped or transposed convolution, LSTM/GRU, embeddings,
 or attention.
+
+The current foundation adds [dense and NCHW BatchNorm](BatchNorm.md) with named buffers.
 
 ## Move to the GPU
 

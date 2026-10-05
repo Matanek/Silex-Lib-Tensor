@@ -1,0 +1,20 @@
+use STD.Math
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+func main() {
+    var model=Neural.BatchNorm("normalization",2,momentum:0.5)
+    var values:float[]=[1.0,2.0,3.0,6.0];var input=Tensor(values,[2,2])
+    if GPU.Device.is_supported() {
+        var device=GPU.Device();model.to(device);input=input.to(device)
+    }
+    let output=model.forward(input)
+    output.multiply(output).sum().backward();model.zero_grad()
+    let training_values=output.detach().cpu().values()
+    assert(Math.abs(training_values[0]+0.999995)<0.00001)
+    assert(model.buffers()[2].value().is_cpu() && model.buffers()[2].value().int64_item()==1)
+    model.eval();let evaluated=model.forward(input).detach().cpu().values()
+    assert(Math.abs(evaluated[0])<0.00001 && Math.abs(evaluated[3]-1.885616)<0.00001)
+    assert(model.buffers()[2].value().int64_item()==1)
+}

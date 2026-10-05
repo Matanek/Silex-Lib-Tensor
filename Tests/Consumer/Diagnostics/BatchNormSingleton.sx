@@ -1,0 +1,6 @@
+use STD.Math
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+func main() { var model=Neural.BatchNorm("n",2);model.forward(Tensor.ones([1,2,1,1])) }

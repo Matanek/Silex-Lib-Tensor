@@ -1,0 +1,134 @@
+use STD.Math
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use GFX.GPU
+
+func bn_modes_close(actual:Tensor,expected:float[]) {
+    let values=actual.detach().cpu().values();assert(values.count()==expected.count())
+    var i=0
+    while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<0.00003);i++}
+}
+func bn_modes_required(value:Tensor?) Tensor {
+    if let result=value {return result}
+    panic("expected BatchNorm input gradient")
+}
+
+func bn_eval(device:GPU.Device?) {
+    var model=Neural.BatchNorm("norm",2,epsilon:0.01)
+    var means:float[]=[1.0,-2.0];var variances:float[]=[3.99,0.99]
+    var gamma:float[]=[1.5,-0.75];var beta:float[]=[0.25,0.5]
+    model.buffers()[0].replace(Tensor.vector(means));model.buffers()[1].replace(Tensor.vector(variances))
+    model.buffers()[2].replace(Tensor.scalar(19 as int64))
+    model.parameters()[0].replace(Tensor.vector(gamma));model.parameters()[1].replace(Tensor.vector(beta))
+    var values:float[]=[3.0,2.0,5.0,-4.0];var source=Tensor(values,[2,2]);var seed_values:float[]=[0.2,-0.3,0.7,0.4]
+    var seed=Tensor(seed_values,[2,2])
+    if let gpu=device {model.to(gpu);source=source.to(gpu);seed=seed.to(gpu)}
+    model.eval();var input=Autograd.Variable(source)
+    if let gpu=device {gpu.reset_command_stats()}
+    let result=model.forward(input.value());result.multiply(seed).sum().backward()
+    if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+    var expected:float[]=[1.75,-2.5,3.25,2.0];bn_modes_close(result,expected)
+    var dx:float[]=[0.15,0.225,0.525,-0.3];bn_modes_close(bn_modes_required(input.gradient()),dx)
+    var dg:float[]=[1.6,-2.0];bn_modes_close(bn_modes_required(model.parameters()[0].gradient()),dg)
+    var db:float[]=[0.9,0.1];bn_modes_close(bn_modes_required(model.parameters()[1].gradient()),db)
+    bn_modes_close(model.buffers()[0].value(),means);bn_modes_close(model.buffers()[1].value(),variances)
+    assert(model.buffers()[2].value().int64_item()==19)
+}
+
+test "BatchNorm eval uses only named statistics and preserves CPU gradients and state" {bn_eval(null)}
+test "BatchNorm eval uses only named statistics and preserves resident GPU gradients and state" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));bn_eval(device)
+}
+
+test "BatchNorm nonaffine initial eval allows singleton and empty dense or NCHW input" {
+    var model=Neural.BatchNorm("plain",2,epsilon:3.0,affine:false);model.eval()
+    assert(model.parameters().is_empty() && model.buffers().count()==3)
+    var values:float[]=[2.0,-4.0];var expected:float[]=[1.0,-2.0]
+    bn_modes_close(model.forward(Tensor(values,[1,2])),expected)
+    assert(model.forward(Tensor.zeros([0,2])).count()==0)
+    assert(model.forward(Tensor.zeros([1,2,0,3])).count()==0)
+    assert(model.buffers()[2].value().int64_item()==0)
+    assert(model.buffers()[0].name()=="plain.running_mean" && model.buffers()[1].name()=="plain.running_variance")
+    assert(model.buffers()[2].name()=="plain.batches_tracked" && model.buffers()[2].placement_policy()==Neural.BufferPlacement.cpu)
+}
+
+test "BatchNorm momentum endpoints and captured statistics preserve exact state convention" {
+    var data:float[]=[1.0,2.0,3.0,6.0];let input=Tensor(data,[2,2])
+    var stationary=Neural.BatchNorm("zero",2,momentum:0.0,affine:false)
+    stationary.forward(input);var zero_mean:float[]=[0.0,0.0];var one_var:float[]=[1.0,1.0]
+    bn_modes_close(stationary.buffers()[0].value(),zero_mean);bn_modes_close(stationary.buffers()[1].value(),one_var)
+    assert(stationary.buffers()[2].value().int64_item()==1)
+    var current=Neural.BatchNorm("one",2,momentum:1.0,affine:false)
+    let old_mean=current.buffers()[0].value();let old_variance=current.buffers()[1].value()
+    current.forward(input);var new_mean:float[]=[2.0,4.0];var new_variance:float[]=[2.0,8.0]
+    bn_modes_close(current.buffers()[0].value(),new_mean);bn_modes_close(current.buffers()[1].value(),new_variance)
+    bn_modes_close(old_mean,zero_mean);bn_modes_close(old_variance,one_var)
+    current.forward(input.add(2.0));new_mean=[4.0,6.0]
+    bn_modes_close(current.buffers()[0].value(),new_mean);bn_modes_close(current.buffers()[1].value(),new_variance)
+    assert(current.buffers()[2].value().int64_item()==2)
+}
+
+test "freezing BatchNorm affine state preserves input derivatives and training statistics" {
+    var model=Neural.BatchNorm("norm",2,epsilon:0.01,momentum:1.0);model.freeze()
+    var data:float[]=[1.0,2.0,3.0,6.0];var input=Autograd.Variable(Tensor(data,[2,2]))
+    var weights:float[]=[1.0,0.0,0.0,1.0];model.forward(input.value()).multiply(Tensor(weights,[2,2])).sum().backward()
+    assert(input.gradient()!=null && model.parameters()[0].gradient()==null && model.parameters()[1].gradient()==null)
+    assert(model.buffers()[2].value().int64_item()==1 && model.is_training())
+    model.unfreeze();model.eval();assert(!model.is_training() && model.parameters()[0].is_trainable())
+}
+
+test "constant BatchNorm population keeps finite input derivative from epsilon" {
+    var model=Neural.BatchNorm("norm",1,epsilon:0.25,affine:false)
+    var input=Autograd.Variable(Tensor.ones([3,1]))
+    var seed_values:float[]=[1.0,2.0,3.0];let output=model.forward(input.value())
+    output.multiply(Tensor(seed_values,[3,1])).sum().backward()
+    var expected:float[]=[-2.0,0.0,2.0];bn_modes_close(bn_modes_required(input.gradient()),expected)
+    var zeros:float[]=[0.0,0.0,0.0];bn_modes_close(output,zeros)
+}
+
+test "BatchNorm retains exact high int64 counter through training eval and placement" {
+    var model=Neural.BatchNorm("norm",1,affine:false)
+    model.buffers()[2].replace(Tensor.scalar(9223372036854775806 as int64))
+    model.forward(Tensor.ones([2,1]));assert(model.buffers()[2].value().int64_item()==9223372036854775807)
+    model.eval();model.forward(Tensor.ones([1,1]));assert(model.buffers()[2].value().int64_item()==9223372036854775807)
+    if GPU.Device.is_supported() {
+        var device=GPU.Device();model.to(device);let input=Tensor.ones([1,1]).to(device)
+        device.reset_command_stats();model.forward(input)
+        let stats=device.command_stats();assert(stats.uploads==0 && stats.downloads==0)
+        model.cpu();assert(model.buffers()[2].value().int64_item()==9223372036854775807)
+    }
+}
+
+func bn_smooth(inputs:Tensor[]) Tensor {
+    // New layer on every call: deterministic function for central differences.
+    var model=Neural.BatchNorm("norm",2,epsilon:0.01,affine:false)
+    let output=model.forward(inputs[0]);return output.exp().sum()
+}
+test "dense and strided NCHW BatchNorm input derivatives pass smooth gradcheck" {
+    var data:float[]=[1.0,2.0,4.0,-1.0,7.0,5.0]
+    let dense=Autograd.gradcheck(bn_smooth,[Tensor(data,[3,2])],epsilon:0.01,absolute_tolerance:0.003,relative_tolerance:0.003)
+    assert(dense.passed && dense.checked_derivatives==6)
+    var spatial:float[]=[1.0,3.0,-2.0,4.0,5.0,9.0,6.0,8.0]
+    let nchw=Autograd.gradcheck(bn_smooth,[Tensor(spatial,[2,2,1,2]).permute([0,1,3,2])],epsilon:0.01,absolute_tolerance:0.003,relative_tolerance:0.003)
+    assert(nchw.passed && nchw.checked_derivatives==8)
+}
+
+test "nonaffine GPU BatchNorm handles empty eval and exact final train counter without transfers" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var model=Neural.BatchNorm("n",1,affine:false)
+    model.buffers()[2].replace(Tensor.scalar(9223372036854775806 as int64));model.to(device)
+    let input=Tensor.ones([2,1]).to(device);let empty=Tensor.zeros([0,1]).to(device)
+    device.reset_command_stats();let result=model.forward(input);model.eval();let no_output=model.forward(empty)
+    let stats=device.command_stats();assert(stats.uploads==0 && stats.downloads==0)
+    assert(no_output.count()==0 && model.buffers()[2].value().int64_item()==9223372036854775807)
+    var expected:float[]=[0.0,0.0];bn_modes_close(result,expected)
+}
+
+test "dense BatchNorm accepts a noncontiguous input view with input derivatives" {
+    var data:float[]=[1.0,4.0,7.0,2.0,-1.0,5.0];var model=Neural.BatchNorm("n",2,epsilon:0.01,affine:false)
+    var input=Autograd.Variable(Tensor(data,[2,3]));let result=model.forward(input.value().transpose())
+    result.exp().sum().backward();assert(input.gradient()!=null && result.shape()[0]==3 && result.shape()[1]==2)
+    var means:float[]=[0.4,0.2];bn_modes_close(model.buffers()[0].value(),means)
+}

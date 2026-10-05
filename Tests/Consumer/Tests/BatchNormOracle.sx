@@ -1,0 +1,80 @@
+// Pinned independent Decimal oracle: Tools/Oracle/BATCHNORM_REPORT.json.
+use STD.Math
+use Tensor
+use Tensor.Autograd
+use Tensor.Neural
+use GFX.GPU
+
+func bn_near(actual:Tensor,expected:float[]) {
+    let values=actual.detach().cpu().values();assert(values.count()==expected.count())
+    var i=0
+    while i<values.count() {assert(Math.is_finite(values[i]) && Math.abs(values[i]-expected[i])<0.00003);i++}
+}
+func bn_required(value:Tensor?) Tensor {if let result=value {return result}
+    panic("expected BatchNorm gradient")}
+
+func bn_dense_oracle(device:GPU.Device?,strided:bool) {
+    var data:float[]=[1.0,2.0,4.0,-1.0,7.0,5.0];var weights:float[]=[0.2,-0.3,0.7,0.4,-0.5,0.8]
+    var source=Tensor(data,[3, 2]);var seed=Tensor(weights,[3, 2])
+    if strided {
+        var transposed_data:float[]=[1.0,4.0,7.0,2.0,-1.0,5.0]
+        var transposed_seed:float[]=[0.2,0.7,-0.5,-0.3,0.4,0.8]
+        source=Tensor(transposed_data,[2,3]).transpose();seed=Tensor(transposed_seed,[2,3]).transpose()
+    }
+    var model=Neural.BatchNorm("norm",2,epsilon:0.01,momentum:0.25)
+    var gamma:float[]=[1.5,-0.75];var beta:float[]=[0.25,0.5]
+    model.parameters()[0].replace(Tensor.vector(gamma));model.parameters()[1].replace(Tensor.vector(beta))
+    if let gpu=device {source=source.to(gpu);seed=seed.to(gpu);model.to(gpu)}
+    var input=Autograd.Variable(source)
+    if let gpu=device {gpu.reset_command_stats()}
+    let output=model.forward(input.value());output.multiply(seed).sum().backward()
+    if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+    var observed=output.detach();var derivative=bn_required(input.gradient())
+    var expected_output:float[]=[-1.585588287,0.5,0.25,1.4177941435,2.085588287,-0.4177941435];bn_near(observed,expected_output)
+    var expected_input_gradient:float[]=[-0.17300478993,0.1835588287,0.34672223199,-0.091677606902,-0.17371744206,-0.091881221798];bn_near(derivative,expected_input_gradient)
+    var expected_weight_gradient:float[]=[-0.85660786727,0.48949020987];bn_near(bn_required(model.parameters()[0].gradient()),expected_weight_gradient)
+    var expected_bias_gradient:float[]=[0.4,0.9];bn_near(bn_required(model.parameters()[1].gradient()),expected_bias_gradient)
+    var expected_running_mean:float[]=[1.0,0.5];bn_near(model.buffers()[0].value(),expected_running_mean)
+    var expected_running_variance:float[]=[3.0,3.0];bn_near(model.buffers()[1].value(),expected_running_variance)
+    assert(model.buffers()[2].value().int64_item()==1)
+    model.zero_grad();assert(model.parameters()[0].gradient()==null && model.parameters()[1].gradient()==null)
+    var state_gradient=Autograd.grad(model.buffers()[0].value().sum(),[input.value()],allow_unused:true)
+    for value in state_gradient[0].cpu().values() {assert(value==0.0)}
+}
+
+func bn_nchw_oracle(device:GPU.Device?,strided:bool) {
+    var data:float[]=[1.0,3.0,-2.0,4.0,5.0,9.0,6.0,8.0];var weights:float[]=[0.2,-0.3,0.7,0.4,-0.5,0.8,0.1,-0.6]
+    var source=Tensor(data,[2, 2, 1, 2]);var seed=Tensor(weights,[2, 2, 1, 2])
+    if strided {source=source.permute([0,1,3,2]);seed=seed.permute([0,1,3,2])}
+    var model=Neural.BatchNorm("norm",2,epsilon:0.01,momentum:0.25)
+    var gamma:float[]=[1.5,-0.75];var beta:float[]=[0.25,0.5]
+    model.parameters()[0].replace(Tensor.vector(gamma));model.parameters()[1].replace(Tensor.vector(beta))
+    if let gpu=device {source=source.to(gpu);seed=seed.to(gpu);model.to(gpu)}
+    var input=Autograd.Variable(source)
+    if let gpu=device {gpu.reset_command_stats()}
+    let output=model.forward(input.value());output.multiply(seed).sum().backward()
+    if let gpu=device {let stats=gpu.command_stats();assert(stats.uploads==0 && stats.downloads==0)}
+    var observed=output.detach();var derivative=bn_required(input.gradient())
+    if strided {observed=observed.permute([0,1,3,2]);derivative=derivative.permute([0,1,3,2])}
+    var expected_output:float[]=[-1.5238106183,-0.5102045507,1.7022462916,0.5,0.5034015169,2.5306136521,0.099251236141,-0.30149752772];bn_near(observed,expected_output)
+    var expected_input_gradient:float[]=[0.23295004744,-0.11012552224,0.027095593616,-0.050093595482,-0.30116018179,0.17833565659,-0.035748448796,0.058746450662];bn_near(derivative,expected_input_gradient)
+    var expected_weight_gradient:float[]=[1.0473929365,-1.7098613925];bn_near(bn_required(model.parameters()[0].gradient()),expected_weight_gradient)
+    var expected_bias_gradient:float[]=[0.2,0.6];bn_near(bn_required(model.parameters()[1].gradient()),expected_bias_gradient)
+    var expected_running_mean:float[]=[1.125,1.0];bn_near(model.buffers()[0].value(),expected_running_mean)
+    var expected_running_variance:float[]=[3.6666666667,5.4166666667];bn_near(model.buffers()[1].value(),expected_running_variance)
+    assert(model.buffers()[2].value().int64_item()==1)
+    model.zero_grad();assert(model.parameters()[0].gradient()==null && model.parameters()[1].gradient()==null)
+    var state_gradient=Autograd.grad(model.buffers()[0].value().sum(),[input.value()],allow_unused:true)
+    for value in state_gradient[0].cpu().values() {assert(value==0.0)}
+}
+
+test "independent dense BatchNorm value input and affine gradient oracle CPU" {bn_dense_oracle(null,false);bn_dense_oracle(null,true)}
+test "independent dense BatchNorm value input and affine gradient oracle GPU" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));bn_dense_oracle(device,false);bn_dense_oracle(device,true)
+}
+test "independent NCHW BatchNorm value input and affine gradient oracle CPU including strides" {bn_nchw_oracle(null,false);bn_nchw_oracle(null,true)}
+test "independent NCHW BatchNorm value input and affine gradient oracle GPU including strides" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));bn_nchw_oracle(device,false);bn_nchw_oracle(device,true)
+}

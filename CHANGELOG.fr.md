@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- BatchNorm normalise les lots denses ou NCHW sur CPU/GPU, avec gradients, affine facultatif, statistiques courantes détachées et compteur int64 CPU exact. Conventions population/non biaisée et modes train/eval documentés dans le [guide](Docs/FR/BatchNorm.md).
+
 - Les buffers peuvent déclarer BufferPlacement.cpu pour garder un état exact sur CPU lors des transferts du modèle. La politique model reste le défaut compatible ; un transfert direct incompatible est refusé sans conversion ni readback caché. Voir le [guide](Docs/FR/HostState.md).
 
 - AdamW applique une décroissance découplée des moments, avec état nommé distinct et reprise atomique. LearningRateSchedule fournit constant, paliers, exponentiel et cosinus borné depuis une étape explicite ; taux finis positifs, ordre taux/pas/incrément documenté. Voir le [guide](Docs/FR/OptimizerUpdates.md).

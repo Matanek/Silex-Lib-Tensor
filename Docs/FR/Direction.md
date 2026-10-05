@@ -45,10 +45,13 @@ ne l'étendent pas automatiquement lorsque leur propre API évolue.
 
 La version 0.2.0 n'inclut pas le calcul entier GPU, les tenseurs clairsemés, la
 quantification, les graphes différés, la distribution multi-device, les
-dérivées supérieures, AdamW, BatchNorm, les convolutions groupées ou
+dérivées supérieures, les convolutions groupées ou
 transposées, LSTM/GRU, embeddings et attention.
 
-Un checkpoint contient uniquement les paramètres : ni code, ni graphe
+Le socle courant ajoute [AdamW et les calendriers](OptimizerUpdates.md) et
+[BatchNorm dense/NCHW](BatchNorm.md).
+
+Un checkpoint de schéma 1 contient uniquement les paramètres : ni code, ni graphe
 autograd, ni device, ni état d'optimiseur. L'observation d'une valeur GPU et la
 sauvegarde d'un modèle GPU restent des synchronisations et readbacks explicites.
 

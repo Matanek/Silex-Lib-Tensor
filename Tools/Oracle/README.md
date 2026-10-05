@@ -66,3 +66,15 @@ mathematical oracle neither imports Tensor nor reuses its integer-power helper.
 Ordinary Silex tests remain offline and do not invoke Python. Recheck from the
 Tensor repository with `python3 Tools/Oracle/adamw_decimal.py --check`; review
 the report and Silex literal changes together after any deliberate regeneration.
+
+## Mathematical BatchNorm oracle
+
+`batchnorm_decimal.py` computes dense and NCHW results using standard-library
+Decimal at 50-digit precision. Its closed-form channel derivative is independent
+of composite autograd: the report pins outputs, input/weight/bias gradients,
+population variance, and unbiased running updates. `BatchNormOracle.sx` uses
+these literals with absolute tolerance 3e-5 on float32 CPU/GPU, including strided
+NCHW views. Normal tests do not run Python. Recheck the independent report with
+`python3 Tools/Oracle/batchnorm_decimal.py --check` and inspect report and fixture
+changes together after regeneration. Smooth central-difference tests provide a
+second derivative control outside constant regions.

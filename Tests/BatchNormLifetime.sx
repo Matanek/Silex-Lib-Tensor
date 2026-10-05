@@ -1,0 +1,41 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func bn_lifetime_step(model:Neural.BatchNorm,device:GPU.Device) {
+    var data:float[]=[1.0,3.0,-2.0,4.0,5.0,9.0,6.0,8.0]
+    let input=Tensor(data,[2,2,1,2]).to(device)
+    let output=model.forward(input);output.multiply(output).sum().backward();model.zero_grad()
+}
+func bn_lifetime_cycle(device:GPU.Device) {
+    var model=Neural.BatchNorm("norm",2);model.to(device)
+    let baseline=autograd_performance_statistics();var profile=Profile(device)
+
+    var step=0
+    while step<32 {
+        bn_lifetime_step(model,device)
+        let now=autograd_performance_statistics()
+        assert(now.live_nodes==baseline.live_nodes && now.retained_edges==baseline.retained_edges)
+        // Current EMA commands may retain their input buffers until next use.
+        // This tiny fixed corpus must stay bounded across 32 updates.
+        assert(profile.snapshot().live_buffers<=32 && profile.snapshot().active_bytes<=1024)
+        assert(model.buffers()[2].value().int64_item()==step+1)
+        step++
+    }
+    model.cpu();assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+}
+
+test "BatchNorm running state retains no autograd graphs across 32 GPU lifetimes" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let baseline=autograd_performance_statistics();var iteration=0
+    while iteration<32 {
+        bn_lifetime_cycle(device)
+        let now=autograd_performance_statistics()
+        assert(now.live_nodes==baseline.live_nodes && now.retained_edges==baseline.retained_edges)
+        assert(profile.snapshot().live_buffers==0 && profile.snapshot().active_bytes==0)
+        iteration++
+    }
+}
