@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.Autograd
+class RejectLate:Autograd.Operation {
+    private var left:Autograd.Variable
+    private var right:Autograd.Variable
+    init(left:Autograd.Variable, right:Autograd.Variable) {self.left=left;self.right=right}
+    func forward(inputs:Tensor[]) Tensor {return inputs[0].multiply(2.0)}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {
+        if let previous=self.left.gradient() {assert(previous.item()==2.0)} else {panic("lost left gradient")}
+        if let previous=self.right.gradient() {assert(previous.item()==3.0)} else {panic("lost right gradient")}
+        print("Unchanged gradients before rejection")
+        return []
+    }
+}
+func main() {
+    var left=Autograd.Variable(Tensor.scalar(2.0))
+    var right=Autograd.Variable(Tensor.scalar(3.0))
+    left.value().multiply(2.0).backward()
+    right.value().multiply(3.0).backward()
+    let custom=Autograd.apply(RejectLate(left,right),[left.value()])
+    custom.add(right.value()).backward()
+}

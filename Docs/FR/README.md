@@ -320,6 +320,8 @@ valeur. Sur GPU, le forward, les gradients et leur accumulation restent
 résidents. Pour observer un résultat, employez par exemple
 `gradient.detach().cpu()` ; ce `cpu()` demeure le readback explicite.
 
+Pour ajouter une règle extérieure, consultez [les opérations différentiables](CustomOperations.md).
+
 ## Entraîner des paramètres nommés
 
 `Tensor.Neural.Parameter` associe un nom stable à une valeur `float32` suivie et à

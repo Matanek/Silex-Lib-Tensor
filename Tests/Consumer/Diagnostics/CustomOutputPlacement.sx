@@ -1,0 +1,8 @@
+use Tensor
+use Tensor.Autograd
+use GFX.GPU
+struct Rule:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor {return inputs[0].cpu()}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {return [gradient]}
+}
+func main() {var device=GPU.Device(GPU.DeviceSettings(debug:true));Autograd.apply(Rule(),[Tensor.scalar(2.0).to(device)])}

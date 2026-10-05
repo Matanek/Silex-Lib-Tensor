@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Autograd.Operation` and `Autograd.apply` connect an external rule built from public Tensor operations to the first-order graph. Leaf gradients are prepared before publication and retained values are released on consumption/destruction. See the [guide](Docs/EN/CustomOperations.md).
+
 - `Data.BatchCursor(...,prefetch:N)` prepares detached CPU batches through STD.Threading, preserves consumed snapshots and error order, and joins workers on close/destruction. Explicit source eligibility, CPU/GPU checkpoint resumption and documented batch bounds.
 
 - `Neural.TrainingCheckpoint` exactly saves and restores the registered model, SGD/Adam/AdamW, cursor, step/schedule, modes, trainability and dropout. Prevalidated CPU loading uses recoverable errors; optimizer snapshots expose explicit GPU movement.

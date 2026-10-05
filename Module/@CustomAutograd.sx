@@ -1,0 +1,97 @@
+use Tensor.Autograd.Operation
+
+nocopy class CustomAutogradOperation {
+    private var operation:Tensor.Autograd.Operation
+    private var inputs:AutogradInput[]
+    private var output:Tensor
+
+    init(operation:Tensor.Autograd.Operation, inputs:AutogradInput[], output:Tensor) {
+        self.operation = operation
+        self.inputs = inputs
+        self.output = output.autograd_detached()
+    }
+
+    func parents() AutogradNode[] {
+        var result:AutogradNode[] = []
+        for input in self.inputs { append_autograd_parent(input, result) }
+        return result
+    }
+
+    func contributions(gradient:Tensor) AutogradContribution[] {
+        var values:Tensor[] = []
+        for input in self.inputs { values.append(input.value) }
+        var active = self.operation
+        var derivatives = active.backward(values, self.output, gradient.autograd_detached())
+        self.operation = active
+        if derivatives.count() != self.inputs.count() {
+            panic("Tensor.Autograd.apply backward requires one gradient per input")
+        }
+        var index = 0
+        while index < derivatives.count() {
+            let derivative = derivatives[index]
+            let input = self.inputs[index].value
+            if derivative.dtype() != DType.float32() || !shapes_equal(derivative.shape(), input.shape()) {
+                panic("Tensor.Autograd.apply backward requires float32 gradients with each input shape")
+            }
+            if !derivative.has_same_placement(input) {
+                panic("Tensor.Autograd.apply backward requires each input placement and GPU device")
+            }
+            if !derivative.is_detached() {
+                panic("Tensor.Autograd.apply backward requires detached gradients")
+            }
+            index++
+        }
+        var result:AutogradContribution[] = []
+        index = 0
+        while index < self.inputs.count() {
+            append_contribution(self.inputs[index], derivatives[index], result)
+            index++
+        }
+        return result
+    }
+}
+
+package func apply_custom_operation(operation:Tensor.Autograd.Operation, inputs:Tensor[]) Tensor {
+    if inputs.is_empty() { panic("Tensor.Autograd.apply requires at least one input") }
+    var arguments:Tensor[] = []
+    var retained:AutogradInput[] = []
+    var tracked = false
+    for input in inputs {
+        if input.dtype() != DType.float32() { panic("Tensor.Autograd.apply inputs must use dtype float32") }
+        if !input.has_same_placement(inputs[0]) { panic("Tensor.Autograd.apply inputs must share placement and GPU device") }
+        if var node = input.autograd_node() {
+            if node.consumed { panic("Tensor.Autograd.apply cannot use a consumed graph") }
+            tracked = true
+        }
+        arguments.append(input.autograd_detached())
+        retained.append(autograd_input(input))
+    }
+    var active = operation
+    let output = active.forward(arguments)
+    if output.dtype() != DType.float32() { panic("Tensor.Autograd.apply output must use dtype float32") }
+    if !output.has_same_placement(inputs[0]) { panic("Tensor.Autograd.apply output must use the input placement and GPU device") }
+    if !output.is_detached() { panic("Tensor.Autograd.apply forward requires a detached output") }
+    if !tracked { return output }
+    return autograd_record(output, AutogradRule.custom(CustomAutogradOperation(active, retained, output)))
+}
+
+struct PendingAutogradSlot {
+    var slot:GradientSlot
+    var gradient:Tensor
+}
+
+func prepare_autograd_slot(slot:GradientSlot, gradient:Tensor, pending:&PendingAutogradSlot[]) {
+    var index = 0
+    while index < pending.count() {
+        if pending[index].slot == slot {
+            let combined = pending[index].gradient.add(gradient).autograd_detached()
+            pending[index] = PendingAutogradSlot(slot:slot, gradient:combined)
+            return
+        }
+        index++
+    }
+    var current = slot
+    var prepared = gradient.autograd_detached()
+    if let existing = current.gradient() { prepared = existing.add(gradient).autograd_detached() }
+    pending.append(PendingAutogradSlot(slot:slot, gradient:prepared))
+}

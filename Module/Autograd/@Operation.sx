@@ -1,0 +1,11 @@
+use Tensor
+use Tensor.apply_custom_operation
+
+public protocol Operation {
+    func forward(inputs:Tensor[]) Tensor
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[]
+}
+
+public func apply(operation:Operation, inputs:Tensor[]) Tensor {
+    return apply_custom_operation(operation, inputs)
+}

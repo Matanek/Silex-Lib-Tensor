@@ -93,3 +93,5 @@ par transferts explicites, puis comparez-les à un contrôle CPU indépendant.
 
 Consultez les [masques différentiables](Masks.md) et la
 [référence de compatibilité](Reference.md) pour choisir les opérations du graphe.
+
+[Ajouter une opération différentiable](CustomOperations.md).

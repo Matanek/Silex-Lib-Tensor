@@ -312,6 +312,8 @@ inside a tracked graph; detach the value first. On GPU, forward computation,
 gradients, and accumulation remain resident. To observe a result, use for
 example `gradient.detach().cpu()`; that `cpu()` remains the explicit readback.
 
+To add an external rule, see [differentiable operations](CustomOperations.md).
+
 ## Train named parameters
 
 `Tensor.Neural.Parameter` associates a stable name with a tracked `float32` value

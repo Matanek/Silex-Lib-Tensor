@@ -2,6 +2,7 @@ use STD.Math
 
 enum AutogradRule {
     leaf(GradientSlot)
+    custom(CustomAutogradOperation)
     masked(Tensor, AutogradInput, AutogradInput)
     binary(AutogradInput, AutogradInput, BinaryOperation)
     scalar(AutogradInput, float, BinaryOperation)
@@ -135,6 +136,12 @@ extend Tensor {
         var visited:AutogradNode[] = []
         var order:AutogradNode[] = []
         append_autograd_order(root, visited, order)
+        var custom_rules = false
+        for node in order {
+            if node.consumed { panic("Tensor.backward cannot reuse a consumed graph") }
+            match node.rule { custom(operation) => { custom_rules = true }; else => {} }
+        }
+        var pending:PendingAutogradSlot[] = []
         var gradient_nodes:AutogradNode[] = [root]
         var gradients:Tensor[] = [initial]
         var index = order.count() - 1
@@ -142,7 +149,7 @@ extend Tensor {
             var node = order[index]
             let gradient = autograd_gradient(node, gradient_nodes, gradients)
             match node.rule {
-                leaf(slot) => { slot.accumulate(gradient) }
+                leaf(slot) => { prepare_autograd_slot(slot, gradient, pending) }
                 released => { panic("Tensor.backward cannot reuse a consumed graph") }
                 else => {
                     var contributions = backward_rule(node.rule, gradient)
@@ -152,10 +159,19 @@ extend Tensor {
                             gradient_nodes, gradients
                         )
                     }
-                    node.consume()
+                    // Built-in rules have no user callback that can reject a
+                    // later derivative; preserve their streaming lifetimes.
+                    if !custom_rules { node.consume() }
                 }
             }
             index--
+        }
+        // Publish only after every derivative and slot addition succeeds.
+        for update in pending { update.slot.replace(update.gradient) }
+        if custom_rules {
+            for node in order {
+                match node.rule { leaf(slot) => {}; else => { node.consume() } }
+            }
         }
     }
 
@@ -426,6 +442,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
     var result:AutogradNode[] = []
     match rule {
         leaf(slot) => {}
+        custom(operation) => { result = operation.parents() }
         masked(mask, left, right) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         binary(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         scalar(input, value, operation) => { append_autograd_parent(input, result) }
@@ -513,6 +530,7 @@ func accumulate_autograd_gradient(
 
 func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
     return match rule {
+        custom(operation) => operation.contributions(gradient)
         masked(mask, left, right) => backward_masked(mask, left, right, gradient)
         binary(left, right, operation) => backward_binary(left, right, operation, gradient)
         scalar(input, value, operation) => backward_scalar(input, value, operation, gradient)

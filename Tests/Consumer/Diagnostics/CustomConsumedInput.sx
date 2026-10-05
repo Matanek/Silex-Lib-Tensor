@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.Autograd
+struct Rule:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor {return inputs[0]}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {return [gradient]}
+}
+func main() {var input=Autograd.Variable(Tensor.scalar(2.0));let previous=input.value().multiply(2.0);previous.backward();Autograd.apply(Rule(),[previous])}

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Autograd.Operation` et `Autograd.apply` relient une règle extérieure composée de Tensor publics au graphe de premier ordre. Les gradients de feuilles sont préparés avant publication et les valeurs retenues libérées à la consommation/destruction. Voir le [guide](Docs/FR/CustomOperations.md).
+
 - `Data.BatchCursor(...,prefetch:N)` prépare des lots CPU détachés avec STD.Threading, conserve les snapshots consommés et l’ordre des erreurs, et rejoint les workers à la fermeture/destruction. Éligibilité explicite des sources, reprise de checkpoint qualifiée CPU/GPU et borne de lots documentée.
 
 - `Neural.TrainingCheckpoint` sauvegarde et restaure exactement le modèle enregistré, SGD/Adam/AdamW, le curseur, l’étape/calendrier, les modes, le gel et le dropout. Chargement CPU prévalidé avec erreurs récupérables ; les snapshots d’optimiseur exposent un déplacement GPU explicite.

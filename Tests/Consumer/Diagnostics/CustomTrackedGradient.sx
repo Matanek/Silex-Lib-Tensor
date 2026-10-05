@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Autograd
+class Rule:Autograd.Operation {
+    private var captured:Autograd.Variable
+    init(captured:Autograd.Variable) {self.captured=captured}
+    func forward(inputs:Tensor[]) Tensor {return inputs[0]}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {return [self.captured.value()]}
+}
+func main() {var input=Autograd.Variable(Tensor.scalar(2.0));var captured=Autograd.Variable(Tensor.scalar(5.0));Autograd.apply(Rule(captured),[input.value()]).backward()}

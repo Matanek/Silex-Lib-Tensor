@@ -90,3 +90,5 @@ compare them with an independent CPU check.
 
 See [differentiable masks](Masks.md) and the
 [compatibility reference](Reference.md) to select graph operations.
+
+[Add a differentiable operation](CustomOperations.md).

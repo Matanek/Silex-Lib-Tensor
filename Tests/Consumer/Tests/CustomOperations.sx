@@ -1,0 +1,110 @@
+use Tensor
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+
+struct Square:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {
+        return [inputs[0].multiply(2.0).multiply(gradient)]
+    }
+}
+struct ProductPlus:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[1]).add(inputs[0]) }
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {
+        return [inputs[1].add(1.0).multiply(gradient), inputs[0].multiply(gradient)]
+    }
+}
+struct WrongSquare:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor { return inputs[0].multiply(inputs[0]) }
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] { return [gradient] }
+}
+func custom_square(inputs:Tensor[]) Tensor { return Autograd.apply(Square(), inputs).sum() }
+func custom_product(inputs:Tensor[]) Tensor { return Autograd.apply(ProductPlus(), inputs) }
+func custom_wrong(inputs:Tensor[]) Tensor { return Autograd.apply(WrongSquare(), inputs).sum() }
+func custom_near(actual:Tensor, expected:float[]) {
+    var values = actual.detach().cpu().values()
+    assert(values.count() == expected.count())
+    var index = 0
+    while index < values.count() { assert(Math.abs(values[index] - expected[index]) < 0.003); index++ }
+}
+test "External custom square accumulates an analytical derivative" {
+    var values:float[] = [2.0, -3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    input.value().multiply(7.0).sum().backward()
+    Autograd.apply(Square(), [input.value()]).sum().backward()
+    if let gradient = input.gradient() {custom_near(gradient, [11.0, 1.0])}
+    else {panic("missing gradient")}
+}
+test "Custom operations support shared and untracked inputs with functional seeds" {
+    var values:float[] = [2.0, 3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    let shared = Autograd.apply(ProductPlus(), [input.value(), input.value()])
+    var shared_gradient = Autograd.grad(shared, [input.value()], seed:Tensor.vector(values))
+    custom_near(shared_gradient[0], [10.0, 21.0])
+    assert(input.gradient() == null)
+    var other:float[] = [4.0, 5.0]
+    let mixed = Autograd.apply(ProductPlus(), [input.value(), Tensor.vector(other)])
+    var mixed_gradient = Autograd.grad(mixed, [input.value()], seed:Tensor.ones([2]))
+    custom_near(mixed_gradient[0], [5.0, 6.0])
+    assert(input.gradient() == null)
+}
+test "Custom operations compose views and empty shapes" {
+    var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    var input = Autograd.Variable(Tensor(values, [2,3]))
+    let output = Autograd.apply(Square(), [input.value().transpose().narrow(0,1,2)]).sum()
+    var gradients = Autograd.grad(output, [input.value()])
+    custom_near(gradients[0], [0.0, 4.0, 6.0, 0.0, 10.0, 12.0])
+    var empty = Autograd.Variable(Tensor.zeros([0,3]))
+    var empty_gradient = Autograd.grad(Autograd.apply(Square(), [empty.value()]).sum(), [empty.value()])
+    assert(empty_gradient[0].shape()[0] == 0 && empty_gradient[0].shape()[1] == 3)
+}
+test "Gradcheck qualifies complete custom Jacobians and finds a wrong rule" {
+    var left:float[] = [2.0, -3.0]
+    var right:float[] = [4.0, 5.0]
+    let square = Autograd.gradcheck(custom_square, [Tensor.vector(left)], epsilon:0.001, absolute_tolerance:0.003, relative_tolerance:0.002)
+    let product = Autograd.gradcheck(custom_product, [Tensor.vector(left), Tensor.vector(right)], epsilon:0.001, absolute_tolerance:0.004, relative_tolerance:0.002)
+    let wrong = Autograd.gradcheck(custom_wrong, [Tensor.vector(left)], epsilon:0.001, absolute_tolerance:0.003, relative_tolerance:0.002)
+    assert(square.passed && square.checked_derivatives == 2)
+    assert(product.passed && product.checked_derivatives == 8)
+    assert(!wrong.passed && wrong.failure != null)
+}
+test "Untracked custom forward records no gradient provenance" {
+    var values:float[] = [2.0, 3.0]
+    let output = Autograd.apply(Square(), [Tensor.vector(values)])
+    custom_near(output, [4.0,9.0])
+    var independent = Autograd.Variable(output)
+    independent.value().sum().backward()
+    if let gradient = independent.gradient() {custom_near(gradient, [1.0,1.0])}
+    else {panic("missing independent gradient")}
+}
+test "Custom Metal operation keeps outputs and seeded derivatives on device" {
+    if !GPU.Device.is_supported() {return}
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var left_values:float[] = [2.0, 3.0]
+    var right_values:float[] = [4.0, 5.0]
+    var left = Autograd.Variable(Tensor.vector(left_values).to(device))
+    var right = Autograd.Variable(Tensor.vector(right_values).to(device))
+    let output = Autograd.apply(ProductPlus(), [left.value(), right.value()])
+    assert(output.is_gpu())
+    var gradients = Autograd.grad(output, [left.value(), right.value()], seed:Tensor.vector(left_values).to(device))
+    assert(gradients[0].is_gpu() && gradients[1].is_gpu())
+    custom_near(output, [10.0,18.0])
+    custom_near(gradients[0], [10.0,18.0])
+    custom_near(gradients[1], [4.0,9.0])
+    assert(left.gradient() == null && right.gradient() == null)
+}
+
+struct Exponential:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor {return inputs[0].exp()}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {return [output.multiply(gradient)]}
+}
+test "Custom backward receives its detached forward output and upstream seed" {
+    var values:float[]=[0.0,1.0]
+    var seed:float[]=[2.0,3.0]
+    var input=Autograd.Variable(Tensor.vector(values))
+    let output=Autograd.apply(Exponential(),[input.value()])
+    var gradients=Autograd.grad(output,[input.value()],seed:Tensor.vector(seed))
+    custom_near(gradients[0],[2.0,3.0*Math.exp(1.0)])
+    assert(input.gradient()==null)
+}

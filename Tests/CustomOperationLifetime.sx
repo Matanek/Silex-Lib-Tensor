@@ -1,0 +1,52 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+class CapturedSquare:Autograd.Operation {
+    private static var live:int = 0
+    private var capture:Tensor
+    init(capture:Tensor) {self.capture=capture;CapturedSquare.live++}
+    drop {CapturedSquare.live--}
+    static func live_count() int {return CapturedSquare.live}
+    func forward(inputs:Tensor[]) Tensor {return inputs[0].multiply(inputs[0])}
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {
+        return [inputs[0].multiply(2.0).multiply(gradient)]
+    }
+}
+func custom_gpu_cycle(device:GPU.Device, consume:bool, functional:bool) {
+    var values:float[]=[2.0,3.0]
+    var input=Autograd.Variable(Tensor.vector(values).to(device))
+    let output=Autograd.apply(CapturedSquare(Tensor.ones([32]).to(device)),[input.value()]).sum()
+    assert(CapturedSquare.live_count()==1)
+    if consume {
+        if functional {
+            var gradients=Autograd.grad(output,[input.value()])
+            assert(gradients[0].is_gpu())
+        } else {output.backward()}
+        assert(CapturedSquare.live_count()==0)
+    }
+}
+test "Custom rule releases captured values after consume or unconsumed drop" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile=Profile(device)
+    let baseline=autograd_performance_statistics()
+    let buffers=profile.snapshot()
+    var iteration=0
+    while iteration<32 {
+        custom_gpu_cycle(device,true,false)
+        custom_gpu_cycle(device,true,true)
+        custom_gpu_cycle(device,false,false)
+        let current=autograd_performance_statistics()
+        assert(CapturedSquare.live_count()==0)
+        assert(current.live_nodes==baseline.live_nodes && current.retained_edges==baseline.retained_edges)
+        assert(profile.snapshot().live_buffers==buffers.live_buffers && profile.snapshot().active_bytes==buffers.active_bytes)
+        iteration++
+    }
+}
+test "Untracked forward releases the unused custom rule immediately" {
+    let output=Autograd.apply(CapturedSquare(Tensor.ones([32])),[Tensor.scalar(2.0)])
+    assert(output.item()==4.0 && CapturedSquare.live_count()==0)
+}

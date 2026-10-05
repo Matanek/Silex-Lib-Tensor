@@ -26,6 +26,7 @@ contract.
 | `topk` | all nine | resident `float32` | float32 values; detached int32 indices |
 | `argmin`, `argmax` | all nine | resident `float32` | no, detached int32 indices |
 | `arange`, `linspace` | int32 / float32, CPU data | explicit transfer | no |
+| `Autograd.apply` | external `float32` rule | resident external `float32` rule | detached contributions validated before accumulation |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |

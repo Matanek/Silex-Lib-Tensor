@@ -25,6 +25,7 @@ silex install Tensor
 - [French design direction](Docs/FR/Direction.md) · [English](Docs/EN/Direction.md)
 - [French training recipes](Docs/FR/Recipes/Training.md) · [English](Docs/EN/Recipes/Training.md)
 - [French functional gradient guide](Docs/FR/Gradients.md) · [English](Docs/EN/Gradients.md)
+- [French custom operation guide](Docs/FR/CustomOperations.md) · [English](Docs/EN/CustomOperations.md)
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
 - [French supervised batch guide](Docs/FR/SupervisedBatches.md) · [English](Docs/EN/SupervisedBatches.md)
@@ -48,5 +49,8 @@ silex install Tensor
 The published baseline requires Silex 0.44.1 or newer. Unreleased supervised
 batches and complete training checkpoints also require the corresponding
 `try` fixes for mutating and static methods in Silex’s Unreleased notes.
+Unreleased custom operations require the hierarchical module composition,
+owner storage visibility, owned protocol call and unused abstract helper fixes
+in those same notes.
 
 Resume the model, optimizer, batch cursor and RNG together using the [complete training checkpoint](Docs/EN/TrainingCheckpoint.md).

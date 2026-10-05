@@ -1,0 +1,24 @@
+use Tensor
+use Tensor.Autograd
+
+struct Square:Autograd.Operation {
+    func forward(inputs:Tensor[]) Tensor {
+        return inputs[0].multiply(inputs[0])
+    }
+    func backward(inputs:Tensor[], output:Tensor, gradient:Tensor) Tensor[] {
+        return [inputs[0].multiply(2.0).multiply(gradient)]
+    }
+}
+func energy(inputs:Tensor[]) Tensor { return Autograd.apply(Square(), inputs).sum() }
+func main() {
+    var values:float[] = [2.0, 3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    energy([input.value()]).backward()
+    if let gradient = input.gradient() {
+        assert(gradient.values()[0] == 4.0 && gradient.values()[1] == 6.0)
+    } else { panic("missing gradient") }
+    let check = Autograd.gradcheck(energy, [Tensor.vector(values)],
+        epsilon:0.001, absolute_tolerance:0.003, relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives == 2)
+    print("Custom gradient: 4, 6; gradcheck: pass")
+}

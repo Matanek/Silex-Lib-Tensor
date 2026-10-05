@@ -26,6 +26,7 @@ contrats de chaque opération.
 | `topk` | les neuf | `float32` résident | valeurs float32 ; indices int32 détachés |
 | `argmin`, `argmax` | les neuf | `float32` résident | non, indices int32 détachés |
 | `arange`, `linspace` | int32 / float32, données CPU | transfert explicite | non |
+| `Autograd.apply` | règle extérieure `float32` | règle extérieure résidente `float32` | contributions détachées validées avant accumulation |
 | `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
 | `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
