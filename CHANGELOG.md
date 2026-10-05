@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add batch-first i/f/g/o LSTM with explicit hidden/cell pair and sequence, four parameters, CPU/Metal oracles, chunking and exact resumption.
+
 - Add batch-first reset-after r/z/n GRU with explicit state and sequence, four named parameters, CPU/Metal oracles, chunking and exact resumption.
 
 - `Neural.TransformerBlock` composes attention, residuals, LayerNorm and MLP with explicit pre/post-norm and reproducible dropout. An external causal model with separate positions, learning and exact CPU/Metal resume is qualified; see the [guide](Docs/EN/Transformer.md).

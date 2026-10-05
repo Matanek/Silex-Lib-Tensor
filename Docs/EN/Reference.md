@@ -17,6 +17,7 @@ contract.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| `Neural.LSTM` | `float32`, rank3 input, rank2 hidden/cell | same, resident computation | input, both states and four parameters; explicit unused time0 inputs |
 | `Neural.GRU` | `float32`, rank3 input, rank2 state | same, resident computation | input, initial state and four parameters; explicit unused time0 inputs |
 | `Neural.TransformerBlock` | `float32` block, rank3 | same, resident computation | input and sixteen named parameters |
 | `Neural.MultiHeadAttention` | `float32` projections, rank3 | same, resident computation | Q/K/V and eight named parameters |

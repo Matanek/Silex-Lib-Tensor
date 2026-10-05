@@ -1,0 +1,104 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use Tensor.Profile
+use STD.File
+use STD.FileSystem
+use STD.Math
+use GFX.GPU
+
+nocopy class LSTMClassifier:Neural.Layer {
+    private var memory:Neural.LSTM
+    private var classifier:Neural.Dense
+    init(seed:int,hidden_features:int = 4) {
+        self.memory=Neural.LSTM("tiny.memory",2,hidden_features,seed)
+        self.classifier=Neural.Dense("tiny.classifier",hidden_features,3,seed+1)
+        self.register_child("memory",self.memory)
+        self.register_child("classifier",self.classifier)
+    }
+    override func forward(input:Tensor) Tensor {return self.classifier.forward(self.memory.forward(input))}
+}
+func lstm_training_source() Data.TensorSource {
+    var samples:float[]=[0.7,0.1,0.3,0.2,0.05,0.1,0.9,0.2,0.4,0.1,0.05,0.1,-0.5,0.4,-0.3,0.6,0.05,0.1,-0.7,0.3,-0.4,0.5,0.05,0.1,0.1,-0.8,-0.2,-0.5,0.05,0.1,0.2,-0.6,-0.1,-0.4,0.05,0.1]
+    var targets:int32[]=[0,0,1,1,2,2]
+    return Data.TensorSource(Tensor(samples,[6,3,2]),Tensor(targets,[6]))
+}
+func lstm_training_step(model:LSTMClassifier,optimizer:Optim.AdamW,cursor:Data.BatchCursor,device:GPU.Device?) {
+    var reading=cursor;var active=model;var optim=optimizer
+    var batch=try reading.next() else error {panic(error)}
+    if batch==null {reading.set_epoch(reading.state().epoch+1);batch=try reading.next() else error {panic(error)}}
+    if var value=batch {
+        if let gpu=device {value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        active.forward(value.input).cross_entropy(value.target,1).backward();optim.step();optim.zero_grad()
+    } else {panic("empty LSTM checkpoint source")}
+}
+func lstm_checkpoint_text(path:str) str {
+    match File.read_text(path,1024*1024) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
+}
+func lstm_checkpoint_remove(path:str) {
+    match FileSystem.remove_file(path) {success=>{};failure(error)=>{panic(error.detail)}}
+}
+func lstm_checkpoint_resume(device:GPU.Device?) {
+    let first="/private/tmp/tensor-lstm-checkpoint-a.sxtc";let second="/private/tmp/tensor-lstm-checkpoint-b.sxtc"
+    var left=LSTMClassifier(seed:17);left.train()
+    var cursor=Data.BatchCursor(lstm_training_source(),2,shuffle:true,seed:7)
+    if let gpu=device {left.to(gpu)}
+    var optimizer=Optim.AdamW(left.parameters(),learning_rate:0.03,weight_decay:0.01)
+    var step=0;while step<3 {lstm_training_step(left,optimizer,cursor,device);step++}
+    try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+    var right=LSTMClassifier(seed:97);right.eval()
+    var resumed_cursor=Data.BatchCursor(lstm_training_source(),2,shuffle:true,seed:7,prefetch:2)
+    var resumed=Optim.AdamW(right.parameters(),learning_rate:1.0)
+    let progress=try Neural.TrainingCheckpoint.load(right,resumed,resumed_cursor,first) else error {panic(error)}
+    assert(progress.step==3 && cursor.state()==resumed_cursor.state() && right.is_training())
+    assert(right.parameters().count()==6)
+    try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,progress,second) else error {panic(error)}
+    assert(lstm_checkpoint_text(first)==lstm_checkpoint_text(second))
+    var incompatible=LSTMClassifier(seed:99,hidden_features:3)
+    var rejected=Optim.AdamW(incompatible.parameters(),learning_rate:1.0)
+    let before=incompatible.parameters()[0].value().detach().values()
+    match Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first) {
+        success(ignored)=>{panic("accepted incompatible LSTM hidden size")}
+        failure(error)=>{assert(error!="")}
+    }
+    let after=incompatible.parameters()[0].value().detach().values()
+    var i=0;while i<before.count() {assert(before[i]==after[i]);i++}
+    if let gpu=device {let moments=resumed.state().to(gpu);right.to(gpu);try resumed.restore(moments) else error {panic(error)}}
+    while step<8 {
+        lstm_training_step(left,optimizer,cursor,device);lstm_training_step(right,resumed,resumed_cursor,device);step++
+        try Neural.TrainingCheckpoint.save(left,optimizer,cursor,Neural.TrainingProgress(step:step),first) else error {panic(error)}
+        try Neural.TrainingCheckpoint.save(right,resumed,resumed_cursor,Neural.TrainingProgress(step:step),second) else error {panic(error)}
+        assert(lstm_checkpoint_text(first)==lstm_checkpoint_text(second))
+    }
+    lstm_checkpoint_remove(first);lstm_checkpoint_remove(second)
+}
+test "LSTM model checkpoint resumes optimizer batches and modes exactly on CPU" {lstm_checkpoint_resume(null)}
+test "LSTM model checkpoint resumes exactly on Metal with explicit state uploads" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_checkpoint_resume(device)
+}
+func lstm_learns(device:GPU.Device?) {
+    var model=LSTMClassifier(seed:17);var source=lstm_training_source();var cursor=Data.BatchCursor(source,6,shuffle:false)
+    var batch=try cursor.next() else error {panic(error)}
+    if var value=batch {
+        if let gpu=device {model.to(gpu);value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        let initial=model.forward(value.input).cross_entropy(value.target,1).detach().cpu().values()[0]
+        var optimizer=Optim.AdamW(model.parameters(),learning_rate:0.04)
+        var step=0
+        while step<40 {
+            var profile:Profile?=null
+            if let gpu=device {profile=Profile(gpu)}
+            model.forward(value.input).cross_entropy(value.target,1).backward();optimizer.step();optimizer.zero_grad()
+            if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+            step++
+        }
+        let final=model.forward(value.input).cross_entropy(value.target,1).detach().cpu().values()[0]
+        print("LSTM synthetic loss: ",initial," -> ",final)
+        assert(Math.is_finite(final) && final<initial*0.25)
+    } else {panic("empty LSTM learning source")}
+}
+test "small LSTM learns asymmetric sequences with identical final tokens on CPU and Metal" {
+    lstm_learns(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_learns(device)}
+}

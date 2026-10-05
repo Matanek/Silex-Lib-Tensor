@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading path
 
+- Train an [LSTM with explicit hidden and cell states](LSTM.md).
 - Train a [GRU with explicitly passed state](GRU.md).
 
 - Train a [small causal pre/post-norm Transformer](Transformer.md).
@@ -423,8 +424,8 @@ afterwards when needed. A checkpoint contains no code, autograd graph, or
 optimizer state.
 
 Custom composition can [derive from Layer](Composition.md) or remain an
-application type or function assembling public Tensor operations. Grouped or transposed convolution and LSTM remain absent.
-The current foundation provides [GRU](GRU.md), [embeddings](Embeddings.md),
+application type or function assembling public Tensor operations. Grouped or transposed convolution remains absent.
+The current foundation provides [GRU](GRU.md), [LSTM](LSTM.md), [embeddings](Embeddings.md),
 [attention](Attention.md) and [Transformer](Transformer.md).
 
 The current foundation adds [dense and NCHW BatchNorm](BatchNorm.md) with named buffers.

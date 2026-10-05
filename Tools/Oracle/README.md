@@ -147,3 +147,12 @@ state seeds, input, initial state and four parameters; all52 derivatives also
 match central Decimal differences at epsilon1e-12. Absolute runtime tolerance2e-6.
 Nonzero recurrent bias distinguishes reset-after from reset-before. Ordinary
 Silex tests consume the committed fixture without Python or network access.
+
+## LSTM explicit state pair
+
+`python3 Tools/Oracle/lstm_decimal.py --check` validates the committed fixture.
+Decimal precision60, packed i/f/g/o columns with separate row-major input and
+recurrent matrices and biases. The analytic VJP combines hidden sequence and
+independent final hidden/cell seeds, checking input, both initial states and
+four parameters. All68 derivatives also match central differences at epsilon1e-12.
+Absolute runtime tolerance2e-6; ordinary Silex tests need no Python or network.

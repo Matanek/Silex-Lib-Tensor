@@ -17,6 +17,8 @@ silex install Tensor
 
 [GRU à état explicite / explicit-state GRU](Docs/FR/GRU.md) · [English](Docs/EN/GRU.md).
 
+[LSTM à paire d’états / explicit-pair LSTM](Docs/FR/LSTM.md) · [English](Docs/EN/LSTM.md).
+
 ## Documentation
 
 - [Release notes](CHANGELOG.md) · [French](CHANGELOG.fr.md)

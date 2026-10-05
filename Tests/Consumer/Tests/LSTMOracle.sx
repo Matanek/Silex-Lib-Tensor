@@ -1,0 +1,53 @@
+// Generated independent Decimal60 LSTM forward and seven VJP fixture.
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+
+func lstm_oracle_near(actual:Tensor,expected:float[]) {
+    let data=actual.detach().cpu().values();assert(data.count()==expected.count())
+    var i=0;while i<data.count() {assert(Math.is_finite(data[i]) && Math.abs(data[i]-expected[i])<0.000002);i++}
+}
+func decimal_lstm(device:GPU.Device?) {
+    var model=Neural.LSTM("memory",2,2,seed:11)
+    var parameters=model.parameters();assert(parameters.count()==4)
+    assert(parameters[0].name()=="memory.input_weight");var p0=parameters[0]
+    var data0:float[]=[-0.4,-0.1,0.2,0.5,-0.3,0.0,0.3,-0.5,0.3,-0.5,-0.2,0.1,0.4,-0.4,-0.1,0.2];p0.replace(Tensor(data0,[2, 8]))
+    assert(parameters[1].name()=="memory.recurrent_weight");var p1=parameters[1]
+    var data1:float[]=[-0.1,0.2,0.5,-0.3,0.0,0.3,-0.5,-0.2,-0.5,-0.2,0.1,0.4,-0.4,-0.1,0.2,0.5];p1.replace(Tensor(data1,[2, 8]))
+    assert(parameters[2].name()=="memory.input_bias");var p2=parameters[2]
+    var data2:float[]=[0.1,-0.2,0.3,-0.1,0.2,-0.3,0.4,-0.2];p2.replace(Tensor(data2,[8]))
+    assert(parameters[3].name()=="memory.recurrent_bias");var p3=parameters[3]
+    var data3:float[]=[-0.2,0.3,-0.1,0.2,-0.4,0.1,-0.3,0.2];p3.replace(Tensor(data3,[8]))
+    var xs:float[]=[-0.6,-0.3,-0.1,0.2,0.4,-0.6,0.5,-0.5,-0.3,0.0,0.2,0.5];var xs_tensor=Tensor(xs,[2, 3, 2])
+    var hs:float[]=[0.15,-0.25,-0.35,0.05];var hs_tensor=Tensor(hs,[2, 2])
+    var cs:float[]=[-0.2,0.3,0.1,-0.4];var cs_tensor=Tensor(cs,[2, 2])
+    var ss:float[]=[-0.4,0.1,-0.1,0.4,0.2,-0.2,0.3,-0.1,-0.3,0.2,0.0,-0.4];var ss_tensor=Tensor(ss,[2, 3, 2])
+    var sh:float[]=[0.3,-0.7,-0.4,0.6];var sh_tensor=Tensor(sh,[2, 2])
+    var sc:float[]=[-0.2,0.5,0.7,-0.1];var sc_tensor=Tensor(sc,[2, 2])
+    if let gpu=device {model.to(gpu);xs_tensor=xs_tensor.to(gpu);hs_tensor=hs_tensor.to(gpu);cs_tensor=cs_tensor.to(gpu);ss_tensor=ss_tensor.to(gpu);sh_tensor=sh_tensor.to(gpu);sc_tensor=sc_tensor.to(gpu)}
+    var input=Autograd.Variable(xs_tensor);var initial_h=Autograd.Variable(hs_tensor);var initial_c=Autograd.Variable(cs_tensor)
+    let result=model.unroll(input.value(),initial_state:Neural.LSTMState(hidden:initial_h.value(),cell:initial_c.value()),return_sequence:true)
+    var inputs:Tensor[]=[input.value(),initial_h.value(),initial_c.value()];for parameter in parameters {inputs.append(parameter.value())}
+    var loss=result.state.hidden.multiply(sh_tensor).sum().add(result.state.cell.multiply(sc_tensor).sum())
+    if let sequence=result.sequence {
+        lstm_oracle_near(sequence,[-0.059469077975184775,0.060315853592837164,-0.06526686233251762,-0.04520824758409273,-0.15226996772504683,-0.013783423441025858,-0.08982532649789031,-0.12824403501735449,-0.05395960220053451,-0.13295926599722752,-0.031365182826838194,-0.150185820011557])
+        loss=loss.add(sequence.multiply(ss_tensor).sum())
+    } else {panic("expected LSTM sequence")}
+    var gradients=Autograd.grad(loss,inputs)
+    lstm_oracle_near(result.state.hidden,[-0.15226996772504683,-0.013783423441025858,-0.031365182826838194,-0.150185820011557])
+    lstm_oracle_near(result.state.cell,[-0.2711234440474508,-0.03295904422248045,-0.059522480916152545,-0.3194089585529339])
+    lstm_oracle_near(gradients[0],[0.03627968864724056,-0.08035053356209185,0.009540727559426556,-0.038984754979647734,-0.017990007318963244,-0.018938866211649842,-0.013842581751381592,0.026850319687047697,-0.012099929378141819,0.01245744425030644,-0.06749910595172069,0.1000721974197056])
+    lstm_oracle_near(gradients[1],[0.02715148928251517,0.0327525910336158,0.0033478078688886,-0.006928547630502465])
+    lstm_oracle_near(gradients[2],[-0.08836949073655884,0.07746093590118228,0.1317025817863572,-0.018774125565391358])
+    lstm_oracle_near(gradients[3],[-0.01836925681516585,0.0038507917024244126,-0.004163403195577258,-0.007565171875871279,0.12791072984788723,-0.06673099198585057,-0.026716407293851597,0.005336475921431674,0.018372136140391352,-0.004179400899623978,-0.010654589243063887,-0.0020932220970749774,0.10562926574285311,-0.0468395904661716,0.024343496481052804,-0.01896831050161209])
+    lstm_oracle_near(gradients[4],[0.011113516273142922,0.0009068674611921407,0.0003475500736832693,0.0009507303812518872,-0.056697171523558444,0.009317114068579005,0.006343830699800094,-0.0014033047319833485,-0.0011995407178341288,-0.0009787306717445408,0.000583521001440405,-0.002423543036228703,-0.015645771964774572,-0.02696368387099761,-0.0037547467603593746,0.0017937033318779073])
+    lstm_oracle_near(gradients[5],[-0.037972046963110045,-0.01988351649615424,-0.00524921825331811,0.01985672598865232,0.308498928481781,0.3080816963409338,-0.01468172161763399,-0.01057459411552457])
+    lstm_oracle_near(gradients[6],[-0.037972046963110045,-0.01988351649615424,-0.00524921825331811,0.01985672598865232,0.308498928481781,0.3080816963409338,-0.01468172161763399,-0.01057459411552457])
+}
+test "LSTM matches Decimal sequence hidden cell and seven VJPs on CPU" {decimal_lstm(null)}
+test "LSTM matches Decimal on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));decimal_lstm(device)
+}

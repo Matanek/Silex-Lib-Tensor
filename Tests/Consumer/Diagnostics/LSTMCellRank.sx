@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.LSTM("memory",2,2,seed:7)
+    var state=Tensor.zeros([1,1,2]);model.unroll(Tensor.zeros([1,2,2]),initial_state:Neural.LSTMState(hidden:Tensor.zeros([1,2]),cell:state))
+}

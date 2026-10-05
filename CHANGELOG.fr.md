@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Ajoute LSTM batch-first i/f/g/o avec paire hidden/cell et séquence explicites, quatre paramètres, oracles CPU/Metal, segmentation et reprise exacte.
+
 - Ajoute GRU batch-first reset-after r/z/n avec état et séquence explicites, quatre paramètres nommés, oracles CPU/Metal, segmentation et reprise exacte.
 
 - `Neural.TransformerBlock` compose attention, résidus, LayerNorm et MLP avec pre/post-norm explicite et dropout reproductible. Modèle causal externe avec positions séparées, apprentissage et reprise exacte CPU/Metal qualifiés ; voir le [guide](Docs/FR/Transformer.md).

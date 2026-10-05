@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Entraînez une [LSTM avec états caché et cellule explicites](LSTM.md).
 - Entraînez une [GRU à état transmis explicitement](GRU.md).
 
 - Entraînez un [petit Transformer causal pre/post-norm](Transformer.md).
@@ -433,8 +434,8 @@ lecture ; appelez ensuite explicitement `model.to(device)` si nécessaire. Le
 checkpoint ne contient ni code, ni graphe autograd, ni état d'optimiseur.
 
 La composition personnalisée peut [dériver de Layer](Composition.md) ou rester
-un type ou une fonction applicative qui assemble les opérations Tensor publiques. Les convolutions groupées ou transposées et la LSTM restent absentes.
-Le socle courant fournit [GRU](GRU.md), [embeddings](Embeddings.md),
+un type ou une fonction applicative qui assemble les opérations Tensor publiques. Les convolutions groupées ou transposées restent absentes.
+Le socle courant fournit [GRU](GRU.md), [LSTM](LSTM.md), [embeddings](Embeddings.md),
 [attention](Attention.md) et [Transformer](Transformer.md).
 Le socle courant ajoute [BatchNorm dense et NCHW](BatchNorm.md) avec buffers nommés.
 

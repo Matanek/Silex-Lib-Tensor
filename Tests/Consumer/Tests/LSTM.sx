@@ -1,0 +1,144 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func lstm_near(actual:Tensor,expected:Tensor,tolerance:float = 0.000002) {
+    let left=actual.detach().cpu().values();let right=expected.detach().cpu().values();assert(left.count()==right.count())
+    var i=0;while i<left.count() {assert(Math.is_finite(left[i]) && Math.abs(left[i]-right[i])<tolerance);i++}
+}
+func lstm_inputs(model:Neural.LSTM,input:Tensor,hidden:Tensor,cell:Tensor) Tensor[] {
+    var result:Tensor[]=[input,hidden,cell];for parameter in model.parameters() {result.append(parameter.value())}
+    return result
+}
+func lstm_segments(device:GPU.Device?) {
+    var model=Neural.LSTM("memory",2,3,seed:19)
+    var x=Tensor.linspace(-0.6,0.8,16).reshape([2,4,2]);var h=Tensor.linspace(-0.3,0.4,6).reshape([2,3]);var c=Tensor.linspace(0.2,-0.5,6).reshape([2,3])
+    var seed=Tensor.linspace(-0.4,0.7,24).reshape([2,4,3]);var sh=Tensor.linspace(0.2,-0.5,6).reshape([2,3]);var sc=Tensor.linspace(-0.1,0.6,6).reshape([2,3])
+    if let gpu=device {model.to(gpu);x=x.to(gpu);h=h.to(gpu);c=c.to(gpu);seed=seed.to(gpu);sh=sh.to(gpu);sc=sc.to(gpu)}
+    var input=Autograd.Variable(x);var hidden=Autograd.Variable(h);var cell=Autograd.Variable(c)
+    let initial=Neural.LSTMState(hidden:hidden.value(),cell:cell.value())
+    let whole=model.unroll(input.value(),initial_state:initial,return_sequence:true)
+    var reference_loss=whole.state.hidden.multiply(sh).sum().add(whole.state.cell.multiply(sc).sum())
+    if let sequence=whole.sequence {reference_loss=reference_loss.add(sequence.multiply(seed).sum())} else {panic("missing whole sequence")}
+    var reference=Autograd.grad(reference_loss,lstm_inputs(model,input.value(),hidden.value(),cell.value()))
+    let first=model.unroll(input.value().narrow(1,0,1),initial_state:initial,return_sequence:true)
+    let second=model.unroll(input.value().narrow(1,1,3),initial_state:first.state,return_sequence:true)
+    var loss=second.state.hidden.multiply(sh).sum().add(second.state.cell.multiply(sc).sum())
+    if let prefix=first.sequence {
+        if let suffix=second.sequence {
+            let sequence=Tensor.concatenate([prefix,suffix],1)
+            if let expected=whole.sequence {lstm_near(sequence,expected)} else {panic("missing reference sequence")}
+            loss=loss.add(sequence.multiply(seed).sum());lstm_near(second.state.hidden,sequence.select(1,3))
+        } else {panic("missing suffix sequence")}
+    } else {panic("missing prefix sequence")}
+    var profile:Profile?=null;if let gpu=device {profile=Profile(gpu)}
+    var segmented=Autograd.grad(loss,lstm_inputs(model,input.value(),hidden.value(),cell.value()))
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    var i=0;while i<reference.count() {lstm_near(segmented[i],reference[i]);i++}
+    lstm_near(second.state.hidden,whole.state.hidden);lstm_near(second.state.cell,whole.state.cell)
+    let defaulted=model.unroll(x);assert(defaulted.sequence==null);lstm_near(defaulted.state.hidden,model.forward(x))
+    var zero=Tensor.zeros([2,3]);if let gpu=device {zero=zero.to(gpu)}
+    let explicit=model.unroll(x,initial_state:Neural.LSTMState(hidden:zero,cell:zero))
+    lstm_near(explicit.state.hidden,defaulted.state.hidden);lstm_near(explicit.state.cell,defaulted.state.cell)
+}
+test "LSTM pair state preserves full sequence and seven gradients across chunks on CPU" {lstm_segments(null)}
+test "LSTM hidden and cell preserve chunks and gradients on Metal without transfer" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_segments(device)
+}
+func lstm_jacobian(inputs:Tensor[]) Tensor {
+    var model=Neural.LSTM("memory",2,2,seed:23)
+    let result=model.unroll(inputs[0],initial_state:Neural.LSTMState(hidden:inputs[1],cell:inputs[2]),return_sequence:true)
+    if let sequence=result.sequence {return Tensor.concatenate([sequence.flatten(),result.state.hidden.flatten(),result.state.cell.flatten()],0)}
+    panic("missing Jacobian sequence")
+}
+test "LSTM sequence and pair state Jacobian includes both initial states" {
+    var xs:float[]=[0.2,-0.3,0.5,0.1];var hs:float[]=[-0.1,0.4];var cs:float[]=[0.3,-0.2]
+    let check=Autograd.gradcheck(lstm_jacobian,[Tensor(xs,[1,2,2]),Tensor(hs,[1,2]),Tensor(cs,[1,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==64)
+}
+func lstm_alias(inputs:Tensor[]) Tensor {
+    var model=Neural.LSTM("memory",2,2,seed:23);let initial=inputs[0].select(1,0)
+    let result=model.unroll(inputs[0],initial_state:Neural.LSTMState(hidden:initial,cell:initial),return_sequence:true)
+    if let sequence=result.sequence {return Tensor.concatenate([sequence.flatten(),result.state.hidden.flatten(),result.state.cell.flatten()],0)}
+    panic("missing alias sequence")
+}
+test "LSTM initial hidden and cell may share one differentiable input view" {
+    var xs:float[]=[0.2,-0.3,0.5,0.1]
+    let check=Autograd.gradcheck(lstm_alias,[Tensor(xs,[1,2,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==32)
+}
+func lstm_empty(device:GPU.Device?) {
+    var model=Neural.LSTM("memory",2,3,seed:19)
+    var x=Tensor.zeros([2,0,2]);var h=Tensor.linspace(-0.3,0.4,6).reshape([2,3]);var c=Tensor.linspace(0.2,-0.5,6).reshape([2,3]);var empty=Tensor.zeros([0,3,2])
+    if let gpu=device {model.to(gpu);x=x.to(gpu);h=h.to(gpu);c=c.to(gpu);empty=empty.to(gpu)}
+    var input=Autograd.Variable(x);var hidden=Autograd.Variable(h);var cell=Autograd.Variable(c)
+    let result=model.unroll(input.value(),initial_state:Neural.LSTMState(hidden:hidden.value(),cell:cell.value()),return_sequence:true)
+    lstm_near(result.state.hidden,h);lstm_near(result.state.cell,c)
+    if let sequence=result.sequence {assert(sequence.rank()==3 && sequence.shape()[0]==2 && sequence.shape()[1]==0 && sequence.shape()[2]==3)} else {panic("missing empty sequence")}
+    result.state.hidden.sum().add(result.state.cell.sum()).backward()
+    assert(input.gradient()==null);for parameter in model.parameters() {assert(parameter.gradient()==null)}
+    if let gradient=hidden.gradient() {lstm_near(gradient,Tensor.ones([2,3]))} else {panic("missing hidden state gradient")}
+    if let gradient=cell.gradient() {lstm_near(gradient,Tensor.ones([2,3]))} else {panic("missing cell state gradient")}
+    let defaulted=model.unroll(x,return_sequence:true)
+    var requested:Tensor[]=[input.value()];for parameter in model.parameters() {requested.append(parameter.value())}
+    var gradients=Autograd.grad(defaulted.state.hidden.sum().add(defaulted.state.cell.sum()),requested,allow_unused:true)
+    for gradient in gradients {assert(gradient.abs().sum().cpu().values()[0]==0.0)}
+    var empty_input=Autograd.Variable(empty);let batch=model.unroll(empty_input.value(),return_sequence:true)
+    if let sequence=batch.sequence {assert(sequence.shape()[0]==0 && sequence.shape()[1]==3 && sequence.shape()[2]==3)} else {panic("missing empty batch sequence")}
+    batch.state.hidden.sum().add(batch.state.cell.sum()).backward()
+    if let gradient=empty_input.gradient() {assert(gradient.count()==0)} else {panic("missing empty batch gradient")}
+    for parameter in model.parameters() {if let gradient=parameter.gradient() {assert(gradient.abs().sum().cpu().values()[0]==0.0)} else {panic("missing parameter gradient")}}
+}
+test "LSTM empty time preserves both states and leaves unused inputs unconnected on CPU and Metal" {
+    lstm_empty(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_empty(device)}
+}
+func lstm_strided(device:GPU.Device?) {
+    var model=Neural.LSTM("memory",2,3,seed:19)
+    var source=Tensor.linspace(-0.6,0.8,16).reshape([4,2,2]);var h=Tensor.linspace(-0.3,0.4,6).reshape([3,2]);var c=Tensor.linspace(0.2,-0.5,6).reshape([3,2])
+    if let gpu=device {model.to(gpu);source=source.to(gpu);h=h.to(gpu);c=c.to(gpu)}
+    var input=Autograd.Variable(source);var hidden=Autograd.Variable(h);var cell=Autograd.Variable(c)
+    let actual=model.unroll(input.value().permute([1,0,2]),initial_state:Neural.LSTMState(hidden:hidden.value().transpose(),cell:cell.value().transpose()),return_sequence:true)
+    var loss=actual.state.hidden.sum().add(actual.state.cell.sum())
+    if let sequence=actual.sequence {loss=loss.add(sequence.sum())} else {panic("missing strided sequence")}
+    var actual_gradients=Autograd.grad(loss,lstm_inputs(model,input.value(),hidden.value(),cell.value()))
+    var dense_input=Autograd.Variable(source);var dense_hidden=Autograd.Variable(h);var dense_cell=Autograd.Variable(c)
+    let expected=model.unroll(dense_input.value().permute([1,0,2]).contiguous(),initial_state:Neural.LSTMState(hidden:dense_hidden.value().transpose().contiguous(),cell:dense_cell.value().transpose().contiguous()),return_sequence:true)
+    var reference=expected.state.hidden.sum().add(expected.state.cell.sum())
+    if let sequence=expected.sequence {reference=reference.add(sequence.sum())} else {panic("missing dense sequence")}
+    var expected_gradients=Autograd.grad(reference,lstm_inputs(model,dense_input.value(),dense_hidden.value(),dense_cell.value()))
+    lstm_near(actual.state.hidden,expected.state.hidden);lstm_near(actual.state.cell,expected.state.cell)
+    if let sequence=actual.sequence {if let dense=expected.sequence {lstm_near(sequence,dense)} else {panic("missing dense sequence")}} else {panic("missing strided sequence")}
+    var i=0;while i<actual_gradients.count() {lstm_near(actual_gradients[i],expected_gradients[i]);i++}
+}
+test "LSTM accepts strided input and both initial states with matching seven VJPs on CPU and Metal" {
+    lstm_strided(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_strided(device)}
+}
+func lstm_shared(device:GPU.Device?) {
+    var model=Neural.LSTM("memory",2,2,seed:19);var layers:Neural.Layer[]=[model,model];var shared=Neural.Sequential(layers)
+    assert(shared.parameters().count()==4 && shared.children().count()==1)
+    var x=Tensor.linspace(-0.6,0.8,8).reshape([2,2,2]);if let gpu=device {shared.to(gpu);x=x.to(gpu)}
+    shared.eval();assert(!model.is_training());shared.train();assert(model.is_training())
+    var input=Autograd.Variable(x);let first=model.forward(input.value());let second=model.forward(input.value());first.add(second).sum().backward()
+    var expected:Tensor[]=[];for parameter in model.parameters() {if let gradient=parameter.gradient() {expected.append(parameter.value().detach().subtract(gradient.multiply(0.01)))} else {panic("missing shared gradient")}}
+    var optimizer=Optim.SGD(shared.parameters(),learning_rate:0.01);optimizer.step();optimizer.zero_grad()
+    var i=0;for parameter in model.parameters() {lstm_near(parameter.value(),expected[i]);i++}
+    shared.freeze();for parameter in shared.parameters() {assert(!parameter.is_trainable())}
+    var frozen_input=Autograd.Variable(x);model.forward(frozen_input.value()).sum().backward()
+    assert(frozen_input.gradient()!=null);for parameter in model.parameters() {assert(parameter.gradient()==null)}
+    shared.unfreeze();for parameter in shared.parameters() {assert(parameter.is_trainable())}
+}
+test "shared LSTM has four unique parameters one update and recursive mode and freeze on CPU and Metal" {
+    lstm_shared(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));lstm_shared(device)}
+}
+test "LSTM initialization is reproducible including maximum uint32 seed" {
+    var left=Neural.LSTM("memory",2,3,seed:4294967295);var right=Neural.LSTM("memory",2,3,seed:4294967295)
+    var i=0;for parameter in left.parameters() {lstm_near(parameter.value(),right.parameters()[i].value(),tolerance:0.0000001);i++}
+}

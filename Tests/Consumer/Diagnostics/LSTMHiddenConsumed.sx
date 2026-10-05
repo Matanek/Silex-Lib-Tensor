@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.LSTM("memory",2,2,seed:7)
+    var variable=Autograd.Variable(Tensor.zeros([1,2]));let state=variable.value().add(1.0);state.sum().backward();model.unroll(Tensor.zeros([1,2,2]),initial_state:Neural.LSTMState(hidden:state,cell:Tensor.zeros([1,2]))).state.hidden.sum().backward()
+}

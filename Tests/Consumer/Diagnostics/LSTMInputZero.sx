@@ -1,0 +1,8 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.LSTM("memory",0,2,seed:7)
+}

@@ -1,0 +1,52 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func lstm_graph(device:GPU.Device,mode:int,return_sequence:bool,with_initial:bool) {
+    var model=Neural.LSTM("memory",2,3,seed:13);model.to(device)
+    var input=Autograd.Variable(Tensor.linspace(-0.5,0.75,12).reshape([2,3,2]).to(device))
+    var hidden=Autograd.Variable(Tensor.linspace(-0.3,0.4,6).reshape([2,3]).to(device))
+    var cell=Autograd.Variable(Tensor.linspace(0.2,-0.5,6).reshape([2,3]).to(device))
+    var requested:Neural.LSTMState?=null
+    if with_initial {requested=Neural.LSTMState(hidden:hidden.value(),cell:cell.value())}
+    let result=model.unroll(input.value(),initial_state:requested,return_sequence:return_sequence)
+    var output=result.state.hidden.sum().add(result.state.cell.sum())
+    if let sequence=result.sequence {output=output.add(sequence.sum())}
+    if mode==0 {output.backward()}
+    elif mode==1 {var gradients=Autograd.grad(output,[input.value()]);assert(gradients.count()==1)}
+}
+// Bounds are the retained-ancestor worst case, measured with early fence release
+// disabled; production Storage is unchanged. First-cycle peaks are timing-dependent.
+test "LSTM optional graphs stay within retained-ancestor bounds and release every resource" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics();var profile=Profile(device);var cycle=0;var peak=0
+    var bounds:int[]=[10440,10856,10440,10856,2532,2660,10440,10856,10440,10856,2580,2708]
+    var allocations:int[]=[235,247,235,247,52,56,235,247,235,247,54,58]
+    while cycle<16 {
+        var index=0
+        for with_initial in [true,false] {
+            var mode=0
+            while mode<3 {
+                for sequence in [false,true] {
+                    profile.reset()
+                    lstm_graph(device,mode,sequence,with_initial)
+                    let stats=profile.snapshot()
+                    assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+                    assert(stats.buffer_allocations==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
+                    assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+                    if stats.peak_bytes>peak {peak=stats.peak_bytes}
+                    index++
+                }
+                mode++
+            }
+        }
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+    print("LSTM lifetime peak bytes: ",peak," retained-ancestor bound: 10856")
+}

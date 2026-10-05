@@ -1,0 +1,10 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var model=Neural.LSTM("memory",2,2,seed:7)
+    model.to(device);model.unroll(Tensor.zeros([1,0,2]))
+}
