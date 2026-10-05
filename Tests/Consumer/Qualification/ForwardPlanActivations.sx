@@ -1,0 +1,11 @@
+use ForwardPlanActivations as Checks
+use GFX.GPU
+use Tensor.Profile
+func main() {
+    assert(GPU.Device.is_supported())
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile=Profile(device)
+    Checks.qualify(device)
+    let count=profile.snapshot()
+    assert(count.live_buffers==0 && count.in_use_buffers==0 && count.cached_buffers==0 && count.allocated_bytes==0)
+}

@@ -439,6 +439,48 @@ nocopy class GPUStorage {
     func same_device(other:@GPU.Device) bool { return self.current_device == other }
     func same_device(other:@GPUStorage) bool { return self.current_device == other.current_device }
 
+    module func forward_device() GPU.Device { return self.current_device }
+    module func forward_commands() ForwardCommands { return ForwardCommands(self.current_device,self.kernel_cache) }
+    module func forward_completion(completion:GPU.Fence) { self.completion=completion }
+
+    module func forward_pipeline(rule:ForwardRule) GPU.ComputePipeline {
+        return match rule {
+            matrix_multiply => self.kernel_cache.linear()
+            binary(operation) => self.kernel_cache.binary()
+            mean(axes) => self.kernel_cache.reduction()
+            else => self.kernel_cache.elementwise()
+        }
+    }
+
+    module func encode_forward(batch:ForwardCommands,other:GPUStorage?,kernel:ForwardKernel,metadata:uint8[]) GPUStorage {
+        let count=kernel.output.count()
+        assert(count>0)
+        var output=GPUStorage.allocate_buffer(self.current_device,checked_byte_count(count,4),"Tensor prepared forward")
+        var pipeline:GPU.ComputePipeline?=kernel.pipeline
+        var commands=batch.recording()
+        var bytes=metadata
+        commands.compute_uniform(0,@bytes[0:bytes.count()])
+        match kernel.rule {
+            unary(operation) => { commands.compute_uniform(1,0.0) }
+            shifted_square_root(offset) => { commands.compute_uniform(1,offset) }
+            else => {}
+        }
+        var writable:GPU.WritableBuffer[]=[GPU.WritableBuffer(buffer:output)]
+        var compute=commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
+        if var prepared=pipeline { compute.bind(prepared) }
+        else { panic("Tensor prepared forward has no pipeline") }
+        self.kernel_cache.profile_state.bind_pipeline()
+        compute.storage_buffer(0,self.required_buffer())
+        if var right=other { compute.storage_buffer(1,right.required_buffer()) }
+        compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
+        compute.finish()
+        var result=GPUStorage(self.current_device,self.kernel_cache,output,null,null,self,other,self.current_dtype,count)
+        batch.retain(result)
+        return result
+    }
+
     static func upload(device:GPU.Device, values:bool[]) GPUStorage {
         if values.is_empty() { return GPUStorage.empty(device, DType.boolean()) }
         var bytes:uint8[] = []

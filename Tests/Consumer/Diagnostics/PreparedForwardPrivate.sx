@@ -1,0 +1,3 @@
+use Tensor.PreparedForward
+func consume(value:PreparedForward) {}
+func main() {}

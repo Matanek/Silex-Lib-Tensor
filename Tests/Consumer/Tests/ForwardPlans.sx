@@ -1,0 +1,341 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func near(actual:Tensor, expected:Tensor, tolerance:float=0.00002) {
+    let a=actual.detach().cpu().values()
+    let b=expected.detach().cpu().values()
+    assert(a.count()==b.count())
+    var i=0
+    while i<a.count() {
+        if !Math.is_finite(a[i]) || Math.abs(a[i]-b[i])>tolerance {print("PLAN_MISMATCH index=$(i) actual=$(a[i]) expected=$(b[i])")}
+        assert(Math.is_finite(a[i]) && Math.abs(a[i]-b[i])<=tolerance)
+        i++
+    }
+}
+
+func prepare(model:Neural.Layer,input:Tensor) {
+    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+}
+func reject(model:Neural.Layer,input:Tensor) {
+    match model.prepare_forward(input) {failure(reason)=>{assert(reason!="")};success=>{panic("Expected prepared forward rejection")}}
+}
+func mlp() Neural.Sequential {
+    var layers:Neural.Layer[]=[Neural.Dense("hidden",2,4,101),Neural.Activation.tanh(),Neural.Dense("output",4,2,102)]
+    return Neural.Sequential(layers)
+}
+
+nocopy class EffectfulLayer:Neural.Layer {
+    private var calls:int=0
+    init() {}
+    override func forward(input:Tensor) Tensor {self.calls++;return input}
+    override func children() Neural.Layer[] {self.calls++;return []}
+    override func parameters() Neural.Parameter[] {self.calls++;return []}
+    func count() int {return self.calls}
+    func reset() {self.calls=0}
+}
+nocopy class EffectfulDense:Neural.Dense {
+    private var calls:int=0
+    init():super("effectful",2,2,13) {}
+    override func forward(input:Tensor) Tensor {self.calls++;return input}
+    override func children() Neural.Layer[] {self.calls++;return []}
+    override func parameters() Neural.Parameter[] {self.calls++;return []}
+    func count() int {return self.calls}
+    func reset() {self.calls=0}
+}
+
+public func qualify_closed_rejections() {
+    var unknown=EffectfulLayer()
+    var descendant=EffectfulDense()
+    descendant.reset()
+    let input=Tensor.ones([2,2])
+    reject(unknown,input)
+    reject(descendant,input)
+    assert(unknown.count()==0 && descendant.count()==0)
+    var children:Neural.Layer[]=[Neural.Dense("known",2,2,7),unknown]
+    var nested=Neural.Sequential(children)
+    unknown.reset()
+    reject(nested,input)
+    assert(unknown.count()==0)
+    var known=mlp()
+    var before=known.parameters()
+    let expected=known.forward(input)
+    reject(known,input)
+    near(known.forward(input),expected,0.0)
+    var after=known.parameters()
+    assert(before.count()==after.count())
+    var i=0
+    while i<before.count() {assert(before[i]==after[i] && after[i].gradient()==null);i++}
+    assert(known.forward_plan_statistics().captures==0 && known.forward_plan_statistics().rejections==1)
+    print("PLAN_CLOSED_REJECTIONS status=pass unknown_hooks=0 subclass_hooks=0 nested_hooks=0 cpu_state=unchanged")
+}
+
+public func qualify_replay(device:GPU.Device) {
+    var resident=mlp()
+    var reference=mlp()
+    resident.to(device)
+    var data:float[]=[0.125,-0.25,0.5,-0.75]
+    var source=Autograd.Variable(Tensor(data,[2,2]).to(device))
+    var cpu_source=Autograd.Variable(Tensor(data,[2,2]))
+    let eager=resident.forward(source.value())
+    var profile=Profile(device)
+    prepare(resident,source.value())
+    let capture=profile.snapshot()
+    assert(capture.compute_passes==0 && capture.submissions==0 && capture.uploads==0 && capture.downloads==0)
+    profile.reset()
+    let output=resident.forward(source.value())
+    let counters=profile.snapshot()
+    assert(counters.compute_passes==5 && counters.pipeline_bindings==5 && counters.dispatches==5)
+    assert(counters.submissions==1 && counters.fence_creations==1 && counters.pipeline_compilations==0)
+    assert(counters.buffer_allocations+counters.buffer_reuses==5 && counters.uploads==0 && counters.downloads==0)
+    near(output,eager,0.0)
+    let expected=reference.forward(cpu_source.value())
+    near(output,expected)
+    var targets:Tensor[]=[source.value()]
+    var cpu_targets:Tensor[]=[cpu_source.value()]
+    var parameters=resident.parameters()
+    var cpu_parameters=reference.parameters()
+    for var parameter in parameters {targets.append(parameter.value())}
+    for var parameter in cpu_parameters {cpu_targets.append(parameter.value())}
+    var gradients=Autograd.grad(output,targets,seed:Tensor.ones([2,2]).to(device))
+    var cpu_gradients=Autograd.grad(expected,cpu_targets,seed:Tensor.ones([2,2]))
+    var i=0
+    while i<gradients.count() {near(gradients[i],cpu_gradients[i]);i++}
+    var saved:Tensor[]=[]
+    var step=0
+    while step<1024 {
+        let value=resident.forward(source.value())
+        if step%256==0 {saved.append(value)}
+        step++
+    }
+    // Same shape, different strides and value; stable Parameter handles must remain current.
+    parameters[0].replace(parameters[0].value().detach().multiply(0.5).transpose().contiguous().transpose())
+    cpu_parameters[0].replace(cpu_parameters[0].value().detach().multiply(0.5).transpose().contiguous().transpose())
+    var bias:float[]=[9.0,8.0,7.0,6.0,0.25,-0.5,0.75,-1.0]
+    parameters[1].replace(Tensor.vector(bias).to(device).narrow(0,4,4))
+    cpu_parameters[1].replace(Tensor.vector(bias).narrow(0,4,4))
+    near(resident.forward(source.value()),reference.forward(cpu_source.value()))
+    assert(resident.forward_plan_statistics().captures==1)
+    for value in saved {near(value,expected)}
+    prepare(resident,source.value())
+    assert(resident.forward_plan_statistics().captures==1)
+    resident.freeze()
+    reference.freeze()
+    near(resident.forward(source.value().detach()),reference.forward(cpu_source.value().detach()))
+    resident.forward(source.value()).sum().backward()
+    reference.forward(cpu_source.value()).sum().backward()
+    for var parameter in parameters {assert(parameter.gradient()==null)}
+    if let gradient=source.gradient() {
+        if let expected_gradient=cpu_source.gradient() {near(gradient,expected_gradient)}
+        else {panic("Missing frozen CPU input gradient")}
+    } else {panic("Frozen plan lost its input gradient")}
+    resident.unfreeze()
+    reference.unfreeze()
+    resident.forward(source.value().detach()).sum().backward()
+    reference.forward(cpu_source.value().detach()).sum().backward()
+    i=0
+    for var parameter in parameters {
+        if let gradient=parameter.gradient() {
+            if let expected_gradient=cpu_parameters[i].gradient() {near(gradient,expected_gradient)}
+            else {panic("Missing unfrozen CPU parameter gradient")}
+        } else {panic("Unfrozen plan lost its parameter gradient")}
+        i++
+    }
+    resident.zero_grad()
+    reference.zero_grad()
+    near(source.value(),cpu_source.value(),0.0)
+    for var parameter in parameters {assert(parameter.gradient()==null)}
+    resident.clear_forward_plan()
+    assert(resident.forward_plan_statistics().cached_plans==0)
+    near(resident.forward(source.value()),reference.forward(cpu_source.value()))
+    print("PLAN_REPLAY status=pass gradients=5 steps=1024 retained=4 replacement=strided_offset captures=1 tracking=dynamic clear=eager")
+}
+
+public func qualify_guards(device:GPU.Device,other:GPU.Device) {
+    var model=mlp()
+    model.to(device)
+    let input=Tensor.full([2,2],0.25).to(device)
+    prepare(model,input)
+    var parameters=model.parameters()
+    let first=parameters[0].value()
+    var profile=Profile(device)
+    reject(model,Tensor.ones([2,3]).to(device))
+    reject(model,Tensor.zeros([0,2]).to(device))
+    reject(model,Tensor.ones([1,1,1,1,1,2]).to(device))
+    var flags:bool[]=[true,false,true,false]
+    reject(model,Tensor(flags,[2,2]).to(device))
+    assert(model.forward_plan_statistics().captures==1 && model.forward_plan_statistics().cached_plans==1)
+    near(parameters[0].value(),first,0.0)
+    let different=Tensor.ones([3,2]).to(device)
+    let actual=model.forward(different)
+    let reason=model.forward_plan_statistics().last_fallback
+    assert(reason=="input signature changed" && model.forward_plan_statistics().fallbacks==1)
+    model.clear_forward_plan()
+    near(actual,model.forward(different),0.0)
+    prepare(model,input)
+    model.eval()
+    let evaluation=model.forward(input)
+    assert(model.forward_plan_statistics().last_fallback=="model mode changed")
+    model.clear_forward_plan()
+    near(evaluation,model.forward(input),0.0)
+    prepare(model,input)
+    model.cpu()
+    reject(model,input)
+    assert(model.forward_plan_statistics().cached_plans==1)
+    let cpu=model.forward(Tensor.full([2,2],0.25))
+    assert(model.forward_plan_statistics().last_fallback=="input signature changed")
+    model.to(device)
+    near(model.forward(input),cpu)
+    var activation=Neural.Activation.tanh()
+    prepare(activation,input)
+    let foreign=Tensor.full([2,2],0.25).to(other)
+    near(activation.forward(foreign),foreign.tanh(),0.0)
+    assert(activation.forward_plan_statistics().last_fallback=="input device changed")
+    var shared=Neural.Dense("shared",2,2,17)
+    shared.to(device)
+    var repeated:Neural.Layer[]=[]
+    for i in 0...129 {repeated.append(shared)}
+    var too_many=Neural.Sequential(repeated)
+    profile.reset()
+    reject(too_many,input)
+    let rejected=profile.snapshot()
+    assert(rejected.compute_passes==0 && rejected.submissions==0 && rejected.pipeline_compilations==0)
+    assert(too_many.forward_plan_statistics().cached_plans==0)
+    print("PLAN_GUARDS status=pass failed_prepare=atomic fallback=shape_mode_device_cpu operations=bounded")
+}
+
+public func qualify_view_and_shared(device:GPU.Device) {
+    var dense=Neural.Dense("shared",2,2,37)
+    var cpu_dense=Neural.Dense("shared",2,2,37)
+    var layers:Neural.Layer[]=[dense,Neural.Activation.sigmoid(),dense]
+    var cpu_layers:Neural.Layer[]=[cpu_dense,Neural.Activation.sigmoid(),cpu_dense]
+    var model=Neural.Sequential(layers)
+    var reference=Neural.Sequential(cpu_layers)
+    model.to(device)
+    var data:float[]=[9.0,0.125,-0.25,8.0,0.5,-0.75]
+    var source=Autograd.Variable(Tensor(data,[2,3]).to(device))
+    var cpu_source=Autograd.Variable(Tensor(data,[2,3]))
+    let input=source.value().transpose().narrow(0,1,2)
+    let cpu_input=cpu_source.value().transpose().narrow(0,1,2)
+    let eager=model.forward(input)
+    prepare(model,input)
+    let output=model.forward(input)
+    let expected=reference.forward(cpu_input)
+    assert(model.parameters().count()==2 && model.forward_plan_statistics().prepared_operations==5)
+    near(output,eager,0.0)
+    near(output,expected)
+    var targets:Tensor[]=[source.value()]
+    var cpu_targets:Tensor[]=[cpu_source.value()]
+    var parameters=model.parameters()
+    var cpu_parameters=reference.parameters()
+    for var parameter in parameters {targets.append(parameter.value())}
+    for var parameter in cpu_parameters {cpu_targets.append(parameter.value())}
+    var gradients=Autograd.grad(output,targets,seed:Tensor.ones([2,2]).to(device))
+    var cpu_gradients=Autograd.grad(expected,cpu_targets,seed:Tensor.ones([2,2]))
+    var i=0
+    while i<gradients.count() {near(gradients[i],cpu_gradients[i]);i++}
+    print("PLAN_SHARED_VIEW status=pass occurrences=preserved parameters=2 gradients=3 input=transposed_offset")
+}
+
+public func qualify_normalization(device:GPU.Device) {
+    for rank in 0...3 {
+        var shape:int[]=[2,3]
+        var normalized:int[]=[3]
+        if rank==1 {shape=[1,2,3];normalized=[2,3]}
+        if rank==2 {shape=[1,1,2,1,3];normalized=[2,1,3]}
+        var norm=Neural.LayerNorm("norm",normalized,0.25)
+        var cpu_norm=Neural.LayerNorm("norm",normalized,0.25)
+        norm.to(device)
+        var data:float[]=[0.125,-0.75,1.5,-2.25,0.5,-0.125]
+        var seeds:float[]=[1.0,-2.0,3.0,-1.0,0.5,-0.25]
+        var source=Autograd.Variable(Tensor(data,shape).to(device))
+        var cpu_source=Autograd.Variable(Tensor(data,shape))
+        let eager=norm.forward(source.value())
+        prepare(norm,source.value())
+        var profile=Profile(device)
+        let output=norm.forward(source.value())
+        let count=profile.snapshot()
+        assert(count.compute_passes==8 && count.submissions==1 && count.fence_creations==1)
+        let expected=cpu_norm.forward(cpu_source.value())
+        near(output,eager,0.0)
+        near(output,expected)
+        var targets:Tensor[]=[source.value()]
+        var cpu_targets:Tensor[]=[cpu_source.value()]
+        var parameters=norm.parameters()
+        var cpu_parameters=cpu_norm.parameters()
+        for var parameter in parameters {targets.append(parameter.value())}
+        for var parameter in cpu_parameters {cpu_targets.append(parameter.value())}
+        var gradients=Autograd.grad(output,targets,seed:Tensor(seeds,shape).to(device))
+        var cpu_gradients=Autograd.grad(expected,cpu_targets,seed:Tensor(seeds,shape))
+        var i=0
+        while i<gradients.count() {near(gradients[i],cpu_gradients[i]);i++}
+    }
+    print("PLAN_NORMALIZATION status=pass ranks=2_3_5 dimensions=1_2_3 gradients=3 passes=8 submissions=1")
+}
+
+func prepare_short_lived(model:Neural.Layer,device:GPU.Device) {
+    prepare(model,Tensor.ones([2,2]).to(device))
+}
+
+public func qualify_capacity_and_capture(device:GPU.Device) {
+    var model=mlp()
+    model.to(device)
+    var profile=Profile(device)
+    let before=profile.snapshot().in_use_buffers
+    prepare_short_lived(model,device)
+    assert(profile.snapshot().in_use_buffers==before)
+    assert(model.forward_plan_statistics().cached_plans==1)
+    var layers:Neural.Layer[]=[]
+    for i in 0...257 {layers.append(Neural.Activation.relu())}
+    var excessive_layers=Neural.Sequential(layers)
+    let input=Tensor.ones([2,2]).to(device)
+    profile.reset()
+    match excessive_layers.prepare_forward(input) {
+        failure(reason)=>{assert(reason=="Tensor prepared forward supports at most 256 unique layers")}
+        success=>{panic("Expected layer capacity rejection")}
+    }
+    var parameters:Neural.Layer[]=[]
+    for i in 0...65 {parameters.append(Neural.Dense("dense$(i)",2,2,i))}
+    var excessive_parameters=Neural.Sequential(parameters)
+    excessive_parameters.to(device)
+    profile.reset()
+    match excessive_parameters.prepare_forward(input) {
+        failure(reason)=>{assert(reason=="Tensor prepared forward supports at most 128 unique parameters")}
+        success=>{panic("Expected parameter capacity rejection")}
+    }
+    let rejected=profile.snapshot()
+    assert(rejected.compute_passes==0 && rejected.submissions==0 && rejected.pipeline_compilations==0)
+    assert(excessive_parameters.forward_plan_statistics().cached_plans==0)
+    print("PLAN_CAPACITY status=pass layers=256 parameters=128 example_storage=not_retained")
+}
+
+test "forward plan rejects open layers without observing their hooks or altering CPU state" {qualify_closed_rejections()}
+test "forward plan reads current parameters and preserves gradients retained outputs and dynamic tracking" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify_replay(device)
+}
+test "forward plan validates signatures atomically and explains eager fallbacks" {
+    if !GPU.Device.is_supported() {return}
+    var first=GPU.Device(GPU.DeviceSettings(debug:true))
+    var second=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify_guards(first,second)
+}
+test "forward plan preserves repeated shared layers and source gradients through offset views" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify_view_and_shared(device)
+}
+test "forward plan keeps LayerNorm eager ordering and all input scale offset gradients" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify_normalization(device)
+}
+test "forward plan bounds layers and parameters without retaining example storage" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify_capacity_and_capture(device)
+}

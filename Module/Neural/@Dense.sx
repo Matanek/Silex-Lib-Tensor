@@ -2,6 +2,7 @@ use GFX.GPU
 use STD.Math
 use STD.Randomizer
 use Tensor
+use Package.ForwardBuilder
 
 public nocopy class Dense:Layer {
     private let input_features:int
@@ -29,10 +30,15 @@ public nocopy class Dense:Layer {
     override package func checkpoint_configuration() str {return "Dense:$(self.input_features):$(self.output_features)"}
 
     override func forward(input:Tensor) Tensor {
+        if let prepared=Layer.run_owned_forward(self,input) { return prepared }
         if input.rank() < 2 || input.shape()[input.rank() - 1] != self.input_features {
             panic("Tensor.Neural.Dense.forward requires the last input dimension to match input_features")
         }
         return input.matmul(self.weight.value()).add(self.bias.value())
+    }
+
+    override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
+        return builder.dense(self.weight,self.bias,self.input_features,self.output_features)
     }
 
 }

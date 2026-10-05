@@ -1,0 +1,322 @@
+use GFX.GPU
+use Package.Neural.Parameter
+
+enum ForwardRule {
+    matrix_multiply
+    binary(BinaryOperation)
+    unary(UnaryOperation)
+    mean(int[])
+    shifted_square_root(float)
+}
+
+enum ForwardSource { input; parameter(int); computed(int) }
+
+struct ForwardKernel {
+    let rule:ForwardRule
+    let left:int
+    let right:int
+    let left_layout:Layout
+    let right_layout:Layout
+    let output:Layout
+    let metadata:uint8[]
+    var pipeline:GPU.ComputePipeline? = null
+}
+
+// Owns every pending result until its shared fence has been assigned.
+nocopy class ForwardCommands {
+    private var commands:GPU.CommandBuffer?
+    private var outputs:GPUStorage[]
+    private var cache:GPUKernelCache
+
+    init(device:GPU.Device, cache:GPUKernelCache) {
+        self.commands = device.commands()
+        self.outputs = []
+        self.cache = cache
+    }
+
+    func recording() GPU.CommandBuffer {
+        if var commands = self.commands { return commands }
+        panic("Tensor prepared forward has already finished")
+    }
+
+    func retain(output:GPUStorage) { self.outputs.append(output) }
+
+    func finish() {
+        var commands = self.recording()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        self.cache.profile_state.submit()
+        var outputs = self.outputs
+        for var output in outputs { output.forward_completion(completed) }
+        self.commands = null
+        self.outputs = []
+    }
+
+    drop {
+        if var commands = self.commands { commands.cancel() }
+        self.commands = null
+        self.outputs = []
+    }
+}
+
+extend Tensor {
+    module func forward_kernel(other:Tensor?, batch:ForwardCommands, kernel:ForwardKernel) Tensor {
+        var storage = self.autograd_gpu_storage()
+        var right:GPUStorage? = null
+        let left_layout = self.autograd_layout()
+        var right_layout = Layout([])
+        if let value = other { right = value.autograd_gpu_storage(); right_layout = value.autograd_layout() }
+        var metadata = kernel.metadata
+        if !forward_same_layout(left_layout,kernel.left_layout) || !forward_same_layout(right_layout,kernel.right_layout) {
+            metadata = forward_metadata(kernel.rule,left_layout,right_layout,kernel.output)
+        }
+        let result = Tensor.autograd_from_storage(Storage.gpu(storage.encode_forward(batch,right,kernel,metadata)),kernel.output)
+        return match kernel.rule {
+            unary(operation) => autograd_record_unary(result,self,operation)
+            mean(axes) => autograd_record_reduction(result,self,axes,true,ReductionOperation.mean)
+            shifted_square_root(offset) => autograd_record_shifted_square_root(result,self,offset)
+            binary(operation) => forward_record_binary(result,self,other,operation)
+            matrix_multiply => forward_record_linear(result,self,other)
+        }
+    }
+}
+
+func forward_record_binary(result:Tensor,left:Tensor,right:Tensor?,operation:BinaryOperation) Tensor {
+    if let value = right { return autograd_record_binary(result,left,value,operation) }
+    panic("Tensor prepared forward requires its binary operand")
+}
+
+func forward_record_linear(result:Tensor,left:Tensor,right:Tensor?) Tensor {
+    if let value = right { return autograd_record_linear(result,left,value,LinearOperation.matrix_multiply) }
+    panic("Tensor prepared forward requires its matrix operand")
+}
+
+func forward_metadata(rule:ForwardRule,left:Layout,right:Layout,output:Layout) uint8[] {
+    return match rule {
+        matrix_multiply => linear_metadata(left,right,LinearOperation.matrix_multiply,output.count())
+        binary(operation) => binary_metadata(binary_code(operation),output.shape(),left,right)
+        unary(operation) => elementwise_metadata(unary_code(operation),left)
+        mean(axes) => reduction_metadata(ReductionOperation.mean,left,axes,true,output.count())
+        shifted_square_root(offset) => elementwise_metadata(15,left)
+    }
+}
+
+func forward_same_shape(left:int[],right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var axis = 0
+    while axis < left.count() {
+        if left[axis] != right[axis] { return false }
+        axis++
+    }
+    return true
+}
+
+func forward_same_layout(left:Layout,right:Layout) bool {
+    return left.offset() == right.offset() && forward_same_shape(left.shape(),right.shape()) &&
+        forward_same_shape(left.strides(),right.strides())
+}
+
+func forward_supported_layout(layout:Layout) bool {
+    if layout.rank() > 5 || layout.count() <= 0 || layout.count() > 1073741823 || layout.offset() > 4294967295 { return false }
+    var axis = 0
+    while axis < layout.rank() {
+        if layout.shape()[axis] <= 0 || layout.shape()[axis] > 4294967295 || layout.strides()[axis] > 4294967295 { return false }
+        axis++
+    }
+    return true
+}
+
+package nocopy class PreparedForward {
+    private var device:GPU.Device
+    private let input_layout:Layout
+    private let training:bool
+    private var parameters:Parameter[]
+    private let parameter_shapes:int[][]
+    private let sources:ForwardSource[]
+    private var kernels:ForwardKernel[]
+    private let result_slot:int
+
+    module init(device:GPU.Device,input:Layout,training:bool,parameters:Parameter[],shapes:int[][],
+        sources:ForwardSource[],kernels:ForwardKernel[],result_slot:int) {
+        self.device=device
+        self.input_layout=input
+        self.training=training
+        self.parameters=parameters
+        self.parameter_shapes=shapes
+        self.sources=sources
+        self.kernels=kernels
+        self.result_slot=result_slot
+    }
+
+    func operation_count() int { return self.kernels.count() }
+
+    func incompatibility(input:Tensor,training:bool,values:&Tensor[]) str {
+        if training != self.training { return "model mode changed" }
+        if !input.is_gpu() || input.dtype() != DType.float32() ||
+            !forward_same_layout(input.autograd_layout(),self.input_layout) { return "input signature changed" }
+        if !input.autograd_gpu_storage().same_device(self.device) { return "input device changed" }
+        var parameters=self.parameters
+        var index=0
+        for var parameter in parameters {
+            let value=parameter.value()
+            if !value.is_gpu() || value.dtype()!=DType.float32() || !forward_same_shape(value.shape(),self.parameter_shapes[index]) ||
+                !value.autograd_gpu_storage().same_device(self.device) { return "parameter signature changed" }
+            if !forward_supported_layout(value.autograd_layout()) { return "parameter layout unsupported" }
+            values.append(value)
+            index++
+        }
+        return ""
+    }
+
+    func run(input:Tensor,parameters:Tensor[]) Tensor {
+        var values:Tensor[]=[]
+        var batch=input.autograd_gpu_storage().forward_commands()
+        for source in self.sources {
+            match source {
+                input => { values.append(input) }
+                parameter(index) => { values.append(parameters[index]) }
+                computed(index) => {
+                    let kernel=self.kernels[index]
+                    var right:Tensor?=null
+                    match kernel.rule {matrix_multiply=>{right=values[kernel.right]};binary(operation)=>{right=values[kernel.right]};else=>{}}
+                    values.append(values[kernel.left].forward_kernel(right,batch,kernel))
+                }
+            }
+        }
+        batch.finish()
+        return values[self.result_slot]
+    }
+}
+
+package nocopy class ForwardBuilder {
+    private var device:GPU.Device
+    private let input_layout:Layout
+    private var parameters:Parameter[]
+    private var parameter_shapes:int[][]
+    private var sources:ForwardSource[]
+    private var layouts:Layout[]
+    private var kernels:ForwardKernel[]
+    private var current_slot:int
+
+    init(example:Tensor) {
+        self.device=example.autograd_gpu_storage().forward_device()
+        self.input_layout=example.autograd_layout()
+        self.parameters=[]
+        self.parameter_shapes=[]
+        self.sources=[ForwardSource.input]
+        self.layouts=[self.input_layout]
+        self.kernels=[]
+        self.current_slot=0
+    }
+
+    private func parameter(parameter:Parameter) Result<int,str> {
+        let value=parameter.value()
+        if !value.is_gpu() || value.dtype()!=DType.float32() || !value.autograd_gpu_storage().same_device(self.device) ||
+            !forward_supported_layout(value.autograd_layout()) {
+            return Result<int,str>.failure("Tensor prepared forward requires compatible GPU float32 parameters")
+        }
+        var parameter_index=0
+        var found=false
+        for existing in self.parameters {
+            if existing==parameter { found=true; break }
+            parameter_index++
+        }
+        if !found {
+            if self.parameters.count()>=128 { return Result<int,str>.failure("Tensor prepared forward supports at most 128 unique parameters") }
+            self.parameters.append(parameter)
+            self.parameter_shapes.append(value.shape())
+        }
+        var index=0
+        for source in self.sources {
+            match source {parameter(existing)=>{if existing==parameter_index {return Result<int,str>.success(index)}};else=>{}}
+            index++
+        }
+        let slot=self.sources.count()
+        self.sources.append(ForwardSource.parameter(parameter_index))
+        self.layouts.append(value.autograd_layout())
+        return Result<int,str>.success(slot)
+    }
+
+    private func append(rule:ForwardRule,left:int,right:int,shape:int[]) Result<void,str> {
+        if self.kernels.count()>=256 { return Result<void,str>.failure("Tensor prepared forward supports at most 256 operations") }
+        var count=1
+        for dimension in shape {
+            if dimension<=0 || dimension>1073741823/count { return Result<void,str>.failure("Tensor prepared forward output domain is unsupported") }
+            count*=dimension
+        }
+        let output=Layout(shape)
+        let left_layout=self.layouts[left]
+        var right_layout=Layout([])
+        match rule {matrix_multiply=>{right_layout=self.layouts[right]};binary(operation)=>{right_layout=self.layouts[right]};else=>{}}
+        let metadata=forward_metadata(rule,left_layout,right_layout,output)
+        let index=self.kernels.count()
+        self.kernels.append(ForwardKernel(rule:rule,left:left,right:right,left_layout:left_layout,right_layout:right_layout,output:output,metadata:metadata))
+        self.current_slot=self.sources.count()
+        self.sources.append(ForwardSource.computed(index))
+        self.layouts.append(output)
+        return Result<void,str>.success()
+    }
+
+    func dense(weight:Parameter,bias:Parameter,input_features:int,output_features:int) Result<void,str> {
+        let input=self.current_slot
+        let layout=self.layouts[input]
+        if layout.rank()<2 || layout.shape()[layout.rank()-1]!=input_features {
+            return Result<void,str>.failure("Tensor prepared Dense requires matching input_features")
+        }
+        var weight_slot=0
+        var bias_slot=0
+        match self.parameter(weight) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{weight_slot=slot}}
+        match self.parameter(bias) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{bias_slot=slot}}
+        let shape=linear_shape(layout,self.layouts[weight_slot],LinearOperation.matrix_multiply)
+        match self.append(ForwardRule.matrix_multiply,input,weight_slot,shape) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        return self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,bias_slot,shape)
+    }
+
+    func relu() Result<void,str> { return self.activation(UnaryOperation.rectified_linear) }
+    func sigmoid() Result<void,str> { return self.activation(UnaryOperation.sigmoid) }
+    func tanh() Result<void,str> { return self.activation(UnaryOperation.hyperbolic_tangent) }
+    private func activation(operation:UnaryOperation) Result<void,str> {
+        return self.append(ForwardRule.unary(operation),self.current_slot,0,self.layouts[self.current_slot].shape())
+    }
+
+    func layer_norm(shape:int[],epsilon:float,scale:Parameter,offset:Parameter) Result<void,str> {
+        let input=self.current_slot
+        let layout=self.layouts[input]
+        if layout.rank()<shape.count() { return Result<void,str>.failure("Tensor prepared LayerNorm requires its normalized trailing shape") }
+        var axes:int[]=[]
+        var axis=0
+        while axis<shape.count() {
+            let current=layout.rank()-shape.count()+axis
+            if layout.shape()[current]!=shape[axis] { return Result<void,str>.failure("Tensor prepared LayerNorm requires its normalized trailing shape") }
+            axes.append(current)
+            axis++
+        }
+        var scale_slot=0
+        var offset_slot=0
+        match self.parameter(scale) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{scale_slot=slot}}
+        match self.parameter(offset) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{offset_slot=slot}}
+        let reduced=reduced_shape(layout.shape(),axes,true)
+        match self.append(ForwardRule.mean(axes),input,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        let mean=self.current_slot
+        match self.append(ForwardRule.binary(BinaryOperation.subtract),input,mean,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        let centered=self.current_slot
+        match self.append(ForwardRule.binary(BinaryOperation.multiply),centered,centered,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.mean(axes),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.shifted_square_root(epsilon),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.binary(BinaryOperation.divide),centered,self.current_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.binary(BinaryOperation.multiply),self.current_slot,scale_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        return self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,offset_slot,layout.shape())
+    }
+
+    func finish(example:Tensor,training:bool) PreparedForward {
+        var storage=example.autograd_gpu_storage()
+        var kernels=self.kernels
+        var index=0
+        while index<kernels.count() { kernels[index].pipeline=storage.forward_pipeline(kernels[index].rule); index++ }
+        return PreparedForward(self.device,self.input_layout,training,self.parameters,self.parameter_shapes,self.sources,kernels,self.current_slot)
+    }
+}
+
+package func forward_example_supported(example:Tensor) bool {
+    return example.is_gpu() && example.dtype()==DType.float32() && forward_supported_layout(example.autograd_layout())
+}

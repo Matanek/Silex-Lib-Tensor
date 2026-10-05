@@ -1,0 +1,26 @@
+use ForwardPlans
+use GFX.GPU
+use Tensor.Profile
+
+func main() {
+    assert(GPU.Device.is_supported())
+    ForwardPlans.qualify_closed_rejections()
+    var first=GPU.Device(GPU.DeviceSettings(debug:true))
+    var second=GPU.Device(GPU.DeviceSettings(debug:true))
+    ForwardPlans.qualify_capacity_and_capture(first)
+    var a=Profile(first)
+    var b=Profile(second)
+    assert(a.snapshot().in_use_buffers==0 && a.snapshot().allocated_bytes==0)
+    ForwardPlans.qualify_replay(first)
+    ForwardPlans.qualify_replay(second)
+    ForwardPlans.qualify_guards(first,second)
+    ForwardPlans.qualify_view_and_shared(first)
+    ForwardPlans.qualify_normalization(first)
+    let x=a.snapshot()
+    let y=b.snapshot()
+    assert(x.live_buffers==0 && x.active_bytes==0 && x.in_use_buffers==0 && x.cached_buffers==0 && x.cached_bytes==0 && x.allocated_bytes==0)
+    assert(y.live_buffers==0 && y.active_bytes==0 && y.in_use_buffers==0 && y.cached_buffers==0 && y.cached_bytes==0 && y.allocated_bytes==0)
+    assert(x.peak_in_use_buffers<=128 && y.peak_in_use_buffers<=128)
+    assert(x.peak_allocated_bytes<=32768 && y.peak_allocated_bytes<=32768)
+    print("FORWARD_PLAN_RESOURCES status=pass devices=2 first_buffers=$(x.peak_in_use_buffers) second_buffers=$(y.peak_in_use_buffers) first_bytes=$(x.peak_allocated_bytes) second_bytes=$(y.peak_allocated_bytes) live=0")
+}

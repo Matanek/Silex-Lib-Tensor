@@ -1,0 +1,26 @@
+use Tensor
+use Tensor.Neural
+use GFX.GPU
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device = GPU.Device()
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 4, 101),
+        Neural.Activation.tanh(),
+        Neural.Dense("output", 4, 2, 102)
+    ]
+    var model = Neural.Sequential(layers)
+    model.to(device)
+    let input = Tensor.ones([16, 2]).to(device)
+    match model.prepare_forward(input) {
+        failure(reason) => { panic(reason) }
+        success => {}
+    }
+    let output = model.forward(input)
+    assert(output.shape()[0] == 16 && output.shape()[1] == 2)
+    let statistics = model.forward_plan_statistics()
+    assert(statistics.captures == 1 && statistics.executions == 1)
+    model.clear_forward_plan()
+    assert(model.forward_plan_statistics().cached_plans == 0)
+}

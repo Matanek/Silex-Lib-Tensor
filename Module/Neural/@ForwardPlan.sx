@@ -1,0 +1,30 @@
+use Tensor
+use Package.ForwardBuilder
+
+public struct ForwardPlanStatistics {
+    let preparations:int
+    let rejections:int
+    let captures:int
+    let compilations:int
+    let executions:int
+    let fallbacks:int
+    let cached_plans:int
+    let prepared_operations:int
+    let last_fallback:str
+    let cache_capacity_plans:int=1
+}
+
+func forward_preflight(layer:Layer,visited:&Layer[]) Result<void,str> {
+    let concrete=reflect(layer).type
+    if concrete!="Tensor.Neural.Sequential" && concrete!="Tensor.Neural.Dense" &&
+        concrete!="Tensor.Neural.Activation" && concrete!="Tensor.Neural.LayerNorm" {
+        return Result<void,str>.failure("Tensor prepared forward does not support concrete layer '$(concrete)'")
+    }
+    for existing in visited { if existing==layer { return Result<void,str>.success() } }
+    if visited.count()>=256 { return Result<void,str>.failure("Tensor prepared forward supports at most 256 unique layers") }
+    visited.append(layer)
+    for child in layer.children() {
+        match forward_preflight(child,visited) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+    }
+    return Result<void,str>.success()
+}

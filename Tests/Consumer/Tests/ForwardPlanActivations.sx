@@ -1,0 +1,52 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+
+func activation(kind:int) Neural.Activation {
+    if kind==0 {return Neural.Activation.relu()}
+    if kind==1 {return Neural.Activation.sigmoid()}
+    return Neural.Activation.tanh()
+}
+func near(actual:Tensor,expected:Tensor) {
+    let a=actual.detach().cpu().values()
+    let b=expected.detach().cpu().values()
+    assert(a.count()==b.count())
+    var i=0
+    while i<a.count() {assert(Math.is_finite(a[i]) && Math.abs(a[i]-b[i])<0.00002);i++}
+}
+public func qualify(device:GPU.Device) {
+    for kind in 0...3 {
+        for layout in 0...3 {
+            var data:float[]=[-0.75,0.0,0.125,1.5]
+            var shape:int[]=[4]
+            if layout==0 {data=[-0.75];shape=[]}
+            if layout==2 {shape=[1,1,1,1,4]}
+            var source=Autograd.Variable(Tensor(data,shape).to(device))
+            var reference=Autograd.Variable(Tensor(data,shape))
+            var model=activation(kind)
+            var cpu=activation(kind)
+            var input=source.value()
+            var cpu_input=reference.value()
+            if layout==2 {input=input.expand([2,1,1,1,4]);cpu_input=cpu_input.expand([2,1,1,1,4])}
+            let eager=model.forward(input)
+            match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+            let output=model.forward(input)
+            let expected=cpu.forward(cpu_input)
+            near(output,eager)
+            near(output,expected)
+            var gradient=Autograd.grad(output,[source.value()],seed:Tensor.ones(output.shape()).to(device))
+            var cpu_gradient=Autograd.grad(expected,[reference.value()],seed:Tensor.ones(expected.shape()))
+            near(gradient[0],cpu_gradient[0])
+            assert(model.forward_plan_statistics().prepared_operations==1 && model.forward_plan_statistics().captures==1)
+            assert(source.gradient()==null)
+        }
+    }
+    print("PLAN_ACTIVATIONS status=pass kinds=relu_sigmoid_tanh layouts=scalar_vector_broadcast_rank5 gradients=source")
+}
+test "forward plan covers all activation kinds scalar layouts and broadcast source gradients" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify(device)
+}

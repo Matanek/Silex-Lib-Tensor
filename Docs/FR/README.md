@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Préparez un [forward GPU répété](ForwardPlans.md) avec un cache possédé par le modèle.
 - Entraînez une [LSTM avec états caché et cellule explicites](LSTM.md).
 - Entraînez une [GRU à état transmis explicitement](GRU.md).
 

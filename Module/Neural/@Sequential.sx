@@ -1,5 +1,6 @@
 use GFX.GPU
 use Tensor
+use Package.ForwardBuilder
 
 public nocopy class Sequential:Layer {
     private var layers:Layer[]
@@ -17,10 +18,19 @@ public nocopy class Sequential:Layer {
     override package func checkpoint_configuration() str {return "Sequential"}
 
     override func forward(input:Tensor) Tensor {
+        if let prepared=Layer.run_owned_forward(self,input) { return prepared }
         var result = input
         var layers = self.layers
         for var layer in layers { result = layer.forward(result) }
         return result
+    }
+
+    override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
+        var layers=self.layers
+        for var layer in layers {
+            match layer.describe_forward(builder) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        }
+        return Result<void,str>.success()
     }
 
 }

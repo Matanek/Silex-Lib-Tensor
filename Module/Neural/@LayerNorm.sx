@@ -1,6 +1,7 @@
 use GFX.GPU
 use STD.Math
 use Tensor
+use Package.ForwardBuilder
 
 public nocopy class LayerNorm:Layer {
     private let normalized_shape:int[]
@@ -29,6 +30,7 @@ public nocopy class LayerNorm:Layer {
     override package func checkpoint_configuration() str {return "LayerNorm:"+checkpoint_ints(self.normalized_shape)+":"+training_checkpoint_float_text(self.epsilon)}
 
     override func forward(input:Tensor) Tensor {
+        if let prepared=Layer.run_owned_forward(self,input) { return prepared }
         if input.rank() < self.normalized_shape.count() {
             panic("Tensor.Neural.LayerNorm.forward requires its normalized trailing shape")
         }
@@ -42,6 +44,10 @@ public nocopy class LayerNorm:Layer {
         }
         return input.layer_norm(self.normalized_shape.count(), self.epsilon)
             .multiply(self.scale.value()).add(self.offset.value())
+    }
+
+    override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
+        return builder.layer_norm(self.normalized_shape,self.epsilon,self.scale,self.offset)
     }
 
 }

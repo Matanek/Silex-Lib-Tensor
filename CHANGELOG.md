@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `Neural.Layer.prepare_forward`, `clear_forward_plan`, and `forward_plan_statistics` prepare a GPU float32 forward for exact Sequential, Dense, Activation, and LayerNorm classes. A private single-plan cache checks compatibility and explains eager fallback, reads current parameters, and preserves autograd without capturing callbacks or example storage. Local hot gains of 40.15%, 33.42%, and 19.58% on three Metal MLPs; preparation and profiling measured separately, with prepared training and other families still open. 464 tests/110 sources, Debug/Release and six compiled/linked targets; see the [guide](Docs/EN/ForwardPlans.md).
+
 - Fuse epsilon addition and sqrt in GPU float32 LayerNorm: six passes instead of seven, qualified gradients and lifetimes, unchanged reductions. Apple M3 Pro/Metal admits gains of 9.50%, 10.38% and 9.08% on small normalizations and the strided view; all six models and other sizes remain indeterminate. A 457-test corpus, six compiled/linked targets, campaigns and limitations are documented in [profiling](Docs/EN/Profiling.md).
 
 - Reuse ready GPU buffers with exact size/dtype keys in a private per-device cache bounded to 32 entries and 1 MiB, cleared at the last storage. Profiling distinguishes native creation, reuse, cached reservations and bytes in use by values. Three Transformer steps on Apple M3 Pro/Metal show an admitted paired gain of 5.89%; the five other families and microcases remain indeterminate. Raw data and memory costs are retained in Silex-Benchmarks.

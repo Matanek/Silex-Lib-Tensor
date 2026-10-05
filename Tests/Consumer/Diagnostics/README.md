@@ -3,6 +3,8 @@
 Run each `.sx` file explicitly from the `SilexProject` root with `silex run`.
 Every fixture must fail and mention its intended contract:
 
+- `ForwardBuilderPrivate.sx` and `PreparedForwardPrivate.sx`: prepared-forward implementation types remain package-private;
+- `ForwardDescriptionPrivate.sx`: applications cannot access the layer description hook;
 - `Extraction.sx`: matching dtype extractor or explicit cast;
 - `GPUExtraction.sx`: `cpu()` before value extraction;
 - `CastRange.sx`: invalid controlled numeric conversion;

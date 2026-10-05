@@ -1,0 +1,3 @@
+use Tensor.ForwardBuilder
+func consume(value:ForwardBuilder) {}
+func main() {}

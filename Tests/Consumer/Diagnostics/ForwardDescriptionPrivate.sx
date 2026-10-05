@@ -1,0 +1,6 @@
+use Tensor
+use Tensor.Neural
+func main() {
+    var model=Neural.Activation.relu()
+    let callback=model.describe_forward
+}

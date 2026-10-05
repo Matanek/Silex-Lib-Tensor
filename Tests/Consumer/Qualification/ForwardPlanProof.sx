@@ -1,0 +1,68 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func model() Neural.Sequential {
+    var layers:Neural.Layer[]=[Neural.Dense("hidden",2,4,101),Neural.Activation.tanh(),Neural.Dense("output",4,2,102)]
+    return Neural.Sequential(layers)
+}
+
+func near(left:Tensor,right:Tensor,tolerance:float=0.00002) {
+    let a=left.detach().cpu().values()
+    let b=right.detach().cpu().values()
+    assert(a.count()==b.count())
+    var index=0
+    while index<a.count() {
+        if !Math.is_finite(a[index]) || Math.abs(a[index]-b[index])>tolerance {print("FORWARD_PLAN_MISMATCH index=$(index) actual=$(a[index]) expected=$(b[index])")}
+        assert(Math.is_finite(a[index]) && Math.abs(a[index]-b[index])<=tolerance)
+        index++
+    }
+}
+
+func prepare(model:Neural.Layer,input:Tensor) {
+    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+}
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var resident=model()
+    var reference=model()
+    resident.to(device)
+    var values:float[]=[0.125,-0.25,0.5,-0.75]
+    var source=Autograd.Variable(Tensor(values,[2,2]).to(device))
+    var cpu_source=Autograd.Variable(Tensor(values,[2,2]))
+    let eager=resident.forward(source.value())
+    var profile=Profile(device)
+    prepare(resident,source.value())
+    let capture=profile.snapshot()
+    assert(capture.compute_passes==0 && capture.submissions==0 && capture.uploads==0 && capture.downloads==0)
+    profile.reset()
+    let output=resident.forward(source.value())
+    let stats=profile.snapshot()
+    assert(stats.compute_passes==5 && stats.submissions==1 && stats.fence_creations==1 && stats.pipeline_compilations==0)
+    let planned=resident.forward_plan_statistics()
+    assert(planned.captures==1 && planned.compilations==1 && planned.executions==1 && planned.cached_plans==1 && planned.prepared_operations==5)
+    near(output,eager,0.0)
+    let expected=reference.forward(cpu_source.value())
+    near(output,expected)
+    var targets:Tensor[]=[source.value()]
+    var cpu_targets:Tensor[]=[cpu_source.value()]
+    var parameters=resident.parameters()
+    var cpu_parameters=reference.parameters()
+    for var parameter in parameters {targets.append(parameter.value())}
+    for var parameter in cpu_parameters {cpu_targets.append(parameter.value())}
+    var gradients=Autograd.grad(output,targets,seed:Tensor.ones([2,2]).to(device))
+    var cpu_gradients=Autograd.grad(expected,cpu_targets,seed:Tensor.ones([2,2]))
+    var index=0
+    while index<gradients.count() {near(gradients[index],cpu_gradients[index]);index++}
+    prepare(resident,source.value())
+    assert(resident.forward_plan_statistics().captures==1)
+    resident.clear_forward_plan()
+    assert(resident.forward_plan_statistics().cached_plans==0)
+    near(resident.forward(source.value()),expected)
+    print("FORWARD_PLAN_PROOF status=pass passes=5 submissions=1 gradients=5 cache=1 repeated_prepare=no_recapture clear=eager")
+}

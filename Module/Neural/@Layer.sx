@@ -1,5 +1,8 @@
 use GFX.GPU
 use Tensor
+use Package.ForwardBuilder
+use Package.PreparedForward
+use Package.forward_example_supported
 
 class LayerState {
     var layers:Layer[]
@@ -35,6 +38,14 @@ public nocopy class Layer {
     private var child_names:str[]
     private var child_layers:Layer[]
     private var current_training:bool
+    private var prepared_forward:PreparedForward?=null
+    private var forward_preparations:int=0
+    private var forward_rejections:int=0
+    private var forward_captures:int=0
+    private var forward_compilations:int=0
+    private var forward_executions:int=0
+    private var forward_fallbacks:int=0
+    private var forward_last_fallback:str=""
 
     protected init() {
         self.own_parameters = []
@@ -107,6 +118,69 @@ public nocopy class Layer {
         return self.collect_state().buffers
     }
     func is_training() bool { return self.current_training }
+
+    func prepare_forward(example:Tensor) Result<void,str> { return Layer.prepare_owned_forward(self,example) }
+    func clear_forward_plan() { Layer.clear_owned_forward(self) }
+    func forward_plan_statistics() ForwardPlanStatistics { return Layer.owned_forward_statistics(self) }
+
+    module static func prepare_owned_forward(model:Layer,example:Tensor) Result<void,str> {
+        model.forward_preparations++
+        var visited:Layer[]=[]
+        match forward_preflight(model,visited) {
+            failure(reason)=>{model.forward_rejections++;return Result<void,str>.failure(reason)}
+            success=>{}
+        }
+        if !forward_example_supported(example) {
+            model.forward_rejections++
+            return Result<void,str>.failure("Tensor prepared forward requires a nonempty GPU float32 input of rank at most 5")
+        }
+        if var plan=model.prepared_forward {
+            var values:Tensor[]=[]
+            if plan.incompatibility(example,model.current_training,values)=="" { return Result<void,str>.success() }
+        }
+        var builder=ForwardBuilder(example)
+        match model.describe_forward(builder) {
+            failure(reason)=>{model.forward_rejections++;return Result<void,str>.failure(reason)}
+            success=>{}
+        }
+        var plan=builder.finish(example,model.current_training)
+        model.prepared_forward=plan
+        model.forward_captures++
+        model.forward_compilations++
+        model.forward_last_fallback=""
+        return Result<void,str>.success()
+    }
+
+    module static func clear_owned_forward(model:Layer) { model.prepared_forward=null }
+
+    module static func owned_forward_statistics(model:Layer) ForwardPlanStatistics {
+        var cached=0
+        var operations=0
+        if var plan=model.prepared_forward {cached=1;operations=plan.operation_count()}
+        return ForwardPlanStatistics(preparations:model.forward_preparations,rejections:model.forward_rejections,
+            captures:model.forward_captures,compilations:model.forward_compilations,executions:model.forward_executions,
+            fallbacks:model.forward_fallbacks,cached_plans:cached,prepared_operations:operations,last_fallback:model.forward_last_fallback)
+    }
+
+    module static func run_owned_forward(model:Layer,input:Tensor) Tensor? {
+        if var plan=model.prepared_forward {
+            var parameters:Tensor[]=[]
+            let reason=plan.incompatibility(input,model.current_training,parameters)
+            if reason=="" {
+                let result=plan.run(input,parameters)
+                model.forward_executions++
+                model.forward_last_fallback=""
+                return result
+            }
+            model.forward_fallbacks++
+            model.forward_last_fallback=reason
+        }
+        return null
+    }
+
+    package func describe_forward(builder:ForwardBuilder) Result<void,str> {
+        return Result<void,str>.failure("Tensor prepared forward requires a supported concrete layer")
+    }
     func train() { self.set_training(true) }
     func eval() { self.set_training(false) }
     func freeze() { self.set_trainable(false) }
