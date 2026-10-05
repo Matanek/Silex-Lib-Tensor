@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    let result = Tensor.scalar(1.0).logical_not()
+    print(result.count())
+}

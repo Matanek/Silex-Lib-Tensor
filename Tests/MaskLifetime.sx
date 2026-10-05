@@ -1,0 +1,54 @@
+use Tensor
+use Tensor.Profile
+use Tensor.Autograd.Variable
+use Tensor.autograd_retained_edge_count
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func temporary_mask_selection(device:GPU.Device) Tensor {
+    var a:float[] = [1.0, 2.0, 3.0, 4.0, 5.0]
+    var b:float[] = [-1.0, -2.0, -3.0, -4.0, -5.0]
+    var flags:bool[] = [true, false, true, false, true]
+    return Tensor.where(Tensor.vector(flags).to(device), Tensor.vector(a).to(device), Tensor.vector(b).to(device))
+}
+func consume_mask_graph(device:GPU.Device) {
+    var values:float[] = [1.0, -2.0, 3.0, -4.0, 5.0]
+    var input = Variable(Tensor.vector(values).to(device))
+    let before = autograd_retained_edge_count()
+    let mask = input.value().greater_than(0.0)
+    assert(autograd_retained_edge_count() == before)
+    let loss = Tensor.where(mask, input.value(), input.value().negate()).sum()
+    assert(autograd_retained_edge_count() > before)
+    loss.backward()
+    assert(autograd_retained_edge_count() == before)
+}
+
+test "retain all three temporary GPU parents until result observation" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile = Profile(device)
+    let output = temporary_mask_selection(device)
+    let values = output.cpu().values()
+    assert(values[0] == 1.0 && values[1] == -2.0 && values[4] == 5.0)
+    let stats = profile.snapshot()
+    assert(stats.buffer_allocations == 4)
+    assert(stats.buffer_releases == 3 && stats.live_buffers == 1 && stats.active_bytes == 20)
+}
+
+test "release mask graphs and GPU buffers across repeated backward" {
+    if !GPU.Device.is_supported() { return }
+    let baseline = autograd_performance_statistics()
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 64 {
+        consume_mask_graph(device)
+        let stats = profile.snapshot()
+        assert(stats.live_buffers == 0 && stats.active_bytes == 0)
+        assert(stats.buffer_allocations == stats.buffer_releases)
+        assert(autograd_performance_statistics().live_nodes == baseline.live_nodes)
+        iteration++
+    }
+    let after = autograd_performance_statistics()
+    assert(after.edge_retentions - baseline.edge_retentions == after.edge_releases - baseline.edge_releases)
+}

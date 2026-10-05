@@ -55,6 +55,7 @@ func concatenate_cpu_storage(
     axis:int
 ) CPUStorage {
     let dtype = left.dtype()
+    if dtype.is_boolean() { return CPUStorage(concatenate_values<bool>(left.bool_values(), left_layout, right.bool_values(), right_layout, axis)) }
     if dtype == DType.float32() { return CPUStorage(concatenate_values<float>(left.float_values(), left_layout, right.float_values(), right_layout, axis)) }
     if dtype == DType.int8() { return CPUStorage(concatenate_values<int8>(left.int8_values(), left_layout, right.int8_values(), right_layout, axis)) }
     if dtype == DType.uint8() { return CPUStorage(concatenate_values<uint8>(left.uint8_values(), left_layout, right.uint8_values(), right_layout, axis)) }
@@ -140,6 +141,7 @@ func gather_source_index(source:Layout, indices:Layout, axis:int, logical:int, s
 func gather_cpu_storage(source:CPUStorage, layout:Layout, indices:CPUStorage, index_layout:Layout, axis:int) CPUStorage {
     let selected = gather_index_values(indices.int32_values(), index_layout, layout, axis)
     let dtype = source.dtype()
+    if dtype.is_boolean() { return CPUStorage(gather_selected_values<bool>(source.bool_values(), selected)) }
     if dtype == DType.float32() { return CPUStorage(gather_selected_values<float>(source.float_values(), selected)) }
     if dtype == DType.int8() { return CPUStorage(gather_selected_values<int8>(source.int8_values(), selected)) }
     if dtype == DType.uint8() { return CPUStorage(gather_selected_values<uint8>(source.uint8_values(), selected)) }

@@ -1,0 +1,352 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+test "boolean construction and views" {
+    var flags:bool[] = [true, false, false, true, true, false]
+    let tensor = Tensor.matrix(flags, 2, 3)
+    assert(tensor.dtype() == DType.boolean() && tensor.dtype().byte_width() == 1)
+    assert(!tensor.dtype().is_integer() && !tensor.dtype().is_floating())
+    assert(tensor.bool_at([1, 1]) && !tensor.bool_at([0, 1]))
+    let view = tensor.transpose().narrow(0, 1, 2).contiguous()
+    let values = view.bool_values()
+    assert(values.count() == 4 && !values[0] && values[1] && !values[2] && !values[3])
+    assert(Tensor.ones([], DType.boolean()).bool_item())
+    assert(!Tensor.zeros([], DType.boolean()).bool_item())
+}
+
+test "CPU comparison broadcasting and conditional selection" {
+    var a:float[] = [1.0, -2.0, 3.0]
+    var b:float[] = [0.0, 2.0]
+    let left = Tensor(a, [1, 3])
+    let right = Tensor(b, [2, 1])
+    let mask = left.greater_than(right)
+    let flags = mask.bool_values()
+    assert(flags.count() == 6 && flags[0] && !flags[1] && flags[2] && !flags[3] && !flags[4] && flags[5])
+    let result = Tensor.where(mask, left, right).values()
+    assert(result[0] == 1.0 && result[1] == 0.0 && result[3] == 2.0 && result[5] == 3.0)
+    let compact = left.masked_select(mask).values()
+    assert(compact.count() == 3 && compact[0] == 1.0 && compact[1] == 3.0 && compact[2] == 3.0)
+}
+
+test "GPU packed masks and resident selection" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var a:float[] = [1.0, -2.0, 3.0, 4.0, -5.0, 6.0, 7.0]
+    let input = Tensor.vector(a).to(device)
+    var profile = Profile(device)
+    let mask = input.greater_than(0.0)
+    let selected = Tensor.where(mask.logical_and(true), input, input.negate())
+    let stats = profile.snapshot()
+    assert(stats.uploads == 0 && stats.downloads == 0 && stats.dispatches == 4)
+    let flags = mask.cpu().bool_values()
+    assert(flags.count() == 7 && flags[0] && !flags[1] && flags[6])
+    let result = selected.cpu().values()
+    assert(result[0] == 1.0 && result[1] == 2.0 && result[4] == 5.0 && result[6] == 7.0)
+    var small:bool[] = [true, false, true, false, true]
+    let uploaded = Tensor.vector(small).to(device).logical_not().cpu().bool_values()
+    assert(uploaded.count() == 5 && !uploaded[0] && uploaded[1] && !uploaded[4])
+}
+
+func mask_gradient(variable:Autograd.Variable) Tensor {
+    if let gradient = variable.gradient() { return gradient }
+    panic("expected mask branch gradient")
+}
+func mask_near(actual:float[], expected:float[]) {
+    assert(actual.count() == expected.count())
+    var i = 0
+    while i < actual.count() { assert(Math.is_finite(actual[i]) && Math.abs(actual[i] - expected[i]) < 0.003); i++ }
+}
+func mask_loss(input:Tensor) Tensor {
+    return Tensor.where(input.greater_than(0.0), input.multiply(input), input.multiply(-3.0)).sum()
+}
+
+test "branch gradients reduce broadcast and preserve aliases" {
+    var a:float[] = [1.0, 2.0, 3.0]
+    var b:float[] = [10.0, 20.0]
+    var flags:bool[] = [true, false, true, false, true, false]
+    var left = Autograd.Variable(Tensor(a, [1, 3]))
+    var right = Autograd.Variable(Tensor(b, [2, 1]))
+    Tensor.where(Tensor(flags, [2, 3]), left.value(), right.value()).sum().backward()
+    var left_expected:float[] = [1.0, 1.0, 1.0]
+    var right_expected:float[] = [1.0, 2.0]
+    mask_near(mask_gradient(left).values(), left_expected)
+    mask_near(mask_gradient(right).values(), right_expected)
+    var alias = Autograd.Variable(Tensor.vector(a))
+    Tensor.where(Tensor.vector(flags).narrow(0, 0, 3), alias.value(), alias.value()).sum().backward()
+    mask_near(mask_gradient(alias).values(), left_expected)
+}
+
+test "selection finite differences and detached comparison" {
+    var values:float[] = [-2.0, 1.0, 3.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    mask_loss(input.value()).backward()
+    var analytic:float[] = [-3.0, 2.0, 6.0]
+    mask_near(mask_gradient(input).values(), analytic)
+    var numerical:float[] = []
+    var i = 0
+    while i < values.count() {
+        var upper = copy values
+        var lower = copy values
+        upper[i] += 0.001
+        lower[i] -= 0.001
+        numerical.append((mask_loss(Tensor.vector(upper)).item() - mask_loss(Tensor.vector(lower)).item()) / 0.002)
+        i++
+    }
+    mask_near(mask_gradient(input).values(), numerical)
+    var condition = Autograd.Variable(Tensor.vector(values))
+    var branch = Autograd.Variable(Tensor.vector(values))
+    Tensor.where(condition.value().greater_than(0.0), branch.value(), Tensor.zeros([3])).sum().backward()
+    assert(condition.gradient() == null)
+    var expected:float[] = [0.0, 1.0, 1.0]
+    mask_near(mask_gradient(branch).values(), expected)
+}
+
+test "compaction gradients count broadcast repetitions and noncontiguous views" {
+    var values:float[] = [1.0, 2.0, 3.0, 4.0]
+    var flags:bool[] = [true, false, true, true, false, true, false, true]
+    var input = Autograd.Variable(Tensor(values, [2, 2]))
+    input.value().transpose().masked_select(Tensor(flags, [2, 2, 2])).sum().backward()
+    var expected:float[] = [1.0, 1.0, 1.0, 2.0]
+    mask_near(mask_gradient(input).values(), expected)
+    let empty = Tensor.vector(values).masked_select(Tensor.scalar(false))
+    assert(empty.shape()[0] == 0 && empty.values().is_empty())
+    var booleans:bool[] = [true, false, true]
+    let compact = Tensor.vector(booleans).masked_select(Tensor.vector(booleans)).bool_values()
+    assert(compact.count() == 2 && compact[0] && compact[1])
+}
+
+test "NaN infinity and signed zero comparison semantics" {
+    let nan = Math.sqrt(-1.0)
+    let infinity = Math.exp(1000.0)
+    var values:float[] = [nan, infinity, -infinity, -0.0, 0.0, 2.0]
+    let input = Tensor.vector(values)
+    let equality = input.equal(input).bool_values()
+    let inequality = input.not_equal(input).bool_values()
+    assert(!equality[0] && inequality[0] && equality[1] && !inequality[1])
+    let order = input.greater_equal(0.0).bool_values()
+    assert(!order[0] && order[1] && !order[2] && order[3] && order[4])
+    var flags:bool[] = [false, true, false]
+    var a:float[] = [nan, 4.0, nan]
+    var b:float[] = [2.0, nan, 3.0]
+    var left = Autograd.Variable(Tensor.vector(a))
+    var right = Autograd.Variable(Tensor.vector(b))
+    let output = Tensor.where(Tensor.vector(flags), left.value(), right.value())
+    var expected:float[] = [2.0, 4.0, 3.0]
+    mask_near(output.values(), expected)
+    output.sum().backward()
+    var left_gradient:float[] = [0.0, 1.0, 0.0]
+    var right_gradient:float[] = [1.0, 0.0, 1.0]
+    mask_near(mask_gradient(left).values(), left_gradient)
+    mask_near(mask_gradient(right).values(), right_gradient)
+}
+
+test "boolean composition equality logic and empty broadcasting" {
+    var flags:bool[] = [true, false, true]
+    let a = Tensor.vector(flags)
+    let joined = Tensor.concatenate([a, a.logical_not()], 0).bool_values()
+    assert(joined.count() == 6 && joined[0] && !joined[3] && joined[4])
+    let stacked = Tensor.stack([a, a], 1).transpose().bool_values()
+    assert(stacked.count() == 6 && stacked[0] && !stacked[1] && stacked[3])
+    assert(a.equal(a).logical_and(a.not_equal(false)).bool_values()[0])
+    assert(a.logical_or(false).bool_values()[2])
+    assert(!a.logical_and(false).bool_values()[0])
+    let empty = Tensor.zeros([0, 3]).equal(Tensor.ones([1, 3]))
+    assert(empty.dtype().is_boolean() && empty.bool_values().is_empty())
+    assert(Tensor.where(empty, Tensor.zeros([0, 3]), Tensor.ones([1, 3])).values().is_empty())
+}
+
+func gpu_mask_gradient_case(device:GPU.Device) {
+    var flags:bool[] = [true, false, false, true, true]
+    let nan = Math.sqrt(-1.0)
+    var a:float[] = [3.0, nan, nan, 4.0, 5.0]
+    var b:float[] = [nan, 2.0, 1.0, nan, nan]
+    var left = Autograd.Variable(Tensor.vector(a).to(device))
+    var right = Autograd.Variable(Tensor.vector(b).to(device))
+    let mask = Tensor.vector(flags).to(device)
+    var profile = Profile(device)
+    let loss = Tensor.where(mask, left.value(), right.value()).sum()
+    loss.backward()
+    let stats = profile.snapshot()
+    assert(stats.uploads == 0 && stats.downloads == 0)
+    var a_grad:float[] = [1.0, 0.0, 0.0, 1.0, 1.0]
+    var b_grad:float[] = [0.0, 1.0, 1.0, 0.0, 0.0]
+    mask_near(mask_gradient(left).cpu().values(), a_grad)
+    mask_near(mask_gradient(right).cpu().values(), b_grad)
+    assert(loss.detach().cpu().item() == 15.0)
+}
+
+test "GPU masked backward ignores unselected NaN" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    gpu_mask_gradient_case(device)
+}
+
+test "GPU rank five strided broadcasting and exact boolean transfer bytes" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var flags:bool[] = [true, false, true, false, true]
+    var profile = Profile(device)
+    let mask = Tensor.vector(flags).to(device)
+    let uploaded = profile.snapshot()
+    assert(uploaded.uploaded_bytes == 5 && uploaded.active_bytes == 8)
+    let compact = mask.narrow(0, 1, 3).contiguous()
+    let joined = Tensor.concatenate([compact, mask], 0)
+    let roundtrip = joined.cpu().bool_values()
+    assert(roundtrip.count() == 8 && !roundtrip[0] && roundtrip[1] && !roundtrip[2] && roundtrip[3] && roundtrip[7])
+    var values:float[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    let source = Tensor(values, [1, 1, 1, 2, 3]).to(device).permute([0, 1, 2, 4, 3])
+    let cpu = Tensor(values, [1, 1, 1, 2, 3]).permute([0, 1, 2, 4, 3])
+    let lower = Tensor.full([1, 1, 1, 3, 1], 3.0).to(device)
+    let expected = cpu.greater_than(Tensor.full([1, 1, 1, 3, 1], 3.0)).bool_values()
+    let actual = source.greater_than(lower).logical_or(source.equal(3.0)).logical_not().cpu().bool_values()
+    var i = 0
+    while i < actual.count() { assert(actual[i] == !(expected[i] || cpu.values()[i] == 3.0)); i++ }
+    let selected = Tensor.where(source.less_equal(lower), source, lower).cpu().values()
+    var expected_values:float[] = [1.0, 3.0, 2.0, 3.0, 3.0, 3.0]
+    mask_near(selected, expected_values)
+    let empty = Tensor.zeros([0, 3]).to(device)
+    profile.reset()
+    let no_values = empty.less_than(1.0)
+    let empty_selection = Tensor.where(no_values, empty, empty)
+    let stats = profile.snapshot()
+    assert(stats.dispatches == 0 && stats.submissions == 0 && stats.uploads == 0 && stats.downloads == 0)
+    assert(empty_selection.cpu().values().is_empty())
+}
+
+test "exact int8 masks and selection" {
+    var values:int8[] = [0 as int8, (127 as int8) - (1 as int8), 127 as int8]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(127 as int8)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as int8)).int8_values()
+    assert(result[0] == 0 as int8 && result[1] == values[1] && result[2] == 1 as int8)
+}
+
+test "exact uint8 masks and selection" {
+    var values:uint8[] = [0 as uint8, (255 as uint8) - (1 as uint8), 255 as uint8]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(255 as uint8)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as uint8)).uint8_values()
+    assert(result[0] == 0 as uint8 && result[1] == values[1] && result[2] == 1 as uint8)
+}
+
+test "exact int16 masks and selection" {
+    var values:int16[] = [0 as int16, (32767 as int16) - (1 as int16), 32767 as int16]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(32767 as int16)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as int16)).int16_values()
+    assert(result[0] == 0 as int16 && result[1] == values[1] && result[2] == 1 as int16)
+}
+
+test "exact uint16 masks and selection" {
+    var values:uint16[] = [0 as uint16, (65535 as uint16) - (1 as uint16), 65535 as uint16]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(65535 as uint16)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as uint16)).uint16_values()
+    assert(result[0] == 0 as uint16 && result[1] == values[1] && result[2] == 1 as uint16)
+}
+
+test "exact int32 masks and selection" {
+    var values:int32[] = [0 as int32, (2147483647 as int32) - (1 as int32), 2147483647 as int32]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(2147483647 as int32)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as int32)).int32_values()
+    assert(result[0] == 0 as int32 && result[1] == values[1] && result[2] == 1 as int32)
+}
+
+test "exact uint32 masks and selection" {
+    var values:uint32[] = [0 as uint32, (4294967295 as uint32) - (1 as uint32), 4294967295 as uint32]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(4294967295 as uint32)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as uint32)).uint32_values()
+    assert(result[0] == 0 as uint32 && result[1] == values[1] && result[2] == 1 as uint32)
+}
+
+test "exact int64 masks and selection" {
+    var values:int64[] = [0 as int64, (9223372036854775807 as int64) - (1 as int64), 9223372036854775807 as int64]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(9223372036854775807 as int64)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as int64)).int64_values()
+    assert(result[0] == 0 as int64 && result[1] == values[1] && result[2] == 1 as int64)
+}
+
+test "exact uint64 masks and selection" {
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    var values:uint64[] = [0 as uint64, (maximum) - (1 as uint64), maximum]
+    let input = Tensor.vector(values)
+    let mask = input.less_than(maximum)
+    let flags = mask.bool_values()
+    assert(flags[0] && flags[1] && !flags[2])
+    let equal = input.equal(input).bool_values()
+    assert(equal[0] && equal[1] && equal[2])
+    let result = Tensor.where(mask, input, Tensor.scalar(1 as uint64)).uint64_values()
+    assert(result[0] == 0 as uint64 && result[1] == values[1] && result[2] == 1 as uint64)
+}
+
+test "all six comparisons agree with scalar relations" {
+    var values:float[] = [-2.0, 0.0, 2.0]
+    let input = Tensor.vector(values)
+    let eq = input.equal(0.0).bool_values()
+    let ne = input.not_equal(0.0).bool_values()
+    let lt = input.less_than(0.0).bool_values()
+    let le = input.less_equal(0.0).bool_values()
+    let gt = input.greater_than(0.0).bool_values()
+    let ge = input.greater_equal(0.0).bool_values()
+    var i = 0
+    while i < 3 {
+        assert(eq[i] == (values[i] == 0.0) && ne[i] == (values[i] != 0.0))
+        assert(lt[i] == (values[i] < 0.0) && le[i] == (values[i] <= 0.0))
+        assert(gt[i] == (values[i] > 0.0) && ge[i] == (values[i] >= 0.0))
+        i++
+    }
+}
+
+test "GPU broadcast branch gradients and aliases" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var a:float[] = [1.0, 2.0, 3.0]
+    var b:float[] = [10.0, 20.0]
+    var flags:bool[] = [true, false, true, false, true, false]
+    var left = Autograd.Variable(Tensor(a, [1, 3]).to(device))
+    var right = Autograd.Variable(Tensor(b, [2, 1]).to(device))
+    let mask = Tensor(flags, [2, 3]).to(device)
+    Tensor.where(mask, left.value(), right.value()).sum().backward()
+    var expected_left:float[] = [1.0, 1.0, 1.0]
+    var expected_right:float[] = [1.0, 2.0]
+    mask_near(mask_gradient(left).cpu().values(), expected_left)
+    mask_near(mask_gradient(right).cpu().values(), expected_right)
+    var alias = Autograd.Variable(Tensor.vector(a).to(device))
+    Tensor.where(mask.narrow(0, 0, 1).flatten(), alias.value(), alias.value()).sum().backward()
+    mask_near(mask_gradient(alias).cpu().values(), expected_left)
+}

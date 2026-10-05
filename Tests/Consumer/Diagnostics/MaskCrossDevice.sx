@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    var device = GPU.Device(); var other = GPU.Device(); let result = Tensor.where(Tensor.scalar(true).to(other), Tensor.scalar(1.0).to(device), Tensor.scalar(2.0).to(device))
+    print(result.count())
+}

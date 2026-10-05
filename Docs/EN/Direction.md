@@ -26,7 +26,9 @@ remains eager and attached to executed operations.
 
 - nine dense CPU dtypes with views, broadcasting, reductions, and checked
   linear algebra;
-- bit-exact transfer of all nine dtypes between CPU and GPU;
+- boolean masks, broadcast comparisons, logic, and selection of differentiable
+  numeric branches;
+- bit-exact transfer of all nine numeric dtypes and booleans between CPU and GPU;
 - resident `float32` GPU computation without fallback or implicit readback;
 - eager reverse-mode `float32` autodifferentiation, named parameters, SGD,
   Adam, and global-norm clipping;

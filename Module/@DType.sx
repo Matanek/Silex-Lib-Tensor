@@ -13,15 +13,18 @@ public struct DType {
     static func int64() DType { return DType(code:7) }
     static func uint64() DType { return DType(code:8) }
 
+    static func boolean() DType { return DType(code:9) }
+    func is_boolean() bool { return self.code == 9 }
+
     func byte_width() int {
-        if self.code == 1 || self.code == 2 { return 1 }
+        if self.code == 1 || self.code == 2 || self.code == 9 { return 1 }
         if self.code == 3 || self.code == 4 { return 2 }
         if self.code == 7 || self.code == 8 { return 8 }
         return 4
     }
 
     func is_floating() bool { return self.code == 0 }
-    func is_integer() bool { return !self.is_floating() }
+    func is_integer() bool { return self.code >= 1 && self.code <= 8 }
     func is_signed_integer() bool {
         return self.code == 1 || self.code == 3 || self.code == 5 || self.code == 7
     }

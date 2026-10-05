@@ -8,15 +8,19 @@ contrats de chaque opération.
 
 | Famille | Dtypes CPU | Dtypes GPU | Différentiable |
 | --- | --- | --- | --- |
-| Construction, vues, `reshape`, `permute`, `select`, `narrow` | les neuf | métadonnées des neuf | vues `float32` suivies |
+| Construction, vues, `reshape`, `permute`, `select`, `narrow` | les neuf + booléens | métadonnées des neuf + booléens | vues `float32` suivies |
 | `add`, `subtract`, `multiply`, `divide` | les neuf | `float32` | `float32` |
 | `negate` | `float32`, entiers signés | `float32` | `float32` |
 | `abs` | les neuf | `float32` | `float32` hors zéro |
 | `exp`, `log`, `sqrt` | `float32` | `float32` | oui |
 | `sum`, `min`, `max` | les neuf | `float32` | `sum` seulement |
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` aussi entiers | `float32` | `float32` |
-| `concatenate`, `stack` | les neuf | les neuf résidents | `float32` |
+| `concatenate`, `stack` | les neuf + booléens | les neuf + booléens résidents | `float32` |
 | `gather` | source quelconque, indices `int32` | source `float32`, indices `int32` | source `float32` |
+| comparaisons numériques | les neuf | `float32` | non, résultat booléen détaché |
+| égalité booléenne, logique | booléens | booléens | non |
+| `where` | branches : les neuf ; masque booléen | branches `float32` ; masque booléen | branches `float32` |
+| `masked_select` | les neuf + booléens | refus explicite | source `float32` |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
 
 « Les neuf » désigne `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -34,6 +38,9 @@ une conversion numérique contrôlée sur CPU ; un tenseur GPU suit explicitemen
 `values()`, `item()` et `at()` lisent exclusivement `float32`. Chaque entier
 possède ses variantes exactes, par exemple `int32_values()`, `int32_item()` et
 `int32_at(indices)`. Une extraction d'un autre dtype échoue sans conversion.
+`bool_values()`, `bool_item()` et `bool_at(indices)` extraient les booléens.
+`cast` ne convertit pas entre booléens et nombres. Le [guide des masques](Masks.md)
+détaille les comparaisons, gradients et limites de compaction.
 Toute extraction GPU exige d'abord `cpu()`.
 
 ## Overflow et valeurs flottantes

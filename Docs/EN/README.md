@@ -1,11 +1,12 @@
 # Tensor
 
-`Tensor` represents a dense numerical value without exposing its storage. The
+`Tensor` represents a dense numeric or boolean value without exposing its storage. The
 same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
-64-bit integers on both CPU and GPU.
+64-bit integers, as well as boolean masks, on both CPU and GPU.
 
 ## Reading paths
 
+- Select [values with masks](Masks.md), with branch gradients.
 - Observe [GPU costs by period](Profiling.md) before optimizing a chain.
 - Start here to construct, transform, compute, differentiate, and train.
 - Consult the [compatibility reference](Reference.md) for dtypes, placements,

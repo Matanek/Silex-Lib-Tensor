@@ -8,15 +8,19 @@ contract.
 
 | Family | CPU dtypes | GPU dtypes | Differentiable |
 | --- | --- | --- | --- |
-| Construction, views, `reshape`, `permute`, `select`, `narrow` | all nine | metadata for all nine | tracked `float32` views |
+| Construction, views, `reshape`, `permute`, `select`, `narrow` | all nine + booleans | metadata for all nine + booleans | tracked `float32` views |
 | `add`, `subtract`, `multiply`, `divide` | all nine | `float32` | `float32` |
 | `negate` | `float32`, signed integers | `float32` | `float32` |
 | `abs` | all nine | `float32` | `float32` away from zero |
 | `exp`, `log`, `sqrt` | `float32` | `float32` | yes |
 | `sum`, `min`, `max` | all nine | `float32` | `sum` only |
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` also integers | `float32` | `float32` |
-| `concatenate`, `stack` | all nine | all nine when resident | `float32` |
+| `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
+| numeric comparisons | all nine | `float32` | no, detached boolean output |
+| boolean equality, logic | booleans | booleans | no |
+| `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
+| `masked_select` | all nine + booleans | explicit rejection | `float32` source |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
 
 “All nine” means `float32`, `int8`, `uint8`, `int16`, `uint16`, `int32`,
@@ -33,7 +37,10 @@ checked numerical conversion on the CPU; a GPU tensor follows the explicit
 
 `values()`, `item()`, and `at()` read `float32` only. Every integer has exact
 forms such as `int32_values()`, `int32_item()`, and `int32_at(indices)`.
-Extracting another dtype fails without conversion. GPU extraction first
+Extracting another dtype fails without conversion.
+`bool_values()`, `bool_item()`, and `bool_at(indices)` extract booleans.
+`cast` does not convert between booleans and numbers. The [mask guide](Masks.md)
+details comparisons, gradients, and compaction limits. GPU extraction first
 requires `cpu()`.
 
 ## Overflow and floating values

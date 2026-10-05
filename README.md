@@ -1,7 +1,7 @@
 # Tensor
 
 `Tensor` provides Silex's multidimensional numerical foundation. One immutable
-public value covers `float32` and eight integer dtypes, explicit CPU/GPU
+public value covers `float32`, eight integer dtypes, and boolean masks, explicit CPU/GPU
 placement, lossless transfers, shared shape views, typed indexing, broadcasting,
 checked numerical computation, seeded initialization, and eager neural
 primitives for dense, convolutional, and recurrent models. Its eager
@@ -24,6 +24,7 @@ silex install Tensor
 - [French API reference](Docs/FR/Reference.md) · [English](Docs/EN/Reference.md)
 - [French design direction](Docs/FR/Direction.md) · [English](Docs/EN/Direction.md)
 - [French training recipes](Docs/FR/Recipes/Training.md) · [English](Docs/EN/Recipes/Training.md)
+- [French mask guide](Docs/FR/Masks.md) · [English](Docs/EN/Masks.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 

@@ -8,6 +8,7 @@ public struct Tensor {
     init(values:float[], shape:int[]) { require_element_count(shape, values.count(), 4); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:int8[], shape:int[]) { require_element_count(shape, values.count(), 1); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:uint8[], shape:int[]) { require_element_count(shape, values.count(), 1); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
+    init(values:bool[], shape:int[]) { require_element_count(shape, values.count(), 1); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:int16[], shape:int[]) { require_element_count(shape, values.count(), 2); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:uint16[], shape:int[]) { require_element_count(shape, values.count(), 2); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
     init(values:int32[], shape:int[]) { require_element_count(shape, values.count(), 4); self.current_storage = Storage.cpu(CPUStorage(values)); self.current_layout = Layout(shape) }
@@ -18,6 +19,7 @@ public struct Tensor {
     static func scalar(value:float) Tensor { var values:float[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
     static func scalar(value:int8) Tensor { var values:int8[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
     static func scalar(value:uint8) Tensor { var values:uint8[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
+    static func scalar(value:bool) Tensor { var values:bool[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
     static func scalar(value:int16) Tensor { var values:int16[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
     static func scalar(value:uint16) Tensor { var values:uint16[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
     static func scalar(value:int32) Tensor { var values:int32[] = [value]; var shape:int[] = []; return Tensor(values, shape) }
@@ -28,6 +30,7 @@ public struct Tensor {
     static func vector(values:float[]) Tensor { return Tensor(values, vector_shape(values.count())) }
     static func vector(values:int8[]) Tensor { return Tensor(values, vector_shape(values.count())) }
     static func vector(values:uint8[]) Tensor { return Tensor(values, vector_shape(values.count())) }
+    static func vector(values:bool[]) Tensor { return Tensor(values, vector_shape(values.count())) }
     static func vector(values:int16[]) Tensor { return Tensor(values, vector_shape(values.count())) }
     static func vector(values:uint16[]) Tensor { return Tensor(values, vector_shape(values.count())) }
     static func vector(values:int32[]) Tensor { return Tensor(values, vector_shape(values.count())) }
@@ -38,6 +41,7 @@ public struct Tensor {
     static func matrix(values:float[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
     static func matrix(values:int8[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
     static func matrix(values:uint8[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
+    static func matrix(values:bool[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
     static func matrix(values:int16[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
     static func matrix(values:uint16[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
     static func matrix(values:int32[], rows:int, columns:int) Tensor { return Tensor(values, matrix_shape(rows, columns)) }
@@ -50,6 +54,7 @@ public struct Tensor {
     static func full(shape:int[], value:float) Tensor { return Tensor.full_values<float>(shape, value, 4) }
     static func full(shape:int[], value:int8) Tensor { return Tensor.full_values<int8>(shape, value, 1) }
     static func full(shape:int[], value:uint8) Tensor { return Tensor.full_values<uint8>(shape, value, 1) }
+    static func full(shape:int[], value:bool) Tensor { return Tensor.full_values<bool>(shape, value, 1) }
     static func full(shape:int[], value:int16) Tensor { return Tensor.full_values<int16>(shape, value, 2) }
     static func full(shape:int[], value:uint16) Tensor { return Tensor.full_values<uint16>(shape, value, 2) }
     static func full(shape:int[], value:int32) Tensor { return Tensor.full_values<int32>(shape, value, 4) }
@@ -71,6 +76,7 @@ public struct Tensor {
     func values() float[] { self.require_extraction(DType.float32(), "values"); return gather_values<float>(self.cpu_storage().float_values(), self.current_layout) }
     func int8_values() int8[] { self.require_extraction(DType.int8(), "int8_values"); return gather_values<int8>(self.cpu_storage().int8_values(), self.current_layout) }
     func uint8_values() uint8[] { self.require_extraction(DType.uint8(), "uint8_values"); return gather_values<uint8>(self.cpu_storage().uint8_values(), self.current_layout) }
+    func bool_values() bool[] { self.require_extraction(DType.boolean(), "bool_values"); return gather_values<bool>(self.cpu_storage().bool_values(), self.current_layout) }
     func int16_values() int16[] { self.require_extraction(DType.int16(), "int16_values"); return gather_values<int16>(self.cpu_storage().int16_values(), self.current_layout) }
     func uint16_values() uint16[] { self.require_extraction(DType.uint16(), "uint16_values"); return gather_values<uint16>(self.cpu_storage().uint16_values(), self.current_layout) }
     func int32_values() int32[] { self.require_extraction(DType.int32(), "int32_values"); return gather_values<int32>(self.cpu_storage().int32_values(), self.current_layout) }
@@ -81,6 +87,7 @@ public struct Tensor {
     func item() float { return only_item<float>(self.values(), "item") }
     func int8_item() int8 { return only_item<int8>(self.int8_values(), "int8_item") }
     func uint8_item() uint8 { return only_item<uint8>(self.uint8_values(), "uint8_item") }
+    func bool_item() bool { return only_item<bool>(self.bool_values(), "bool_item") }
     func int16_item() int16 { return only_item<int16>(self.int16_values(), "int16_item") }
     func uint16_item() uint16 { return only_item<uint16>(self.uint16_values(), "uint16_item") }
     func int32_item() int32 { return only_item<int32>(self.int32_values(), "int32_item") }
@@ -91,6 +98,7 @@ public struct Tensor {
     func at(indices:int[]) float { self.require_extraction(DType.float32(), "at"); return self.cpu_storage().float_values()[self.current_layout.storage_index(indices)] }
     func int8_at(indices:int[]) int8 { self.require_extraction(DType.int8(), "int8_at"); return self.cpu_storage().int8_values()[self.current_layout.storage_index(indices)] }
     func uint8_at(indices:int[]) uint8 { self.require_extraction(DType.uint8(), "uint8_at"); return self.cpu_storage().uint8_values()[self.current_layout.storage_index(indices)] }
+    func bool_at(indices:int[]) bool { self.require_extraction(DType.boolean(), "bool_at"); return self.cpu_storage().bool_values()[self.current_layout.storage_index(indices)] }
     func int16_at(indices:int[]) int16 { self.require_extraction(DType.int16(), "int16_at"); return self.cpu_storage().int16_values()[self.current_layout.storage_index(indices)] }
     func uint16_at(indices:int[]) uint16 { self.require_extraction(DType.uint16(), "uint16_at"); return self.cpu_storage().uint16_values()[self.current_layout.storage_index(indices)] }
     func int32_at(indices:int[]) int32 { self.require_extraction(DType.int32(), "int32_at"); return self.cpu_storage().int32_values()[self.current_layout.storage_index(indices)] }
@@ -132,6 +140,7 @@ public struct Tensor {
     func cast(dtype:DType) Tensor {
         if self.is_gpu() { panic("Tensor.cast is CPU-only; call cpu().cast(dtype)") }
         if dtype == self.dtype() { return self }
+        if dtype.is_boolean() || self.dtype().is_boolean() { panic("Tensor.cast does not convert between boolean and numeric dtypes") }
         self.require_no_autograd_transfer("cast")
         let physical_size = checked_byte_count(self.count(), dtype.byte_width())
         var storage = cast_storage(self.cpu_storage(), self.current_layout, dtype)
@@ -155,12 +164,201 @@ public struct Tensor {
         return match self.current_storage { gpu(value) => Tensor.from_storage(Storage.cpu(value.cpu_storage()), self.current_layout); else => self }
     }
 
+    func equal(other:Tensor) Tensor { return self.compare(other, 0) }
+    func equal(other:float) Tensor { return self.compare_scalar(other, 0) }
+    func equal(other:int8) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:int16) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:int32) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:int64) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 0) }
+    func equal(other:bool) Tensor { return self.boolean_scalar(other, 0) }
+    func not_equal(other:Tensor) Tensor { return self.compare(other, 1) }
+    func not_equal(other:float) Tensor { return self.compare_scalar(other, 1) }
+    func not_equal(other:int8) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:int16) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:int32) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:int64) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 1) }
+    func not_equal(other:bool) Tensor { return self.boolean_scalar(other, 1) }
+    func less_than(other:Tensor) Tensor { return self.compare(other, 2) }
+    func less_than(other:float) Tensor { return self.compare_scalar(other, 2) }
+    func less_than(other:int8) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:int16) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:int32) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:int64) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_than(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 2) }
+    func less_equal(other:Tensor) Tensor { return self.compare(other, 3) }
+    func less_equal(other:float) Tensor { return self.compare_scalar(other, 3) }
+    func less_equal(other:int8) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:int16) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:int32) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:int64) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func less_equal(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 3) }
+    func greater_than(other:Tensor) Tensor { return self.compare(other, 4) }
+    func greater_than(other:float) Tensor { return self.compare_scalar(other, 4) }
+    func greater_than(other:int8) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:int16) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:int32) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:int64) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_than(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 4) }
+    func greater_equal(other:Tensor) Tensor { return self.compare(other, 5) }
+    func greater_equal(other:float) Tensor { return self.compare_scalar(other, 5) }
+    func greater_equal(other:int8) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:uint8) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:int16) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:uint16) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:int32) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:uint32) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:int64) Tensor { return self.compare(Tensor.scalar(other), 5) }
+    func greater_equal(other:uint64) Tensor { return self.compare(Tensor.scalar(other), 5) }
+
+    func logical_not() Tensor { self.require_boolean("logical_not"); return self.boolean_operation(self, 6) }
+    func logical_and(other:Tensor) Tensor { return self.boolean_operation(other, 7) }
+    func logical_or(other:Tensor) Tensor { return self.boolean_operation(other, 8) }
+    func logical_and(other:bool) Tensor { return self.boolean_scalar(other, 7) }
+    func logical_or(other:bool) Tensor { return self.boolean_scalar(other, 8) }
+
+    static func where(mask:Tensor, when_true:Tensor, when_false:Tensor) Tensor {
+        mask.require_boolean("where mask")
+        when_true.require_pair_compatibility(when_false, "where")
+        if when_true.dtype().is_boolean() { panic("Tensor.where branches must use a numeric dtype") }
+        mask.require_mask_placement(when_true, "where")
+        let shape = broadcast_shape(broadcast_shape(mask.shape(), when_true.shape(), "where"), when_false.shape(), "where")
+        var result = when_true
+        if mask.is_gpu() {
+            when_true.require_gpu_float_compute("where")
+            var source = mask.gpu_storage()
+            result = Tensor.from_storage(Storage.gpu(source.mask_compute(
+                when_true.gpu_storage(), when_false.gpu_storage(), mask.current_layout,
+                when_true.current_layout, when_false.current_layout, shape, 9, DType.float32(), false, false, 0.0
+            )), Layout(shape))
+        } else {
+            result = Tensor.from_storage(Storage.cpu(where_cpu_storage(
+                mask.cpu_storage().bool_values(), mask.current_layout,
+                when_true.cpu_storage(), when_true.current_layout,
+                when_false.cpu_storage(), when_false.current_layout, shape
+            )), Layout(shape))
+        }
+        return autograd_record(result, AutogradRule.masked(
+            mask.autograd_detached(), autograd_input(when_true), autograd_input(when_false)
+        ))
+    }
+
+    func masked_select(mask:Tensor) Tensor {
+        mask.require_boolean("masked_select mask")
+        self.require_mask_placement(mask, "masked_select")
+        if self.is_gpu() { panic("Tensor.masked_select is CPU-only; call cpu() explicitly") }
+        let shape = broadcast_shape(self.shape(), mask.shape(), "masked_select")
+        if self.count() > 2147483647 { panic("Tensor.masked_select source count exceeds int32 indices") }
+        let flags = mask.cpu_storage().bool_values()
+        let source = Layout(self.shape())
+        var indices:int32[] = []
+        let count = shape_product(shape)
+        var logical = 0
+        while logical < count {
+            if flags[mask.current_layout.broadcast_storage_index(logical, shape)] {
+                indices.append(source.broadcast_storage_index(logical, shape) as int32)
+            }
+            logical++
+        }
+        return self.contiguous().flatten().gather(0, Tensor.vector(indices))
+    }
+
+    private func require_boolean(operation:str) {
+        if !self.dtype().is_boolean() { panic("Tensor.$(operation) requires dtype boolean") }
+    }
+    private func require_mask_placement(other:Tensor, operation:str) {
+        if self.is_cpu() != other.is_cpu() { panic("Tensor.$(operation) requires matching placements") }
+        if self.is_gpu() {
+            var left = self.gpu_storage()
+            if !left.same_device(other.gpu_storage()) { panic("Tensor.$(operation) requires tensors on the same GPU device") }
+        }
+    }
+    private func compare(other:Tensor, operation:int) Tensor {
+        self.require_pair_compatibility(other, "comparison")
+        if self.dtype().is_boolean() {
+            if operation > 1 { panic("Tensor ordered comparisons require a numeric dtype") }
+            return self.boolean_operation(other, operation)
+        }
+        let shape = broadcast_shape(self.shape(), other.shape(), "comparison")
+        if self.is_gpu() {
+            self.require_gpu_float_compute("comparison")
+            var source = self.gpu_storage()
+            var result = source.mask_compute(other.gpu_storage(), other.gpu_storage(), self.current_layout,
+                other.current_layout, other.current_layout, shape, operation, DType.boolean(), false, false, 0.0)
+            return Tensor.from_storage(Storage.gpu(result), Layout(shape))
+        }
+        return Tensor.from_storage(Storage.cpu(compare_cpu_storage(self.cpu_storage(), self.current_layout,
+            other.cpu_storage(), other.current_layout, shape, operation)), Layout(shape))
+    }
+    private func compare_scalar(value:float, operation:int) Tensor {
+        if self.dtype() != DType.float32() { panic("Tensor comparison requires matching dtypes") }
+        if self.is_cpu() { return self.compare(Tensor.scalar(value), operation) }
+        var source = self.gpu_storage()
+        var result = source.mask_compute(source, source, self.current_layout, Layout([]), Layout([]),
+            self.shape(), operation, DType.boolean(), false, true, value)
+        return Tensor.from_storage(Storage.gpu(result), Layout(self.shape()))
+    }
+    private func boolean_scalar(value:bool, operation:int) Tensor {
+        self.require_boolean("boolean operation")
+        if self.is_cpu() { return self.boolean_operation(Tensor.scalar(value), operation) }
+        var scalar = 0.0
+        if value { scalar = 1.0 }
+        var source = self.gpu_storage()
+        var result = source.mask_compute(source, source, self.current_layout, Layout([]), Layout([]),
+            self.shape(), operation, DType.boolean(), true, true, scalar)
+        return Tensor.from_storage(Storage.gpu(result), Layout(self.shape()))
+    }
+    private func boolean_operation(other:Tensor, operation:int) Tensor {
+        self.require_boolean("boolean operation")
+        self.require_pair_compatibility(other, "boolean operation")
+        let shape = broadcast_shape(self.shape(), other.shape(), "boolean operation")
+        if self.is_gpu() {
+            var source = self.gpu_storage()
+            var result = source.mask_compute(other.gpu_storage(), other.gpu_storage(), self.current_layout,
+                other.current_layout, other.current_layout, shape, operation, DType.boolean(), true, false, 0.0)
+            return Tensor.from_storage(Storage.gpu(result), Layout(shape))
+        }
+        let left = self.cpu_storage().bool_values()
+        let right = other.cpu_storage().bool_values()
+        var values:bool[] = []
+        let count = shape_product(shape)
+        var index = 0
+        while index < count {
+            let a = left[self.current_layout.broadcast_storage_index(index, shape)]
+            let b = right[other.current_layout.broadcast_storage_index(index, shape)]
+            if operation == 0 { values.append(a == b) }
+            elif operation == 1 { values.append(a != b) }
+            elif operation == 6 { values.append(!a) }
+            elif operation == 7 { values.append(a && b) }
+            else { values.append(a || b) }
+            index++
+        }
+        return Tensor(values, shape)
+    }
+
     private static func from_storage(storage:Storage, layout:Layout) Tensor { return Tensor(values:storage, shape:layout) }
     private init(values:Storage, shape:Layout) { self.current_storage = values; self.current_layout = shape }
 
     private static func filled(shape:int[], dtype:DType, value:float) Tensor {
         let count = shape_product(shape)
         let physical_size = checked_byte_count(count, dtype.byte_width())
+        if dtype.is_boolean() { return Tensor.full_values<bool>(shape, value != 0.0, 1) }
         if dtype == DType.float32() { return Tensor.full_values<float>(shape, value, 4) }
         if dtype == DType.int8() { return Tensor.full_values<int8>(shape, value as int8, 1) }
         if dtype == DType.uint8() { return Tensor.full_values<uint8>(shape, value as uint8, 1) }
@@ -181,6 +379,7 @@ public struct Tensor {
     }
 
     module func binary(other:Tensor, operation:BinaryOperation) Tensor {
+        if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         self.require_pair_compatibility(other, binary_name(operation))
         let shape = broadcast_shape(self.shape(), other.shape(), binary_name(operation))
         if self.is_gpu() {
@@ -224,6 +423,7 @@ public struct Tensor {
     }
 
     module func unary(operation:UnaryOperation) Tensor {
+        if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         if self.is_gpu() {
             self.require_gpu_float_compute(unary_name(operation))
             var storage = self.gpu_storage()
@@ -242,6 +442,7 @@ public struct Tensor {
     }
 
     module func reduction(axes:int[]?, keep_dimensions:bool, operation:ReductionOperation) Tensor {
+        if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         let name = reduction_name(operation)
         if operation == ReductionOperation.mean && self.dtype() != DType.float32() {
             panic("Tensor.mean supports only dtype float32; call cast(DType.float32())")
@@ -267,6 +468,7 @@ public struct Tensor {
     }
 
     module func linear(other:Tensor, operation:LinearOperation) Tensor {
+        if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         let name = linear_name(operation)
         self.require_pair_compatibility(other, name)
         let shape = linear_shape(self.current_layout, other.current_layout, operation)

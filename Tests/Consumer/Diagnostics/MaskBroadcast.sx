@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    let result = Tensor.zeros([2]).less_than(Tensor.zeros([3]))
+    print(result.count())
+}

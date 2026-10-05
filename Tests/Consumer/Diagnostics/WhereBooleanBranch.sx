@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    let result = Tensor.where(Tensor.scalar(true), Tensor.scalar(true), Tensor.scalar(false))
+    print(result.count())
+}

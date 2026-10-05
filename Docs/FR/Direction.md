@@ -27,7 +27,9 @@ eager et attachée aux opérations exécutées.
 
 - neuf dtypes denses sur CPU, avec vues, broadcasting, réductions et algèbre
   linéaire contrôlée ;
-- transfert bit-exact des neuf dtypes entre CPU et GPU ;
+- masques booléens, comparaisons broadcast, logique et sélection de branches
+  numériques différentiables ;
+- transfert bit-exact des neuf dtypes numériques et des booléens entre CPU et GPU ;
 - calcul GPU `float32` résident, sans fallback ni readback implicite ;
 - autodifférentiation inverse eager de `float32`, paramètres nommés, SGD, Adam
   et écrêtage par norme globale ;

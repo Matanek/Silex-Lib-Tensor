@@ -1,0 +1,18 @@
+use Tensor
+use Tensor.Autograd.Variable
+
+func main() {
+    var values:float[] = [-2.0, 1.0, 3.0]
+    var input = Variable(Tensor.vector(values))
+    let mask = input.value().greater_than(0.0)
+    let selected = Tensor.where(mask, input.value(), Tensor.zeros([3]))
+    selected.sum().backward()
+    let result = selected.detach().values()
+    assert(result[0] == 0.0 && result[1] == 1.0 && result[2] == 3.0)
+    if let gradient = input.gradient() {
+        let gradient_values = gradient.values()
+        assert(gradient_values[0] == 0.0 && gradient_values[1] == 1.0 && gradient_values[2] == 1.0)
+    } else { panic("expected gradient") }
+    let positive = input.value().detach().masked_select(mask).values()
+    assert(positive.count() == 2 && positive[0] == 1.0 && positive[1] == 3.0)
+}

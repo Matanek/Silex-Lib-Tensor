@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Ajout des masques `DType.boolean()`, comparaisons broadcast et logique sur
+  CPU/GPU. `Tensor.where` sélectionne des branches numériques avec gradients
+  broadcast et sans transfert GPU implicite ; `masked_select` compacte sur CPU
+  et différentie la source. Les booléens restent distincts des nombres, avec
+  extractions typées et transferts exacts. Voir le [guide des masques](Docs/FR/Masks.md).
+
 - Ajout de `Tensor.Profile` et `Tensor.ProfileStatistics` : coûts GPU propres à
   Tensor, par device et période, instantanés immuables et reset indépendant.
   Transferts, buffers/bytes actifs et de pointe, staging, fences, soumissions,

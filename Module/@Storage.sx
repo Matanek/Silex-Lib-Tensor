@@ -1,6 +1,7 @@
 use GFX.GPU
 
 enum CPUValues {
+    booleans(bool[])
     floats(float[])
     signed8(int8[])
     unsigned8(uint8[])
@@ -15,6 +16,7 @@ enum CPUValues {
 class CPUStorage {
     private let current_values:CPUValues
 
+    init(values:bool[]) { self.current_values = CPUValues.booleans(values) }
     init(values:float[]) { self.current_values = CPUValues.floats(values) }
     init(values:int8[]) { self.current_values = CPUValues.signed8(values) }
     init(values:uint8[]) { self.current_values = CPUValues.unsigned8(values) }
@@ -28,6 +30,7 @@ class CPUStorage {
 
     func dtype() DType {
         return match self.current_values {
+            booleans(values) => DType.boolean()
             floats(values) => DType.float32()
             signed8(values) => DType.int8()
             unsigned8(values) => DType.uint8()
@@ -42,6 +45,7 @@ class CPUStorage {
 
     func count() int {
         return match self.current_values {
+            booleans(values) => values.count()
             floats(values) => values.count()
             signed8(values) => values.count()
             unsigned8(values) => values.count()
@@ -54,6 +58,7 @@ class CPUStorage {
         }
     }
 
+    func bool_values() bool[] { return match self.current_values { booleans(values) => values; else => storage_mismatch<bool>() } }
     func float_values() float[] { return match self.current_values { floats(values) => values; else => storage_mismatch<float>() } }
     func int8_values() int8[] { return match self.current_values { signed8(values) => values; else => storage_mismatch<int8>() } }
     func uint8_values() uint8[] { return match self.current_values { unsigned8(values) => values; else => storage_mismatch<uint8>() } }
@@ -66,6 +71,7 @@ class CPUStorage {
 
     func materialized(layout:Layout) CPUStorage {
         return match self.current_values {
+            booleans(values) => CPUStorage(gather_values<bool>(values, layout))
             floats(values) => CPUStorage(gather_values<float>(values, layout))
             signed8(values) => CPUStorage(gather_values<int8>(values, layout))
             unsigned8(values) => CPUStorage(gather_values<uint8>(values, layout))
@@ -80,6 +86,7 @@ class CPUStorage {
 
     func gpu(device:GPU.Device) GPUStorage {
         return match self.current_values {
+            booleans(values) => GPUStorage.upload(device, values)
             floats(values) => GPUStorage.upload(device, values)
             signed8(values) => GPUStorage.upload(device, values)
             unsigned8(values) => GPUStorage.upload(device, values)
@@ -93,6 +100,7 @@ class CPUStorage {
     }
 
     static func empty(dtype:DType) CPUStorage {
+        if dtype.is_boolean() { var values:bool[] = []; return CPUStorage(values) }
         if dtype == DType.float32() { var values:float[] = []; return CPUStorage(values) }
         if dtype == DType.int8() { var values:int8[] = []; return CPUStorage(values) }
         if dtype == DType.uint8() { var values:uint8[] = []; return CPUStorage(values) }
@@ -115,6 +123,7 @@ nocopy class GPUKernelCache {
     private static var compilation_count:int = 0
     private var current_device:GPU.Device
     private var elementwise_pipeline:GPU.ComputePipeline? = null
+    private var masks_pipeline:GPU.ComputePipeline? = null
     private var binary_pipeline:GPU.ComputePipeline? = null
     private var reduction_pipeline:GPU.ComputePipeline? = null
     private var linear_pipeline:GPU.ComputePipeline? = null
@@ -140,6 +149,18 @@ nocopy class GPUKernelCache {
             "Tensor float32 elementwise"
         )
         self.elementwise_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
+        return pipeline
+    }
+
+    func masks() GPU.ComputePipeline {
+        if var pipeline = self.masks_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/Masks.hlsl"),
+            "Tensor masks"
+        )
+        self.masks_pipeline = pipeline
         GPUKernelCache.compilation_count++
         self.profile_state.compile_pipeline()
         return pipeline
@@ -344,6 +365,7 @@ nocopy class GPUStorage {
     private var completion:GPU.Fence? = null
     private var parent:GPUStorage? = null
     private var other_parent:GPUStorage? = null
+    private var third_parent:GPUStorage? = null
     private let current_dtype:DType
     private let element_count:int
     private var buffer_bytes:int = 0
@@ -357,7 +379,8 @@ nocopy class GPUStorage {
         parent:GPUStorage?,
         other:GPUStorage?,
         dtype:DType,
-        count:int
+        count:int,
+        third:GPUStorage? = null
     ) {
         self.current_device = device
         self.kernel_cache = cache
@@ -367,6 +390,7 @@ nocopy class GPUStorage {
         self.completion = completion
         self.parent = parent
         self.other_parent = other
+        self.third_parent = third
         self.current_dtype = dtype
         self.element_count = count
     }
@@ -380,6 +404,7 @@ nocopy class GPUStorage {
         if self.buffer_bytes > 0 { self.kernel_cache.profile_state.release(self.buffer_bytes) }
         self.parent = null
         self.other_parent = null
+        self.third_parent = null
     }
 
     func dtype() DType { return self.current_dtype }
@@ -387,6 +412,14 @@ nocopy class GPUStorage {
     func same_device(other:@GPU.Device) bool { return self.current_device == other }
     func same_device(other:@GPUStorage) bool { return self.current_device == other.current_device }
 
+    static func upload(device:GPU.Device, values:bool[]) GPUStorage {
+        if values.is_empty() { return GPUStorage.empty(device, DType.boolean()) }
+        var bytes:uint8[] = []
+        for value in values { if value { bytes.append(1 as uint8) } else { bytes.append(0 as uint8) } }
+        var upload = device.upload_buffer(boolean_buffer_bytes(values.count()), "Tensor boolean upload")
+        upload.write_uint8s(@bytes[0:bytes.count()])
+        return GPUStorage.finish_upload(device, upload, DType.boolean(), values.count())
+    }
     static func upload(device:GPU.Device, values:float[]) GPUStorage {
         let dtype = DType.float32()
         if values.is_empty() { return GPUStorage.empty(device, dtype) }
@@ -465,6 +498,12 @@ nocopy class GPUStorage {
         GPUPerformanceCounters.record_fence()
         self.kernel_cache.profile_state.submit()
         completed.wait()
+        if self.current_dtype.is_boolean() {
+            let bytes = download.read_uint8s(count:self.element_count)
+            var values:bool[] = []
+            for byte in bytes { values.append(byte != 0 as uint8) }
+            return CPUStorage(values)
+        }
         if self.current_dtype == DType.float32() { return CPUStorage(download.read_floats(count:self.element_count)) }
         if self.current_dtype == DType.int8() { return CPUStorage(download.read_int8s(count:self.element_count)) }
         if self.current_dtype == DType.uint8() { return CPUStorage(download.read_uint8s(count:self.element_count)) }
@@ -481,7 +520,7 @@ nocopy class GPUStorage {
         let width = self.current_dtype.byte_width()
         let byte_count = checked_byte_count(layout.count(), width)
         var output = GPUStorage.allocate_buffer(
-            self.current_device, gpu_byte_count(byte_count), "Tensor contiguous storage"
+            self.current_device, storage_buffer_bytes(byte_count, self.current_dtype), "Tensor contiguous storage"
         )
         var commands = self.current_device.commands()
         var transfer = commands.copy()
@@ -502,6 +541,43 @@ nocopy class GPUStorage {
         GPUPerformanceCounters.record_fence()
         self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, self.current_dtype, layout.count())
+    }
+
+    func mask_compute(
+        other:GPUStorage, third:GPUStorage, left_layout:Layout, right_layout:Layout, third_layout:Layout,
+        shape:int[], operation:int, dtype:DType, boolean_input:bool, scalar_input:bool, scalar:float
+    ) GPUStorage {
+        var metadata = mask_metadata(operation, shape, left_layout, right_layout, third_layout, boolean_input, scalar_input)
+        let count = shape_product(shape)
+        require_gpu_uint32(checked_byte_count(self.element_count, self.current_dtype.byte_width()), "mask input byte size")
+        require_gpu_uint32(checked_byte_count(other.element_count, other.current_dtype.byte_width()), "mask input byte size")
+        require_gpu_uint32(checked_byte_count(third.element_count, third.current_dtype.byte_width()), "mask input byte size")
+        let bytes = storage_buffer_bytes(checked_byte_count(count, dtype.byte_width()), dtype)
+        require_gpu_uint32(bytes, "mask output byte size")
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, dtype) }
+        var output = GPUStorage.allocate_buffer(self.current_device,
+            bytes, "Tensor mask result")
+        var pipeline = self.kernel_cache.masks()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        commands.compute_uniform(1, scalar)
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
+        compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
+        compute.storage_buffer(0, self.required_buffer())
+        compute.storage_buffer(1, other.required_buffer())
+        compute.storage_buffer(2, third.required_buffer())
+        var workgroups = count
+        if dtype.is_boolean() { workgroups = count / 4; if count % 4 != 0 { workgroups++ } }
+        compute.dispatch(workgroups)
+        self.kernel_cache.profile_state.dispatch()
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, dtype, count, third)
     }
 
     func scalar(layout:Layout, operation:BinaryOperation, value:float) GPUStorage {
@@ -746,7 +822,7 @@ nocopy class GPUStorage {
         let block = left_block + right_block
         var output = GPUStorage.allocate_buffer(
             self.current_device,
-            gpu_byte_count(checked_byte_count(count, width)),
+            storage_buffer_bytes(checked_byte_count(count, width), self.current_dtype),
             "Tensor concatenated storage"
         )
         var commands = self.current_device.commands()
@@ -1026,7 +1102,7 @@ nocopy class GPUStorage {
         GPUPerformanceCounters.record_upload_staging()
         var profile_state = GPUProfileRegistry.state(device)
         profile_state.upload(byte_count)
-        var buffer = GPUStorage.allocate_buffer(device, gpu_byte_count(byte_count), "Tensor storage")
+        var buffer = GPUStorage.allocate_buffer(device, storage_buffer_bytes(byte_count, dtype), "Tensor storage")
         var commands = device.commands()
         var transfer = commands.copy()
         transfer.upload(upload, buffer, byte_count)
@@ -1055,6 +1131,7 @@ nocopy class GPUStorage {
                 self.upload_buffer = null
                 self.parent = null
                 self.other_parent = null
+                self.third_parent = null
             }
         }
         if var buffer = self.current_buffer { return buffer }
@@ -1375,4 +1452,37 @@ func storage_mismatch<T>() T[] { panic("Tensor internal storage dtype mismatch")
 func gpu_byte_count(logical_count:int) int {
     if logical_count < 4 { return 4 }
     return logical_count
+}
+
+func boolean_buffer_bytes(count:int) int {
+    var words = count / 4
+    if count % 4 != 0 { words++ }
+    let bytes = gpu_byte_count(checked_byte_count(words, 4))
+    require_gpu_uint32(bytes, "boolean buffer byte size")
+    return bytes
+}
+func storage_buffer_bytes(bytes:int, dtype:DType) int {
+    if dtype.is_boolean() { return boolean_buffer_bytes(bytes) }
+    return gpu_byte_count(bytes)
+}
+
+func mask_metadata(operation:int, shape:int[], left:Layout, right:Layout, third:Layout, boolean_input:bool, scalar_input:bool) uint8[] {
+    if shape.count() > 5 { panic("Tensor GPU broadcasting supports ranks up to 5") }
+    require_gpu_layout(left)
+    require_gpu_layout(right)
+    require_gpu_layout(third)
+    let count = shape_product(shape)
+    require_gpu_uint32(count, "element count")
+    var words:uint32[] = [operation as uint32, count as uint32, shape.count() as uint32, left.offset() as uint32,
+        right.offset() as uint32, third.offset() as uint32]
+    if boolean_input { words.append(1 as uint32) } else { words.append(0 as uint32) }
+    if scalar_input { words.append(1 as uint32) } else { words.append(0 as uint32) }
+    append_padded_shape(words, shape)
+    append_padded_broadcast_strides(words, left, shape.count())
+    while words.count() < 24 { words.append(0 as uint32) }
+    append_padded_broadcast_strides(words, right, shape.count())
+    while words.count() < 32 { words.append(0 as uint32) }
+    append_padded_broadcast_strides(words, third, shape.count())
+    while words.count() < 40 { words.append(0 as uint32) }
+    return uint32_bytes(words)
 }

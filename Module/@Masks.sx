@@ -1,0 +1,54 @@
+// Masks are values, never edges in the differentiation graph.
+
+func compare_cpu_storage(left:CPUStorage, a:Layout, right:CPUStorage, b:Layout, shape:int[], operation:int) CPUStorage {
+    if left.dtype() == DType.float32() { return CPUStorage(compare_values<float>(left.float_values(), a, right.float_values(), b, shape, operation)) }
+    if left.dtype() == DType.int8() { return CPUStorage(compare_values<int8>(left.int8_values(), a, right.int8_values(), b, shape, operation)) }
+    if left.dtype() == DType.uint8() { return CPUStorage(compare_values<uint8>(left.uint8_values(), a, right.uint8_values(), b, shape, operation)) }
+    if left.dtype() == DType.int16() { return CPUStorage(compare_values<int16>(left.int16_values(), a, right.int16_values(), b, shape, operation)) }
+    if left.dtype() == DType.uint16() { return CPUStorage(compare_values<uint16>(left.uint16_values(), a, right.uint16_values(), b, shape, operation)) }
+    if left.dtype() == DType.int32() { return CPUStorage(compare_values<int32>(left.int32_values(), a, right.int32_values(), b, shape, operation)) }
+    if left.dtype() == DType.uint32() { return CPUStorage(compare_values<uint32>(left.uint32_values(), a, right.uint32_values(), b, shape, operation)) }
+    if left.dtype() == DType.int64() { return CPUStorage(compare_values<int64>(left.int64_values(), a, right.int64_values(), b, shape, operation)) }
+    if left.dtype() == DType.uint64() { return CPUStorage(compare_values<uint64>(left.uint64_values(), a, right.uint64_values(), b, shape, operation)) }
+    panic("Tensor comparison requires numeric values")
+}
+func compare_values<T>(left:T[], a:Layout, right:T[], b:Layout, shape:int[], operation:int) bool[] {
+    var values:bool[] = []
+    let count = shape_product(shape)
+    var index = 0
+    while index < count {
+        let x = left[a.broadcast_storage_index(index, shape)]
+        let y = right[b.broadcast_storage_index(index, shape)]
+        if operation == 0 { values.append(x == y) }
+        elif operation == 1 { values.append(x != y) }
+        elif operation == 2 { values.append(x < y) }
+        elif operation == 3 { values.append(x <= y) }
+        elif operation == 4 { values.append(x > y) }
+        else { values.append(x >= y) }
+        index++
+    }
+    return values
+}
+func where_cpu_storage(mask:bool[], m:Layout, left:CPUStorage, a:Layout, right:CPUStorage, b:Layout, shape:int[]) CPUStorage {
+    if left.dtype() == DType.float32() { return CPUStorage(where_values<float>(mask, m, left.float_values(), a, right.float_values(), b, shape)) }
+    if left.dtype() == DType.int8() { return CPUStorage(where_values<int8>(mask, m, left.int8_values(), a, right.int8_values(), b, shape)) }
+    if left.dtype() == DType.uint8() { return CPUStorage(where_values<uint8>(mask, m, left.uint8_values(), a, right.uint8_values(), b, shape)) }
+    if left.dtype() == DType.int16() { return CPUStorage(where_values<int16>(mask, m, left.int16_values(), a, right.int16_values(), b, shape)) }
+    if left.dtype() == DType.uint16() { return CPUStorage(where_values<uint16>(mask, m, left.uint16_values(), a, right.uint16_values(), b, shape)) }
+    if left.dtype() == DType.int32() { return CPUStorage(where_values<int32>(mask, m, left.int32_values(), a, right.int32_values(), b, shape)) }
+    if left.dtype() == DType.uint32() { return CPUStorage(where_values<uint32>(mask, m, left.uint32_values(), a, right.uint32_values(), b, shape)) }
+    if left.dtype() == DType.int64() { return CPUStorage(where_values<int64>(mask, m, left.int64_values(), a, right.int64_values(), b, shape)) }
+    if left.dtype() == DType.uint64() { return CPUStorage(where_values<uint64>(mask, m, left.uint64_values(), a, right.uint64_values(), b, shape)) }
+    panic("Tensor.where branches must use a numeric dtype")
+}
+func where_values<T>(mask:bool[], m:Layout, left:T[], a:Layout, right:T[], b:Layout, shape:int[]) T[] {
+    var values:T[] = []
+    let count = shape_product(shape)
+    var index = 0
+    while index < count {
+        if mask[m.broadcast_storage_index(index, shape)] { values.append(left[a.broadcast_storage_index(index, shape)]) }
+        else { values.append(right[b.broadcast_storage_index(index, shape)]) }
+        index++
+    }
+    return values
+}

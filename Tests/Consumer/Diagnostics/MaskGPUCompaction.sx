@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    var device = GPU.Device(); let result = Tensor.scalar(1.0).to(device).masked_select(Tensor.scalar(true).to(device))
+    print(result.count())
+}

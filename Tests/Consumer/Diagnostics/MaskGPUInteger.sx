@@ -1,0 +1,7 @@
+use Tensor
+use Tensor.DType
+use GFX.GPU
+func main() {
+    var device = GPU.Device(); let result = Tensor.scalar(1 as int32).to(device).less_than(Tensor.scalar(2 as int32).to(device))
+    print(result.count())
+}

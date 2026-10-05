@@ -81,3 +81,18 @@ Every fixture must fail and mention its intended contract:
   `Tests/GPUCompute.sx`.
 
 - `ProfileSnapshotMutation.sx`: public profile snapshots have immutable fields.
+
+Boolean masks add the following fixtures:
+
+- `BooleanArithmetic`, `BooleanUnary`, `BooleanReduction`, `BooleanLinear`:
+  numeric operations reject booleans, including an identity reduction;
+- `BooleanCast`, `NumericBooleanCast`: no bool/number cast;
+- `BooleanOrder`, `BooleanExtraction`, `NumericLogic`: exact dtype contracts;
+- `WhereMask`, `WhereBranchDType`, `WhereBooleanBranch`: boolean condition and
+  matching numeric branches;
+- `MaskBroadcast`, `MaskPlacement`, `MaskCrossDevice`, `MaskGPUShapeRank`:
+  shape, placement, device, and rank validation;
+- `MaskGPUInteger`, `MaskGPUExtraction`: GPU compute dtype and explicit readback;
+- `MaskGPUCompaction`: dynamic compaction requires the CPU explicitly.
+
+Each name above refers to the corresponding `.sx` file.

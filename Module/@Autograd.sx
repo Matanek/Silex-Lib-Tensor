@@ -2,6 +2,7 @@ use STD.Math
 
 enum AutogradRule {
     leaf(GradientSlot)
+    masked(Tensor, AutogradInput, AutogradInput)
     binary(AutogradInput, AutogradInput, BinaryOperation)
     scalar(AutogradInput, float, BinaryOperation)
     unary(AutogradInput, Tensor, UnaryOperation)
@@ -415,6 +416,7 @@ func autograd_parents(rule:AutogradRule) AutogradNode[] {
     var result:AutogradNode[] = []
     match rule {
         leaf(slot) => {}
+        masked(mask, left, right) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         binary(left, right, operation) => { append_autograd_parent(left, result); append_autograd_parent(right, result) }
         scalar(input, value, operation) => { append_autograd_parent(input, result) }
         unary(input, output, operation) => { append_autograd_parent(input, result) }
@@ -499,6 +501,7 @@ func accumulate_autograd_gradient(
 
 func backward_rule(rule:AutogradRule, gradient:Tensor) AutogradContribution[] {
     return match rule {
+        masked(mask, left, right) => backward_masked(mask, left, right, gradient)
         binary(left, right, operation) => backward_binary(left, right, operation, gradient)
         scalar(input, value, operation) => backward_scalar(input, value, operation, gradient)
         unary(input, output, operation) => backward_unary(input, output, operation, gradient)
@@ -950,4 +953,12 @@ func pool_winner(
         kernel_y++
     }
     return winner_y == expected_y && winner_x == expected_x
+}
+
+func backward_masked(mask:Tensor, left:AutogradInput, right:AutogradInput, gradient:Tensor) AutogradContribution[] {
+    var result:AutogradContribution[] = []
+    let zero = gradient.autograd_constant(0.0)
+    if left.node != null { append_contribution(left, reduce_autograd_shape(Tensor.where(mask, gradient, zero), left.value.shape()), result) }
+    if right.node != null { append_contribution(right, reduce_autograd_shape(Tensor.where(mask, zero, gradient), right.value.shape()), result) }
+    return result
 }

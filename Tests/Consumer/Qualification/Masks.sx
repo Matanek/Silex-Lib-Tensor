@@ -1,0 +1,69 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd.Variable
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func qualify(device:GPU.Device) {
+    var a:float[] = [1.0, -2.0, 3.0, -4.0, 5.0]
+    var input = Variable(Tensor.vector(a).to(device))
+    var profile = Profile(device)
+    let mask = input.value().greater_than(0.0).logical_and(true)
+    let output = Tensor.where(mask, input.value(), input.value().negate())
+    output.sum().backward()
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    if let gradient = input.gradient() {
+        let values = gradient.cpu().values()
+        assert(values[0] == 1.0 && values[1] == -1.0 && values[4] == 1.0)
+    } else { panic("expected gradient") }
+    let result = output.detach().cpu().values()
+    assert(result.count() == 5 && result[1] == 2.0 && result[3] == 4.0)
+    var flags:bool[] = [true, false, true, false, true]
+    let roundtrip = Tensor.vector(flags).to(device).logical_not().cpu().bool_values()
+    assert(!roundtrip[0] && roundtrip[1] && !roundtrip[4])
+    let nan = Math.sqrt(-1.0)
+    var bad:float[] = [nan, 2.0, nan, 4.0, nan]
+    let rejected = Tensor.vector(bad).to(device)
+    let selected = Tensor.where(Tensor.vector(flags).to(device), Tensor.vector(a).to(device), rejected).cpu().values()
+    assert(selected[0] == 1.0 && selected[1] == 2.0 && selected[4] == 5.0)
+}
+
+func qualify_comparisons(device:GPU.Device) {
+    let nan = Math.sqrt(-1.0)
+    let infinity = Math.exp(1000.0)
+    var values:float[] = [nan, -infinity, -2.0, -0.0, 0.0, 2.0, infinity]
+    let input = Tensor.vector(values).to(device)
+    let eq = input.equal(0.0).cpu().bool_values()
+    let ne = input.not_equal(0.0).cpu().bool_values()
+    let lt = input.less_than(0.0).cpu().bool_values()
+    let le = input.less_equal(0.0).cpu().bool_values()
+    let gt = input.greater_than(0.0).cpu().bool_values()
+    let ge = input.greater_equal(0.0).cpu().bool_values()
+    var i = 0
+    while i < values.count() {
+        assert(eq[i] == (values[i] == 0.0) && ne[i] == (values[i] != 0.0))
+        assert(lt[i] == (values[i] < 0.0) && le[i] == (values[i] <= 0.0))
+        assert(gt[i] == (values[i] > 0.0) && ge[i] == (values[i] >= 0.0))
+        i++
+    }
+    var flags:bool[] = []
+    i = 0
+    while i < 257 { flags.append(i % 3 == 0); i++ }
+    let mask = Tensor.vector(flags).to(device)
+    let same = mask.equal(mask).logical_and(mask.not_equal(mask.logical_not())).cpu().bool_values()
+    let inverted = mask.narrow(0, 1, 255).logical_not().cpu().bool_values()
+    i = 0
+    while i < 257 { assert(same[i]); i++ }
+    i = 0
+    while i < 255 { assert(inverted[i] == !flags[i + 1]); i++ }
+}
+
+func main() {
+    var values:int64[] = [9223372036854775806 as int64, 9223372036854775807 as int64]
+    let flags = Tensor.vector(values).less_than(9223372036854775807 as int64).bool_values()
+    assert(flags[0] && !flags[1])
+    assert(Tensor.ones([], DType.boolean()).bool_item())
+    if GPU.Device.is_supported() { var device = GPU.Device(GPU.DeviceSettings(debug:true)); qualify(device); qualify_comparisons(device) }
+    print("Tensor masks qualification passed")
+}

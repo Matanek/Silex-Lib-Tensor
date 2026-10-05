@@ -1,8 +1,8 @@
 # Tensor
 
-`Tensor` représente une valeur numérique dense sans exposer son stockage. Le
+`Tensor` représente une valeur dense numérique ou booléenne sans exposer son stockage. Le
 même type public couvre `float32`, les entiers signés et non signés de 8, 16,
-32 et 64 bits, sur CPU comme sur GPU.
+32 et 64 bits ainsi que les masques booléens, sur CPU comme sur GPU.
 
 ## Parcours de lecture
 
@@ -11,6 +11,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
   placements, opérations, erreurs et tolérances.
 - Utilisez les [recettes MLP, CNN et RNN](Recipes/Training.md) pour une boucle
   d'entraînement complète et les checkpoints.
+- Sélectionnez les [valeurs avec des masques](Masks.md), avec gradients de branches.
 - Observez les [coûts GPU par période](Profiling.md) avant d’optimiser une chaîne.
 - Lisez la [direction de l'API](Direction.md) pour ses influences PyTorch,
   TensorFlow et JAX, ses garanties et ses omissions délibérées.
