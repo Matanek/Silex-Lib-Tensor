@@ -509,6 +509,33 @@ public struct Tensor {
         return autograd_record_unary(result, self, operation)
     }
 
+    module func index_reduction(axis:int?, keep_dimensions:bool, maximum:bool) Tensor {
+        var name = "argmin"
+        if maximum { name = "argmax" }
+        if self.dtype().is_boolean() { panic("Tensor.$(name) does not accept dtype boolean") }
+        var requested:int[]? = null
+        if let selected = axis { requested = [selected] }
+        let axes = normalized_axes(requested, self.rank(), name)
+        let shape = reduced_shape(self.shape(), axes, keep_dimensions)
+        let domain = reduction_domain_size(self.shape(), axes)
+        if domain == 0 { panic("Tensor.$(name) cannot reduce an empty domain") }
+        if domain - 1 > 2147483647 { panic("Tensor.$(name) indices exceed int32") }
+        let output_layout = Layout(shape)
+        checked_byte_count(output_layout.count(), 4)
+        if self.is_gpu() {
+            self.require_gpu_float_compute(name)
+            var storage = self.gpu_storage()
+            return Tensor.from_storage(
+                Storage.gpu(storage.index_reduction(self.current_layout, axes, keep_dimensions, maximum, shape)),
+                output_layout
+            )
+        }
+        return Tensor.from_storage(
+            Storage.cpu(index_reduction_cpu_storage(self.cpu_storage(),self.current_layout,axis,axes,keep_dimensions,maximum,shape)),
+            output_layout
+        )
+    }
+
     module func reduction(axes:int[]?, keep_dimensions:bool, operation:ReductionOperation) Tensor {
         if self.dtype().is_boolean() { panic("Tensor numeric operations do not accept dtype boolean") }
         let name = reduction_name(operation)

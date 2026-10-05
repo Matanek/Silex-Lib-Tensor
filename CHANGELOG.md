@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Add `argmin` and `argmax`: detached int32 indices in logical order, exact
+  CPU integer comparisons and resident float32 GPU input. Ties and NaNs retain
+  their first index; axes/domains/index widths are validated. Selected values
+  differentiate through `gather`. See the [index guide](Docs/EN/IndexedReductions.md).
+
 - Add CPU-generated exclusive-stop int32 `Tensor.arange` and explicit-count
   float32 `Tensor.linspace`. Bounds/steps/cardinality/int32 values are checked
   before allocation; int64 extremes and interpolation between large finite

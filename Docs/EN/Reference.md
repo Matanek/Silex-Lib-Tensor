@@ -23,6 +23,7 @@ contract.
 | `masked_select` | all nine + booleans | explicit rejection | `float32` source |
 | unit dimensions, `expand`, `repeat` | all nine + booleans | all nine + booleans | float32 |
 | `variance`, `standard_deviation` | `float32` | resident `float32` | yes, explicit correction |
+| `argmin`, `argmax` | all nine | resident `float32` | no, detached int32 indices |
 | `arange`, `linspace` | int32 / float32, CPU data | explicit transfer | no |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |

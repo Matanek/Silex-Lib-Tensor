@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Find [extremum indices](IndexedReductions.md) and select their values.
 - Build [indices and numerical grids](Sequences.md).
 - Measure [dispersion with an explicit correction](Statistics.md).
 - Adapt [shapes to batches](Shapes.md) through views or repetition.

@@ -1,0 +1,157 @@
+use Tensor
+use Tensor.DType
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func indices_equal(actual:Tensor, expected:int32[]) {
+    assert(actual.dtype() == DType.int32())
+    let values = actual.int32_values()
+    assert(values.count() == expected.count())
+    var i = 0
+    while i < values.count() { assert(values[i] == expected[i]); i++ }
+}
+
+test "indexed extrema follow global logical order and axis coordinates" {
+    var values:float[] = [9.0,1.0,9.0,-2.0,1.0,-2.0]
+    let source = Tensor(values,[2,3])
+    var minima:int32[] = [1,0]; var maxima:int32[] = [0,1]
+    indices_equal(source.argmin(axis:1),minima); indices_equal(source.argmax(axis:1),maxima)
+    var global_min:int32[] = [3]; var global_max:int32[] = [0]
+    indices_equal(source.argmin(),global_min); indices_equal(source.argmax(),global_max)
+    let kept = source.argmin(axis:1,keep_dimensions:true)
+    assert(kept.rank() == 2 && kept.shape()[0] == 2 && kept.shape()[1] == 1)
+    assert(source.argmax(keep_dimensions:true).shape()[0] == 1 && source.argmax(keep_dimensions:true).shape()[1] == 1)
+    assert(source.argmax().rank() == 0)
+}
+
+test "indexed extrema preserve offsets transposes and zero strides" {
+    var values:float[] = [9.0,1.0,9.0,-2.0,1.0,-2.0]
+    let source = Tensor(values,[2,3]).transpose().narrow(0,1,2)
+    var low:int32[] = [3]; var high:int32[] = [2]; var rows:int32[] = [0,1]
+    indices_equal(source.argmin(),low); indices_equal(source.argmax(),high); indices_equal(source.argmin(axis:1),rows)
+    var all_first:int32[] = [0,0,0]
+    indices_equal(Tensor(values,[2,3]).narrow(0,1,1).expand([4,3]).argmax(axis:0),all_first)
+    var scalar:int32[] = [0]
+    indices_equal(Tensor.scalar(8.0).argmin(),scalar)
+    assert(Tensor.zeros([0,3]).argmin(axis:1).count() == 0)
+}
+
+test "indexed extrema retain first NaN infinities and signed zero ties" {
+    let nan = Math.sqrt(-1.0)
+    var values:float[] = [1.0,nan,2.0,nan]; var first_nan:int32[] = [1]
+    indices_equal(Tensor.vector(values).argmin(),first_nan); indices_equal(Tensor.vector(values).argmax(),first_nan)
+    var zero:float[] = [0.0,-0.0,0.0]; var first:int32[] = [0]
+    indices_equal(Tensor.vector(zero).argmin(),first); indices_equal(Tensor.vector(zero).argmax(),first)
+    var infinite:float[] = [1.0/0.0,-1.0/0.0,1.0/0.0]
+    indices_equal(Tensor.vector(infinite).argmax(),first); indices_equal(Tensor.vector(infinite).argmin(),first_nan)
+}
+
+func small_integer_extrema<T>() {
+    var values:T[] = [5 as T,1 as T,5 as T,2 as T]
+    var low:int32[] = [1]; var high:int32[] = [0]
+    indices_equal(Tensor.vector(values).argmin(),low); indices_equal(Tensor.vector(values).argmax(),high)
+}
+
+test "indexed extrema compare all CPU integers exactly including 64 bit neighbors" {
+    small_integer_extrema<int8>(); small_integer_extrema<uint8>(); small_integer_extrema<int16>(); small_integer_extrema<uint16>()
+    small_integer_extrema<int32>(); small_integer_extrema<uint32>(); small_integer_extrema<int64>(); small_integer_extrema<uint64>()
+    var signed:int64[] = [9223372036854775806,9223372036854775807,(-9223372036854775807)-1]
+    var upper:int32[] = [1]; var lower:int32[] = [2]
+    indices_equal(Tensor.vector(signed).argmax(),upper); indices_equal(Tensor.vector(signed).argmin(),lower)
+    let maximum:uint64 = 0xffff_ffff_ffff_ffff
+    var unsigned:uint64[] = [maximum-(1 as uint64),maximum,0]
+    indices_equal(Tensor.vector(unsigned).argmax(),upper); indices_equal(Tensor.vector(unsigned).argmin(),lower)
+}
+
+test "indexed extrema are detached while gathered values differentiate" {
+    var values:float[] = [2.0,7.0,7.0]
+    var input = Autograd.Variable(Tensor.vector(values))
+    let indices = input.value().argmax().reshape([1])
+    var gradients = Autograd.grad(input.value().gather(0,indices).sum(),[input.value()])
+    let actual = gradients[0].values()
+    assert(actual[0] == 0.0 && actual[1] == 1.0 && actual[2] == 0.0 && input.gradient() == null)
+}
+
+func gpu_indices(device:GPU.Device) {
+    let nan = Math.sqrt(-1.0)
+    var values:float[] = [9.0,1.0,9.0,-2.0,nan,nan]
+    let source = Tensor(values,[2,1,3,1,1]).to(device).permute([2,1,0,3,4])
+    var profile = Profile(device)
+    let global = source.argmax(); let rows = source.argmin(axis:0,keep_dimensions:true); let maximum = source.argmax(axis:2)
+    assert(global.is_gpu() && global.dtype() == DType.int32())
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(profile.snapshot().pipeline_compilations == 1)
+    var expected_global:int32[] = [3]; var expected_rows:int32[] = [1,1]; var expected_columns:int32[] = [0,1,1]
+    indices_equal(global.cpu(),expected_global); indices_equal(rows.cpu(),expected_rows); indices_equal(maximum.cpu(),expected_columns)
+    profile.reset()
+    let repeated = source.narrow(2,0,1).expand([3,1,4,1,1]).argmin(axis:2)
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && profile.snapshot().pipeline_compilations == 0)
+    var first:int32[] = [0,0,0]
+    indices_equal(repeated.cpu(),first)
+}
+
+test "GPU indexed extrema stay resident on rank five strided sources" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    gpu_indices(device)
+}
+
+test "GPU indexed extrema preserve empty outputs scalars signed zeros and selection gradients" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var values:float[] = [0.0,-0.0,0.0]
+    let zeros = Tensor.vector(values).to(device); let scalar = Tensor.scalar(8.0).to(device); let empty = Tensor.zeros([0,3]).to(device)
+    var input = Autograd.Variable(Tensor.vector(values).to(device))
+    var profile = Profile(device)
+    let low = zeros.argmin(); let high = zeros.argmax(); let one = scalar.argmin(); let none = empty.argmin(axis:1)
+    var gradients = Autograd.grad(input.value().gather(0,input.value().argmax().reshape([1])).sum(),[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0 && none.count() == 0 && none.is_gpu())
+    var first:int32[] = [0]
+    indices_equal(low.cpu(),first); indices_equal(high.cpu(),first); indices_equal(one.cpu(),first)
+    let actual = gradients[0].cpu().values()
+    assert(actual[0] == 1.0 && actual[1] == 0.0 && actual[2] == 0.0 && input.gradient() == null)
+}
+
+test "indexed extrema agree with independent row and column oracles on all axes" {
+    var values:float[] = []
+    var row_low:int32[] = []; var row_high:int32[] = []
+    var r = 0
+    while r < 7 {
+        var low = 0; var high = 0
+        var c = 0
+        while c < 11 {
+            let value = ((r*17+c*13)%19-9) as float
+            values.append(value)
+            if value < values[r*11+low] { low = c }
+            if value > values[r*11+high] { high = c }
+            c++
+        }
+        row_low.append(low as int32); row_high.append(high as int32); r++
+    }
+    var column_low:int32[] = []; var column_high:int32[] = []
+    var c = 0
+    while c < 11 {
+        var low = 0; var high = 0; r = 1
+        while r < 7 {
+            if values[r*11+c] < values[low*11+c] { low = r }
+            if values[r*11+c] > values[high*11+c] { high = r }
+            r++
+        }
+        column_low.append(low as int32); column_high.append(high as int32); c++
+    }
+    let source = Tensor(values,[7,11])
+    indices_equal(source.argmin(axis:1),row_low); indices_equal(source.argmax(axis:1),row_high)
+    indices_equal(source.argmin(axis:0),column_low); indices_equal(source.argmax(axis:0),column_high)
+    indices_equal(source.transpose().argmin(axis:0),row_low)
+    if GPU.Device.is_supported() {
+        var device = GPU.Device(GPU.DeviceSettings(debug:true))
+        let input = source.to(device)
+        var profile = Profile(device)
+        let low = input.argmin(axis:1); let high = input.argmax(axis:0)
+        let transposed = input.transpose().argmin(axis:0)
+        assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+        indices_equal(low.cpu(),row_low); indices_equal(high.cpu(),column_high); indices_equal(transposed.cpu(),row_low)
+    }
+}

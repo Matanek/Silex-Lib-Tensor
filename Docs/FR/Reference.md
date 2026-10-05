@@ -23,6 +23,7 @@ contrats de chaque opération.
 | `masked_select` | les neuf + booléens | refus explicite | source `float32` |
 | dimensions unitaires, `expand`, `repeat` | les neuf + booléens | les neuf + booléens | float32 |
 | `variance`, `standard_deviation` | `float32` | `float32` résident | oui, correction explicite |
+| `argmin`, `argmax` | les neuf | `float32` résident | non, indices int32 détachés |
 | `arange`, `linspace` | int32 / float32, données CPU | transfert explicite | non |
 | `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
 | `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |

@@ -1,0 +1,55 @@
+extend Tensor {
+    func argmin(axis:int? = null, keep_dimensions:bool = false) Tensor {
+        return self.index_reduction(axis, keep_dimensions, false)
+    }
+
+    func argmax(axis:int? = null, keep_dimensions:bool = false) Tensor {
+        return self.index_reduction(axis, keep_dimensions, true)
+    }
+}
+
+func index_reduction_cpu_storage(
+    storage:CPUStorage, layout:Layout, axis:int?, axes:int[],
+    keep_dimensions:bool, maximum:bool, output_shape:int[]
+) CPUStorage {
+    let dtype = storage.dtype()
+    if dtype == DType.float32() { return CPUStorage(index_reduce_values<float>(storage.float_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.int8() { return CPUStorage(index_reduce_values<int8>(storage.int8_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.uint8() { return CPUStorage(index_reduce_values<uint8>(storage.uint8_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.int16() { return CPUStorage(index_reduce_values<int16>(storage.int16_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.uint16() { return CPUStorage(index_reduce_values<uint16>(storage.uint16_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.int32() { return CPUStorage(index_reduce_values<int32>(storage.int32_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.uint32() { return CPUStorage(index_reduce_values<uint32>(storage.uint32_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    if dtype == DType.int64() { return CPUStorage(index_reduce_values<int64>(storage.int64_values(),layout,axis,axes,keep_dimensions,maximum,output_shape)) }
+    return CPUStorage(index_reduce_values<uint64>(storage.uint64_values(),layout,axis,axes,keep_dimensions,maximum,output_shape))
+}
+
+func index_reduce_values<T>(
+    values:T[], layout:Layout, axis:int?, axes:int[],
+    keep_dimensions:bool, maximum:bool, output_shape:int[]
+) int32[] {
+    let output_count = shape_product(output_shape)
+    var result = initialized_values<int32>(output_count, -1 as int32)
+    var winners = initialized_values<T>(output_count, 0 as T)
+    let reduced = reduction_mask(layout.rank(), axes)
+    let output_strides = contiguous_strides(output_shape)
+    var inner = 1
+    if let selected = axis { inner = trailing_product(layout.shape(), selected + 1) }
+    var logical = 0
+    while logical < layout.count() {
+        let output = reduction_output_index(logical,layout.shape(),reduced,output_strides,keep_dimensions)
+        let value = values[layout.flat_storage_index(logical)]
+        let previous = winners[output]
+        // NaN outranks numeric values; an existing NaN and equal values retain their first index.
+        let wins = result[output] < 0 || (previous == previous &&
+            (value != value || (maximum && value > previous) || (!maximum && value < previous)))
+        if wins {
+            var index = logical
+            if let selected = axis { index = (logical / inner) % layout.shape()[selected] }
+            result[output] = index as int32
+            winners[output] = value
+        }
+        logical++
+    }
+    return result
+}

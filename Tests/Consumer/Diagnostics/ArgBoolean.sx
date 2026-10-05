@@ -1,0 +1,3 @@
+use Tensor
+use GFX.GPU
+func main() { var values:bool[] = [true,false]; Tensor.vector(values).argmin() }

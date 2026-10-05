@@ -125,6 +125,7 @@ nocopy class GPUKernelCache {
     private var elementwise_pipeline:GPU.ComputePipeline? = null
     private var masks_pipeline:GPU.ComputePipeline? = null
     private var binary_pipeline:GPU.ComputePipeline? = null
+    private var index_reduction_pipeline:GPU.ComputePipeline? = null
     private var reduction_pipeline:GPU.ComputePipeline? = null
     private var linear_pipeline:GPU.ComputePipeline? = null
     private var gather_pipeline:GPU.ComputePipeline? = null
@@ -185,6 +186,18 @@ nocopy class GPUKernelCache {
             "Tensor float32 reduction"
         )
         self.reduction_pipeline = pipeline
+        GPUKernelCache.compilation_count++
+        self.profile_state.compile_pipeline()
+        return pipeline
+    }
+
+    func index_reduction() GPU.ComputePipeline {
+        if var pipeline = self.index_reduction_pipeline { return pipeline }
+        var pipeline = self.current_device.compute_pipeline(
+            GPU.ComputeProgram.hlsl(file:"Shaders/IndexReduction.hlsl"),
+            "Tensor float32 indexed reduction"
+        )
+        self.index_reduction_pipeline = pipeline
         GPUKernelCache.compilation_count++
         self.profile_state.compile_pipeline()
         return pipeline
@@ -742,6 +755,33 @@ nocopy class GPUStorage {
         GPUPerformanceCounters.record_fence()
         self.kernel_cache.profile_state.submit()
         return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, other, self.current_dtype, count)
+    }
+
+    func index_reduction(
+        layout:Layout, axes:int[], keep_dimensions:bool, maximum:bool, output_shape:int[]
+    ) GPUStorage {
+        let count = shape_product(output_shape)
+        var operation = ReductionOperation.minimum
+        if maximum { operation = ReductionOperation.maximum }
+        var metadata = reduction_metadata(operation, layout, axes, keep_dimensions, count)
+        if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, DType.int32()) }
+        var output = GPUStorage.allocate_buffer(self.current_device, checked_byte_count(count, 4), "Tensor int32 extrema indices")
+        var pipeline = self.kernel_cache.index_reduction()
+        var commands = self.current_device.commands()
+        commands.compute_uniform(0, @metadata[0:metadata.count()])
+        var writable:GPU.WritableBuffer[] = [GPU.WritableBuffer(buffer:output)]
+        var compute = commands.compute(buffers:writable)
+        self.kernel_cache.profile_state.compute_pass()
+        compute.bind(pipeline)
+        self.kernel_cache.profile_state.bind_pipeline()
+        compute.storage_buffer(0, self.required_buffer())
+        compute.dispatch(count)
+        self.kernel_cache.profile_state.dispatch()
+        compute.finish()
+        var completed = commands.submit_and_track()
+        GPUPerformanceCounters.record_fence()
+        self.kernel_cache.profile_state.submit()
+        return GPUStorage(self.current_device, self.kernel_cache, output, null, completed, self, null, DType.int32(), count)
     }
 
     func reduction(

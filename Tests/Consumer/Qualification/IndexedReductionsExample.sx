@@ -1,0 +1,14 @@
+use Tensor
+use Tensor.Autograd
+
+func main() {
+    var observations:float[] = [2.0,7.0,7.0]
+    var input = Autograd.Variable(Tensor.vector(observations))
+    let index = input.value().argmax().reshape([1])
+    let selected = input.value().gather(0,index).sum()
+    assert(index.int32_values()[0] == 1 && selected.detach().item() == 7.0)
+    var gradients = Autograd.grad(selected,[input.value()])
+    let actual = gradients[0].values()
+    assert(actual[0] == 0.0 && actual[1] == 1.0 && actual[2] == 0.0)
+    assert(input.gradient() == null)
+}

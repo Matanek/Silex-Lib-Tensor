@@ -1,0 +1,3 @@
+use Tensor
+use GFX.GPU
+func main() { Tensor.zeros([0,0]).argmax(axis:1) }

@@ -1,0 +1,26 @@
+use Tensor
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func index_cycle(device:GPU.Device) {
+    var values:float[] = [2.0,7.0,3.0,1.0,5.0,5.0]
+    let source = Tensor(values,[2,3]).to(device).transpose().narrow(0,1,2)
+    let low = source.argmin(axis:1); let high = source.argmax()
+    assert(low.is_gpu() && high.is_gpu())
+}
+
+test "indexed reductions release resident buffers and preserve graph ownership" {
+    if !GPU.Device.is_supported() { return }
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    let before = autograd_performance_statistics()
+    var profile = Profile(device)
+    var iteration = 0
+    while iteration < 32 {
+        index_cycle(device)
+        let after = autograd_performance_statistics()
+        assert(after.live_nodes == before.live_nodes && after.retained_edges == before.retained_edges)
+        assert(profile.snapshot().live_buffers == 0 && profile.snapshot().active_bytes == 0)
+        iteration++
+    }
+}
