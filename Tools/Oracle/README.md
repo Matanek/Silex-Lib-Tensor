@@ -137,3 +137,13 @@ and all sixteen parameter gradients on CPU/Metal with absolute tolerance8e-6.
 It stays away from ReLU kinks and needs no Python at runtime. Recheck with
 `python3 Tools/Oracle/transformer_decimal.py --check`; review source and report
 together after deliberate regeneration.
+
+## GRU reset-after
+
+`python3 Tools/Oracle/gru_decimal.py --check` validates the committed GRU fixture.
+Decimal precision60, packed r/z/n columns in row-major [input,output] matrices,
+separate input and recurrent biases. The analytic VJP includes sequence and final
+state seeds, input, initial state and four parameters; all52 derivatives also
+match central Decimal differences at epsilon1e-12. Absolute runtime tolerance2e-6.
+Nonzero recurrent bias distinguishes reset-after from reset-before. Ordinary
+Silex tests consume the committed fixture without Python or network access.

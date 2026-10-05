@@ -4,7 +4,9 @@
 same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 64-bit integers, as well as boolean masks, on both CPU and GPU.
 
-## Reading paths
+## Reading path
+
+- Train a [GRU with explicitly passed state](GRU.md).
 
 - Train a [small causal pre/post-norm Transformer](Transformer.md).
 - Train [multi-head attention with explicit dropout](MultiHeadAttention.md).
@@ -421,9 +423,9 @@ afterwards when needed. A checkpoint contains no code, autograd graph, or
 optimizer state.
 
 Custom composition can [derive from Layer](Composition.md) or remain an
-application type or function assembling public Tensor operations. Version 0.2.0
-does not provide grouped or transposed convolution, LSTM/GRU, embeddings,
-or attention.
+application type or function assembling public Tensor operations. Grouped or transposed convolution and LSTM remain absent.
+The current foundation provides [GRU](GRU.md), [embeddings](Embeddings.md),
+[attention](Attention.md) and [Transformer](Transformer.md).
 
 The current foundation adds [dense and NCHW BatchNorm](BatchNorm.md) with named buffers.
 

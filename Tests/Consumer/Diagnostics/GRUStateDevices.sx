@@ -1,0 +1,10 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var model=Neural.GRU("memory",2,2,seed:7)
+    var other=GPU.Device(GPU.DeviceSettings(debug:true));model.to(device);model.unroll(Tensor.zeros([1,2,2]).to(device),initial_state:Tensor.zeros([1,2]).to(other))
+}

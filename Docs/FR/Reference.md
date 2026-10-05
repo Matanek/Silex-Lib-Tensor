@@ -17,6 +17,7 @@ contrats de chaque opération.
 | `mean`, `dot`, `matmul` | `float32`; `dot`/`matmul` aussi entiers | `float32` | `float32` |
 | `concatenate`, `stack` | les neuf + booléens | les neuf + booléens résidents | `float32` |
 | `gather` | source quelconque, indices `int32` | source `float32`, indices `int32` | source `float32` |
+| `Neural.GRU` | `float32`, entrée rang3, état rang2 | idem, calcul résident | entrée, état initial et quatre paramètres ; temps0 inutilisés explicites |
 | `Neural.TransformerBlock` | bloc `float32`, rang3 | idem, calcul résident | entrée et seize paramètres nommés |
 | `Neural.MultiHeadAttention` | projections `float32`, rang3 | idem, calcul résident | Q/K/V et huit paramètres nommés |
 | `Neural.attention` | `float32`, rang3/4 | idem, calcul résident | Q/K/V et poids optionnels |

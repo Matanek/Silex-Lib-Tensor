@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Ajoute GRU batch-first reset-after r/z/n avec état et séquence explicites, quatre paramètres nommés, oracles CPU/Metal, segmentation et reprise exacte.
+
 - `Neural.TransformerBlock` compose attention, résidus, LayerNorm et MLP avec pre/post-norm explicite et dropout reproductible. Modèle causal externe avec positions séparées, apprentissage et reprise exacte CPU/Metal qualifiés ; voir le [guide](Docs/FR/Transformer.md).
 
 - `Neural.MultiHeadAttention` ajoute quatre projections entraînables au registre Layer, self/cross-attention et dropout à seed/itération explicites. Queries sans clé neutralisées après projection, poids optionnels appliqués, état partagé et reprise CPU/Metal qualifiés ; voir le [guide](Docs/FR/MultiHeadAttention.md).

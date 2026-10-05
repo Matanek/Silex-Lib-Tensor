@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.GRU("memory",2,2,seed:7)
+    var values:int32[]=[1,2];var state=Tensor(values,[1,2]);model.unroll(Tensor.zeros([1,2,2]),initial_state:state)
+}

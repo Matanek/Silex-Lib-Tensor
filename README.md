@@ -15,6 +15,8 @@ complete an explicit eager training workflow without hidden transfers.
 silex install Tensor
 ```
 
+[GRU à état explicite / explicit-state GRU](Docs/FR/GRU.md) · [English](Docs/EN/GRU.md).
+
 ## Documentation
 
 - [Release notes](CHANGELOG.md) · [French](CHANGELOG.fr.md)

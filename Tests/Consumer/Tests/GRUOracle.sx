@@ -1,0 +1,49 @@
+// Generated independent Decimal60 GRU reset-after forward and VJP fixture.
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+use STD.Math
+
+func gru_oracle_near(actual:Tensor,expected:float[]) {
+    let data=actual.detach().cpu().values();assert(data.count()==expected.count())
+    var i=0;while i<data.count() {assert(Math.is_finite(data[i]) && Math.abs(data[i]-expected[i])<0.000002);i++}
+}
+func decimal_gru(device:GPU.Device?) {
+    var model=Neural.GRU("memory",2,2,seed:11)
+    var parameters=model.parameters();assert(parameters.count()==4)
+    assert(parameters[0].name()=="memory.input_weight");var p0=parameters[0]
+    var data0:float[]=[-0.4,-0.1,0.2,0.5,-0.3,0.0,0.3,-0.5,-0.2,0.1,0.4,-0.4];p0.replace(Tensor(data0,[2, 6]))
+    assert(parameters[1].name()=="memory.recurrent_weight");var p1=parameters[1]
+    var data1:float[]=[-0.1,0.2,0.5,-0.3,0.0,0.3,-0.5,-0.2,0.1,0.4,-0.4,-0.1];p1.replace(Tensor(data1,[2, 6]))
+    assert(parameters[2].name()=="memory.input_bias");var p2=parameters[2]
+    var data2:float[]=[0.1,-0.2,0.3,-0.1,0.2,-0.3];p2.replace(Tensor(data2,[6]))
+    assert(parameters[3].name()=="memory.recurrent_bias");var p3=parameters[3]
+    var data3:float[]=[-0.2,0.3,-0.1,0.2,-0.4,0.1];p3.replace(Tensor(data3,[6]))
+    var xs:float[]=[-0.6,-0.3,-0.1,0.2,0.4,-0.6,0.5,-0.5,-0.3,0.0,0.2,0.5];var xs_tensor=Tensor(xs,[2, 3, 2])
+    var hs:float[]=[0.15,-0.25,-0.35,0.05];var hs_tensor=Tensor(hs,[2, 2])
+    var ss:float[]=[-0.4,0.1,-0.1,0.4,0.2,-0.2,0.3,-0.1,-0.3,0.2,0.0,-0.4];var ss_tensor=Tensor(ss,[2, 3, 2])
+    var fs:float[]=[0.3,-0.7,-0.4,0.6];var fs_tensor=Tensor(fs,[2, 2])
+    if let gpu=device {model.to(gpu);xs_tensor=xs_tensor.to(gpu);hs_tensor=hs_tensor.to(gpu);ss_tensor=ss_tensor.to(gpu);fs_tensor=fs_tensor.to(gpu)}
+    var input=Autograd.Variable(xs_tensor);var initial=Autograd.Variable(hs_tensor)
+    let result=model.unroll(input.value(),initial_state:initial.value(),return_sequence:true)
+    var inputs:Tensor[]=[input.value(),initial.value()];for parameter in parameters {inputs.append(parameter.value())}
+    var loss=result.state.multiply(fs_tensor).sum()
+    if let sequence=result.sequence {
+        gru_oracle_near(sequence,[0.12633257950388666,-0.14834006462629665,0.12963639577507427,-0.22133507348404488,-0.03116914892326219,-0.09917072613399296,-0.3298785417241519,-0.011337038555851274,-0.11909943390998383,-0.14771388034764038,0.017472478861220473,-0.27430983866882597])
+        loss=loss.add(sequence.multiply(ss_tensor).sum())
+    } else {panic("expected GRU sequence")}
+    var gradients=Autograd.grad(loss,inputs)
+    gru_oracle_near(result.state,[-0.03116914892326219,-0.09917072613399296,0.017472478861220473,-0.27430983866882597])
+    gru_oracle_near(gradients[0],[0.03746603635001162,-0.07273231060797633,-0.016401551441168026,0.03000628741054433,-0.008114164033341257,0.2417433702384856,-0.008271281750097125,-0.003700029239939121,0.08615214242568991,-0.16077067054874533,0.06261376865147884,-0.10427034990530944])
+    gru_oracle_near(gradients[1],[-0.17511609617694038,0.050725223514496764,0.061547878529434226,0.06883329181776549])
+    gru_oracle_near(gradients[2],[-0.01760980951885623,-0.007270396368423934,0.012027408130724887,0.022960485689603655,0.2106678335567271,-0.20088316647164106,0.013866743316404723,0.009894408002826684,-0.01348028581159854,-0.02948620875484017,-0.16588734031379998,0.2502888774152463])
+    gru_oracle_near(gradients[3],[-0.009260049057653177,-0.002106202714760504,-0.014043511048396925,-0.004339879372058764,0.04929290065651414,-0.07053802139580262,-0.0018385349966110027,0.0030769302320562235,-0.014530480605820477,-0.014029578616490544,0.01540423739885802,0.04768448869310971])
+    gru_oracle_near(gradients[4],[0.02868060016807826,-0.013957133881714526,0.12231519406877034,0.096460972757211,-0.3027598389642475,-0.12653606869877737])
+    gru_oracle_near(gradients[5],[0.02868060016807826,-0.013957133881714526,0.12231519406877034,0.096460972757211,-0.1821573682454465,-0.1022619252875434])
+}
+test "GRU reset-after matches Decimal sequence state and six VJPs on CPU" {decimal_gru(null)}
+test "GRU reset-after matches Decimal on Metal" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));decimal_gru(device)
+}

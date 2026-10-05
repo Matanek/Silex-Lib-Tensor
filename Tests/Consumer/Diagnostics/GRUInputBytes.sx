@@ -1,0 +1,8 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.GRU("memory",768614336404564651,1,seed:7)
+}

@@ -1,0 +1,49 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Data
+use Tensor.Optim
+use Tensor.Profile
+use STD.Math
+use GFX.GPU
+
+nocopy class GRUClassifier:Neural.Layer {
+    private var memory:Neural.GRU
+    private var classifier:Neural.Dense
+    init(seed:int,hidden_features:int = 4) {
+        self.memory=Neural.GRU("tiny.memory",2,hidden_features,seed)
+        self.classifier=Neural.Dense("tiny.classifier",hidden_features,3,seed+1)
+        self.register_child("memory",self.memory)
+        self.register_child("classifier",self.classifier)
+    }
+    override func forward(input:Tensor) Tensor {return self.classifier.forward(self.memory.forward(input))}
+}
+func gru_training_source() Data.TensorSource {
+    var samples:float[]=[0.7,0.1,0.3,0.2,0.05,0.1,0.9,0.2,0.4,0.1,0.05,0.1,-0.5,0.4,-0.3,0.6,0.05,0.1,-0.7,0.3,-0.4,0.5,0.05,0.1,0.1,-0.8,-0.2,-0.5,0.05,0.1,0.2,-0.6,-0.1,-0.4,0.05,0.1]
+    var targets:int32[]=[0,0,1,1,2,2]
+    return Data.TensorSource(Tensor(samples,[6,3,2]),Tensor(targets,[6]))
+}
+func gru_learns(device:GPU.Device?) {
+    var model=GRUClassifier(seed:17);var source=gru_training_source();var cursor=Data.BatchCursor(source,6,shuffle:false)
+    var batch=try cursor.next() else error {panic(error)}
+    if var value=batch {
+        if let gpu=device {model.to(gpu);value.input=value.input.to(gpu);value.target=value.target.to(gpu)}
+        let initial=model.forward(value.input).cross_entropy(value.target,1).detach().cpu().values()[0]
+        var optimizer=Optim.AdamW(model.parameters(),learning_rate:0.04)
+        var step=0
+        while step<40 {
+            var profile:Profile?=null
+            if let gpu=device {profile=Profile(gpu)}
+            model.forward(value.input).cross_entropy(value.target,1).backward();optimizer.step();optimizer.zero_grad()
+            if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+            step++
+        }
+        let final=model.forward(value.input).cross_entropy(value.target,1).detach().cpu().values()[0]
+        print("GRU synthetic loss: ",initial," -> ",final)
+        assert(Math.is_finite(final) && final<initial*0.25)
+    } else {panic("empty GRU learning source")}
+}
+
+func main() {
+    gru_learns(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));gru_learns(device)}
+}

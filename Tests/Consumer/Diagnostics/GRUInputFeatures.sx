@@ -1,0 +1,9 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use GFX.GPU
+
+func main() {
+    var model=Neural.GRU("memory",2,2,seed:7)
+    var input=Tensor.zeros([1,2,3]);model.forward(input)
+}

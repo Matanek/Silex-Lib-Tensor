@@ -1,0 +1,50 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func gru_graph(device:GPU.Device,mode:int,return_sequence:bool,with_initial:bool) {
+    var model=Neural.GRU("memory",2,3,seed:13);model.to(device)
+    var input=Autograd.Variable(Tensor.linspace(-0.5,0.75,12).reshape([2,3,2]).to(device))
+    var initial=Autograd.Variable(Tensor.linspace(-0.3,0.4,6).reshape([2,3]).to(device))
+    var requested:Tensor?=null;if with_initial {requested=initial.value()}
+    let result=model.unroll(input.value(),initial_state:requested,return_sequence:return_sequence)
+    var output=result.state.sum()
+    if let sequence=result.sequence {output=output.add(sequence.sum())}
+    if mode==0 {output.backward()}
+    elif mode==1 {var gradients=Autograd.grad(output,[input.value()]);assert(gradients.count()==1)}
+}
+// Bounds are the retained-ancestor worst case, measured with early fence release
+// disabled; production Storage is unchanged. First-cycle peaks are timing-dependent.
+test "GRU optional graphs stay within retained-ancestor bounds and release every resource" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics();var profile=Profile(device);var cycle=0;var peak=0
+    var bounds:int[]=[9376,9792,9376,9792,2056,2184,9328,9744,9328,9744,2080,2208]
+    var allocations:int[]=[245,257,245,257,55,59,243,255,243,255,56,60]
+    while cycle<16 {
+        var index=0
+        for with_initial in [true,false] {
+            var mode=0
+            while mode<3 {
+                for sequence in [false,true] {
+                    profile.reset()
+                    gru_graph(device,mode,sequence,with_initial)
+                    let stats=profile.snapshot()
+                    assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
+                    assert(stats.buffer_allocations==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
+                    assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+                    if stats.peak_bytes>peak {peak=stats.peak_bytes}
+                    index++
+                }
+                mode++
+            }
+        }
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+    print("GRU lifetime peak bytes: ",peak," retained-ancestor bound: 9792")
+}

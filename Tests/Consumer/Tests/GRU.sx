@@ -1,0 +1,155 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func gru_near(actual:Tensor,expected:Tensor,tolerance:float = 0.000002) {
+    let left=actual.detach().cpu().values();let right=expected.detach().cpu().values()
+    assert(left.count()==right.count());var i=0
+    while i<left.count() {assert(Math.is_finite(left[i]) && Math.abs(left[i]-right[i])<tolerance);i++}
+}
+func gru_inputs(model:Neural.GRU,input:Tensor,initial:Tensor) Tensor[] {
+    var result:Tensor[]=[input,initial]
+    for parameter in model.parameters() {result.append(parameter.value())}
+    return result
+}
+func gru_segments(device:GPU.Device?) {
+    var model=Neural.GRU("memory",2,3,seed:19)
+    var x=Tensor.linspace(-0.6,0.8,16).reshape([2,4,2]);var h=Tensor.linspace(-0.3,0.4,6).reshape([2,3])
+    var seed=Tensor.linspace(-0.4,0.7,24).reshape([2,4,3]);var final=Tensor.linspace(0.2,-0.5,6).reshape([2,3])
+    if let gpu=device {model.to(gpu);x=x.to(gpu);h=h.to(gpu);seed=seed.to(gpu);final=final.to(gpu)}
+    var input=Autograd.Variable(x);var initial=Autograd.Variable(h)
+    let whole=model.unroll(input.value(),initial_state:initial.value(),return_sequence:true)
+    var reference_loss=whole.state.multiply(final).sum()
+    if let sequence=whole.sequence {reference_loss=reference_loss.add(sequence.multiply(seed).sum())} else {panic("missing whole sequence")}
+    var reference=Autograd.grad(reference_loss,gru_inputs(model,input.value(),initial.value()))
+    let first=model.unroll(input.value().narrow(1,0,1),initial_state:initial.value(),return_sequence:true)
+    let second=model.unroll(input.value().narrow(1,1,3),initial_state:first.state,return_sequence:true)
+    var loss=second.state.multiply(final).sum()
+    if let prefix=first.sequence {
+        if let suffix=second.sequence {
+            let sequence=Tensor.concatenate([prefix,suffix],1)
+            if let expected=whole.sequence {gru_near(sequence,expected)} else {panic("missing reference sequence")}
+            loss=loss.add(sequence.multiply(seed).sum())
+            gru_near(second.state,sequence.select(1,3))
+        } else {panic("missing suffix sequence")}
+    } else {panic("missing prefix sequence")}
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    var segmented=Autograd.grad(loss,gru_inputs(model,input.value(),initial.value()))
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    var i=0;while i<reference.count() {gru_near(segmented[i],reference[i]);i++}
+    gru_near(second.state,whole.state)
+    let defaulted=model.unroll(x)
+    assert(defaulted.sequence==null)
+    gru_near(defaulted.state,model.forward(x))
+    var zero=Tensor.zeros([2,3]);if let gpu=device {zero=zero.to(gpu)}
+    gru_near(model.unroll(x,initial_state:zero).state,defaulted.state)
+}
+test "GRU explicit state preserves full sequence and six gradients across chunks on CPU" {gru_segments(null)}
+test "GRU explicit state preserves chunks and gradients on Metal without transfer" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));gru_segments(device)
+}
+func gru_jacobian(inputs:Tensor[]) Tensor {
+    var model=Neural.GRU("memory",2,2,seed:23)
+    let result=model.unroll(inputs[0],initial_state:inputs[1],return_sequence:true)
+    if let sequence=result.sequence {return Tensor.concatenate([sequence.flatten(),result.state.flatten()],0)}
+    panic("missing Jacobian sequence")
+}
+test "GRU sequence and final state Jacobian includes the initial state" {
+    var xs:float[]=[0.2,-0.3,0.5,0.1];var hs:float[]=[-0.1,0.4]
+    let check=Autograd.gradcheck(gru_jacobian,[Tensor(xs,[1,2,2]),Tensor(hs,[1,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==36)
+}
+func gru_alias(inputs:Tensor[]) Tensor {
+    var model=Neural.GRU("memory",2,2,seed:23)
+    let result=model.unroll(inputs[0],initial_state:inputs[0].select(1,0),return_sequence:true)
+    if let sequence=result.sequence {return sequence}
+    panic("missing alias sequence")
+}
+test "GRU initial state may share a differentiable input view" {
+    var xs:float[]=[0.2,-0.3,0.5,0.1]
+    let check=Autograd.gradcheck(gru_alias,[Tensor(xs,[1,2,2])],epsilon:0.001,absolute_tolerance:0.0002,relative_tolerance:0.002)
+    assert(check.passed && check.checked_derivatives==16)
+}
+func gru_empty(device:GPU.Device?) {
+    var model=Neural.GRU("memory",2,3,seed:19)
+    var x=Tensor.zeros([2,0,2]);var h=Tensor.linspace(-0.3,0.4,6).reshape([2,3]);var empty=Tensor.zeros([0,3,2])
+    if let gpu=device {model.to(gpu);x=x.to(gpu);h=h.to(gpu);empty=empty.to(gpu)}
+    var input=Autograd.Variable(x);var initial=Autograd.Variable(h)
+    let result=model.unroll(input.value(),initial_state:initial.value(),return_sequence:true)
+    gru_near(result.state,h)
+    if let sequence=result.sequence {assert(sequence.rank()==3 && sequence.shape()[0]==2 && sequence.shape()[1]==0 && sequence.shape()[2]==3)} else {panic("missing empty sequence")}
+    result.state.sum().backward()
+    assert(input.gradient()==null)
+    for parameter in model.parameters() {assert(parameter.gradient()==null)}
+    if let gradient=initial.gradient() {gru_near(gradient,Tensor.ones([2,3]))} else {panic("missing initial state gradient")}
+    let defaulted=model.unroll(x,return_sequence:true)
+    var requested:Tensor[]=[input.value()];for parameter in model.parameters() {requested.append(parameter.value())}
+    var gradients=Autograd.grad(defaulted.state.sum(),requested,allow_unused:true)
+    for gradient in gradients {assert(gradient.abs().sum().cpu().values()[0]==0.0)}
+    var empty_input=Autograd.Variable(empty)
+    let batch=model.unroll(empty_input.value(),return_sequence:true)
+    if let sequence=batch.sequence {assert(sequence.shape()[0]==0 && sequence.shape()[1]==3 && sequence.shape()[2]==3)} else {panic("missing empty batch sequence")}
+    batch.state.sum().backward()
+    if let gradient=empty_input.gradient() {assert(gradient.count()==0)} else {panic("missing empty batch input gradient")}
+    for parameter in model.parameters() {if let gradient=parameter.gradient() {assert(gradient.abs().sum().cpu().values()[0]==0.0)} else {panic("missing zero parameter gradient")}}
+}
+test "GRU empty time preserves explicit state and leaves unused inputs unconnected on CPU and Metal" {
+    gru_empty(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));gru_empty(device)}
+}
+func gru_strided(device:GPU.Device?) {
+    var model=Neural.GRU("memory",2,3,seed:19)
+    var source=Tensor.linspace(-0.6,0.8,16).reshape([4,2,2]);var initial=Tensor.linspace(-0.3,0.4,6).reshape([3,2])
+    if let gpu=device {model.to(gpu);source=source.to(gpu);initial=initial.to(gpu)}
+    var source_leaf=Autograd.Variable(source);var initial_leaf=Autograd.Variable(initial)
+    let actual=model.unroll(source_leaf.value().permute([1,0,2]),initial_state:initial_leaf.value().transpose(),return_sequence:true)
+    var loss=actual.state.sum()
+    if let sequence=actual.sequence {loss=loss.add(sequence.sum())} else {panic("missing strided sequence")}
+    var actual_gradients=Autograd.grad(loss,gru_inputs(model,source_leaf.value(),initial_leaf.value()))
+    var dense_source=Autograd.Variable(source);var dense_initial=Autograd.Variable(initial)
+    let expected=model.unroll(dense_source.value().permute([1,0,2]).contiguous(),initial_state:dense_initial.value().transpose().contiguous(),return_sequence:true)
+    var reference=expected.state.sum()
+    if let sequence=expected.sequence {reference=reference.add(sequence.sum())} else {panic("missing dense sequence")}
+    var expected_gradients=Autograd.grad(reference,gru_inputs(model,dense_source.value(),dense_initial.value()))
+    gru_near(actual.state,expected.state)
+    if let sequence=actual.sequence {if let dense=expected.sequence {gru_near(sequence,dense)} else {panic("missing dense sequence")}} else {panic("missing strided sequence")}
+    var i=0;while i<actual_gradients.count() {gru_near(actual_gradients[i],expected_gradients[i]);i++}
+
+}
+test "GRU accepts strided batch time and initial-state views on CPU and Metal" {
+    gru_strided(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));gru_strided(device)}
+}
+func gru_shared(device:GPU.Device?) {
+    var model=Neural.GRU("memory",2,2,seed:19)
+    var layers:Neural.Layer[]=[model,model];var shared=Neural.Sequential(layers)
+    assert(shared.parameters().count()==4 && shared.children().count()==1)
+    var x=Tensor.linspace(-0.6,0.8,8).reshape([2,2,2])
+    if let gpu=device {shared.to(gpu);x=x.to(gpu)}
+    shared.eval();assert(!model.is_training());shared.train();assert(model.is_training())
+    var input=Autograd.Variable(x)
+    let first=model.forward(input.value());let second=model.forward(input.value())
+    first.add(second).sum().backward()
+    var expected:Tensor[]=[]
+    for parameter in model.parameters() {if let gradient=parameter.gradient() {expected.append(parameter.value().detach().subtract(gradient.multiply(0.01)))} else {panic("missing shared gradient")}}
+    var optimizer=Optim.SGD(shared.parameters(),learning_rate:0.01);optimizer.step();optimizer.zero_grad()
+    var i=0;for parameter in model.parameters() {gru_near(parameter.value(),expected[i]);i++}
+    shared.freeze();for parameter in shared.parameters() {assert(!parameter.is_trainable())}
+    var frozen_input=Autograd.Variable(x);model.forward(frozen_input.value()).sum().backward()
+    assert(frozen_input.gradient()!=null);for parameter in model.parameters() {assert(parameter.gradient()==null)}
+    shared.unfreeze();for parameter in shared.parameters() {assert(parameter.is_trainable())}
+}
+test "shared GRU has four unique parameters one optimizer update and recursive mode and freeze on CPU and Metal" {
+    gru_shared(null)
+    if GPU.Device.is_supported() {var device=GPU.Device(GPU.DeviceSettings(debug:true));gru_shared(device)}
+}
+test "GRU initialization is reproducible including maximum uint32 seed" {
+    var left=Neural.GRU("memory",2,3,seed:4294967295);var right=Neural.GRU("memory",2,3,seed:4294967295)
+    var i=0;for parameter in left.parameters() {gru_near(parameter.value(),right.parameters()[i].value(),tolerance:0.0000001);i++}
+}

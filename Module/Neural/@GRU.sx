@@ -1,0 +1,68 @@
+use Tensor
+use Tensor.DType
+use Tensor.checked_product
+use STD.Randomizer
+
+public struct GRUResult {
+    var state:Tensor
+    var sequence:Tensor?
+}
+
+public nocopy class GRU:Layer {
+    private let input_features:int
+    private let hidden_features:int
+    private var input_weight:Parameter
+    private var recurrent_weight:Parameter
+    private var input_bias:Parameter
+    private var recurrent_bias:Parameter
+
+    init(name:str, input_features:int, hidden_features:int, seed:int) {
+        if input_features<=0 || hidden_features<=0 {panic("Tensor.Neural.GRU requires positive input and hidden feature counts")}
+        if seed<0 || seed>4294967295 {panic("Tensor.Neural.GRU seed must fit uint32")}
+        let gate_features=checked_product(hidden_features,3,"Tensor.Neural.GRU gate width overflows int")
+        let input_count=checked_product(input_features,gate_features,"Tensor.Neural.GRU input weight cardinality overflows int")
+        let recurrent_count=checked_product(hidden_features,gate_features,"Tensor.Neural.GRU recurrent weight cardinality overflows int")
+        checked_product(input_count,4,"Tensor.Neural.GRU input weight byte size overflows int")
+        checked_product(recurrent_count,4,"Tensor.Neural.GRU recurrent weight byte size overflows int")
+        self.input_features=input_features
+        self.hidden_features=hidden_features
+        var randomizer=Randomizer(seed)
+        self.input_weight=Parameter(name+".input_weight",nn_xavier([input_features,gate_features],input_features,gate_features,randomizer))
+        self.recurrent_weight=Parameter(name+".recurrent_weight",nn_xavier([hidden_features,gate_features],hidden_features,gate_features,randomizer))
+        self.input_bias=Parameter(name+".input_bias",Tensor.zeros([gate_features]))
+        self.recurrent_bias=Parameter(name+".recurrent_bias",Tensor.zeros([gate_features]))
+        self.register_parameter(self.input_weight)
+        self.register_parameter(self.recurrent_weight)
+        self.register_parameter(self.input_bias)
+        self.register_parameter(self.recurrent_bias)
+    }
+
+    override package func checkpoint_configuration() str {return "GRU:reset-after:rzn:$(self.input_features):$(self.hidden_features)"}
+    override func forward(input:Tensor) Tensor {return self.unroll(input).state}
+
+    func unroll(input:Tensor, initial_state:Tensor? = null, return_sequence:bool = false) GRUResult {
+        if input.dtype()!=DType.float32() {panic("Tensor.Neural.GRU input must use dtype float32")}
+        if input.rank()!=3 || input.shape()[2]!=self.input_features {panic("Tensor.Neural.GRU requires rank 3 batch-first input with matching features")}
+        if !input.same_optimizer_placement(self.input_weight.value()) || !input.same_optimizer_placement(self.recurrent_weight.value()) || !input.same_optimizer_placement(self.input_bias.value()) || !input.same_optimizer_placement(self.recurrent_bias.value()) {panic("Tensor.Neural.GRU input must match parameter placement and GPU device")}
+        var state=initial_state ?? input.autograd_constant_shape([input.shape()[0],self.hidden_features],0.0)
+        if state.dtype()!=DType.float32() || state.rank()!=2 || state.shape()[0]!=input.shape()[0] || state.shape()[1]!=self.hidden_features || !state.same_optimizer_placement(input) {panic("Tensor.Neural.GRU initial state must match batch hidden size dtype and placement")}
+        var outputs:Tensor[]=[]
+        var step=0
+        while step<input.shape()[1] {
+            let affine_input=input.select(1,step).matmul(self.input_weight.value()).add(self.input_bias.value())
+            let affine_state=state.matmul(self.recurrent_weight.value()).add(self.recurrent_bias.value())
+            let reset=affine_input.narrow(1,0,self.hidden_features).add(affine_state.narrow(1,0,self.hidden_features)).sigmoid()
+            let update=affine_input.narrow(1,self.hidden_features,self.hidden_features).add(affine_state.narrow(1,self.hidden_features,self.hidden_features)).sigmoid()
+            let candidate=affine_input.narrow(1,2*self.hidden_features,self.hidden_features).add(reset.multiply(affine_state.narrow(1,2*self.hidden_features,self.hidden_features))).tanh()
+            state=candidate.multiply(update.multiply(-1.0).add(1.0)).add(update.multiply(state))
+            if return_sequence {outputs.append(state)}
+            step++
+        }
+        var sequence:Tensor?=null
+        if return_sequence {
+            if outputs.count()==0 {sequence=input.autograd_constant_shape([input.shape()[0],0,self.hidden_features],0.0)}
+            else {sequence=Tensor.stack(outputs,1)}
+        }
+        return GRUResult(state:state,sequence:sequence)
+    }
+}
