@@ -1,0 +1,3 @@
+use Tensor
+use STD.Math
+func main() { let result = Tensor.linspace(0.0,1.0,9223372036854775807); print(result.count()) }

@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Construisez des [indices et grilles numériques](Sequences.md).
 - Mesurez la [dispersion avec correction explicite](Statistics.md).
 - Adaptez les [formes aux lots](Shapes.md) par vues ou répétitions.
 - Commencez ici pour construire, transformer, calculer, dériver et entraîner.

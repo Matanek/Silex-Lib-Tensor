@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading paths
 
+- Build [indices and numerical grids](Sequences.md).
 - Measure [dispersion with an explicit correction](Statistics.md).
 - Adapt [shapes to batches](Shapes.md) through views or repetition.
 - Calculate and [check functional gradients](Gradients.md) without changing slots.

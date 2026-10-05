@@ -27,6 +27,7 @@ silex install Tensor
 - [French functional gradient guide](Docs/FR/Gradients.md) · [English](Docs/EN/Gradients.md)
 - [French shape guide](Docs/FR/Shapes.md) · [English](Docs/EN/Shapes.md)
 - [French statistics guide](Docs/FR/Statistics.md) · [English](Docs/EN/Statistics.md)
+- [French sequence guide](Docs/FR/Sequences.md) · [English](Docs/EN/Sequences.md)
 - [French mask guide](Docs/FR/Masks.md) · [English](Docs/EN/Masks.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)

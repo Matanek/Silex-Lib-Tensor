@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Ajout de `Tensor.arange` int32 à borne exclusive et `Tensor.linspace` float32
+  à count explicite, générés sur CPU. Bornes/pas/cardinalité/valeurs int32 sont
+  contrôlés avant allocation ; extrêmes int64 et interpolation de grandes bornes
+  finies traités sans overflow artificiel. Transfert GPU explicite. Voir le
+  [guide des séquences](Docs/FR/Sequences.md).
+
 - Ajout de `variance` et `standard_deviation` float32 CPU/GPU, avec correction
   entière explicite, axes et domaines validés, calcul centré et gradients résidents.
   L’écart-type choisit un gradient nul pour une variance calculée nulle ; NaN reste visible.

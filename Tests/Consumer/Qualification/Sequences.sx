@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device = GPU.Device(GPU.DeviceSettings(debug:true))
+    var data:float[] = [0.0,10.0,20.0,30.0,40.0,50.0]
+    var input = Autograd.Variable(Tensor.vector(data).to(device))
+    let indices = Tensor.arange(1,6,2).to(device)
+    let weights = Tensor.linspace(0.0,1.0,3).to(device)
+    var profile = Profile(device)
+    let loss = input.value().gather(0,indices).multiply(weights).sum()
+    var gradients = Autograd.grad(loss,[input.value()])
+    assert(profile.snapshot().uploads == 0 && profile.snapshot().downloads == 0)
+    assert(loss.detach().cpu().item() == 65.0)
+    let actual = gradients[0].cpu().values()
+    assert(actual[1] == 0.0 && actual[3] == 0.5 && actual[5] == 1.0)
+    assert(input.gradient() == null)
+    print("Tensor sequence qualification passed")
+}

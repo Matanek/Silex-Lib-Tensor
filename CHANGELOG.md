@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add CPU-generated exclusive-stop int32 `Tensor.arange` and explicit-count
+  float32 `Tensor.linspace`. Bounds/steps/cardinality/int32 values are checked
+  before allocation; int64 extremes and interpolation between large finite
+  bounds avoid artificial overflow. GPU transfer is explicit. See the
+  [sequence guide](Docs/EN/Sequences.md).
+
 - Add float32 CPU/GPU `variance` and `standard_deviation` with explicit integer
   correction, validated axes/domains, centered computation, and resident gradients.
   Standard deviation chooses a zero gradient when computed variance is zero; NaN remains

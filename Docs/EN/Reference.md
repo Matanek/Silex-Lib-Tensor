@@ -23,6 +23,7 @@ contract.
 | `masked_select` | all nine + booleans | explicit rejection | `float32` source |
 | unit dimensions, `expand`, `repeat` | all nine + booleans | all nine + booleans | float32 |
 | `variance`, `standard_deviation` | `float32` | resident `float32` | yes, explicit correction |
+| `arange`, `linspace` | int32 / float32, CPU data | explicit transfer | no |
 | `Autograd.grad` | `float32` graphs | resident `float32` graphs | first order, detached results |
 | `Autograd.gradcheck` | `float32` inputs/output | explicit CPU check | Jacobian by central differences |
 | activations, losses, normalization, convolution, pooling, dropout | `float32` | `float32` | yes where defined |
@@ -102,3 +103,5 @@ graph consumption, and Jacobian checking.
 [Shapes, views, and tiles](Shapes.md): axes, empty dimensions, and gradients.
 
 [Variance and standard deviation](Statistics.md): correction, domains, and constant gradients.
+
+[Progressions and grids](Sequences.md): bounds, steps, cardinality, and dtypes.

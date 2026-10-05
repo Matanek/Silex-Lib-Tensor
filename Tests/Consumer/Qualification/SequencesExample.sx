@@ -1,0 +1,16 @@
+use Tensor
+use Tensor.Autograd
+
+func main() {
+    var data:float[] = [0.0,10.0,20.0,30.0,40.0,50.0]
+    var input = Autograd.Variable(Tensor.vector(data))
+    let indices = Tensor.arange(1,6,2)
+    let weights = Tensor.linspace(0.0,1.0,3)
+    let selected = input.value().gather(0,indices)
+    let loss = selected.multiply(weights).sum()
+    assert(loss.detach().item() == 65.0)
+    var gradients = Autograd.grad(loss,[input.value()])
+    let actual = gradients[0].values()
+    assert(actual[1] == 0.0 && actual[3] == 0.5 && actual[5] == 1.0)
+    assert(input.gradient() == null)
+}

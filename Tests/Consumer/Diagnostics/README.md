@@ -127,3 +127,8 @@ Statistics add `VarianceCorrection`, `VarianceDomain`, `VarianceEmpty`,
 `DeviationCorrection`, `DeviationDomain`, `DeviationDType`, and `VarianceGPURank`:
 explicit nonnegative correction below domain size, float32 data, valid axes,
 and the existing GPU rank limit. Each name refers to its `.sx` fixture.
+
+Sequence constructors add `ArangeStep`, `ArangeValue`, `ArangeLast`, and
+`ArangeCardinality` for nonzero steps, int32 outputs, and checked cardinality;
+`LinspaceCount`, `LinspaceNaN`, `LinspaceInfinity`, and `LinspaceBytes` for
+nonnegative counts, finite bounds, and physical sizes. Each name is its `.sx` fixture.

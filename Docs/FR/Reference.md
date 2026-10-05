@@ -23,6 +23,7 @@ contrats de chaque opération.
 | `masked_select` | les neuf + booléens | refus explicite | source `float32` |
 | dimensions unitaires, `expand`, `repeat` | les neuf + booléens | les neuf + booléens | float32 |
 | `variance`, `standard_deviation` | `float32` | `float32` résident | oui, correction explicite |
+| `arange`, `linspace` | int32 / float32, données CPU | transfert explicite | non |
 | `Autograd.grad` | graphes `float32` | graphes `float32` résidents | premier ordre, résultats détachés |
 | `Autograd.gradcheck` | entrées/sortie `float32` | contrôle CPU explicite | Jacobien par différences centrales |
 | activations, pertes, normalisation, convolution, pooling, dropout | `float32` | `float32` | oui selon l'opération |
@@ -102,3 +103,5 @@ les seeds, la consommation du graphe et le contrôle du Jacobien.
 [Formes, vues et tuiles](Shapes.md) : axes, dimensions vides et gradients.
 
 [Variance et écart-type](Statistics.md) : correction, domaines et gradient constant.
+
+[Progressions et grilles](Sequences.md) : bornes, pas, cardinalité et dtypes.

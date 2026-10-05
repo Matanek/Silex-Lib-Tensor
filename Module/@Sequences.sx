@@ -1,0 +1,78 @@
+use STD.Math
+
+extend Tensor {
+    static func arange(stop:int) Tensor { return Tensor.arange(0, stop, 1) }
+
+    static func arange(start:int, stop:int, step:int = 1) Tensor {
+        if step == 0 { panic("Tensor.arange step must be nonzero") }
+        var values:int32[] = []
+        if (step > 0 && start >= stop) || (step < 0 && start <= stop) { return Tensor.vector(values) }
+        let minimum:int = (-9223372036854775807) - 1
+        let bias:uint64 = 0x8000_0000_0000_0000
+        let begin = sequence_position(start)
+        let end = sequence_position(stop)
+        var stride:uint64 = 0
+        var distance:uint64 = 0
+        if step > 0 { distance = end - begin; stride = step as uint64 }
+        else {
+            distance = begin - end
+            if step == minimum { stride = bias } else { stride = (-step) as uint64 }
+        }
+        let cardinality = (distance - (1 as uint64)) / stride + (1 as uint64)
+        let limit:uint64 = 0x7fff_ffff_ffff_ffff
+        if cardinality > limit { panic("Tensor.arange cardinality overflows int") }
+        let count = cardinality as int
+        let displacement = (cardinality - (1 as uint64)) * stride
+        var last = begin
+        if step > 0 { last += displacement } else { last -= displacement }
+        require_sequence_int32(start)
+        require_sequence_int32(sequence_value(last))
+        let bytes = checked_byte_count(count, 4)
+        var value = start
+        var index = 0
+        while index < count {
+            values.append(value as int32)
+            index++
+            if index < count { value += step }
+        }
+        return Tensor.vector(values)
+    }
+
+    static func linspace(start:float, stop:float, count:int) Tensor {
+        if count < 0 { panic("Tensor.linspace count must be non-negative") }
+        if !Math.is_finite(start) || !Math.is_finite(stop) { panic("Tensor.linspace bounds must be finite") }
+        let bytes = checked_byte_count(count, 4)
+        var values:float[] = []
+        var index = 0
+        while index < count {
+            if index == 0 { values.append(start) }
+            elif index == count - 1 { values.append(stop) }
+            else {
+                let fraction = (index as float) / ((count - 1) as float)
+                var value:float = 0.0
+                if (start > 0.0 && stop > 0.0) || (start < 0.0 && stop < 0.0) {
+                    value = start + (stop - start) * fraction
+                } else { value = start * (1.0 - fraction) + stop * fraction }
+                values.append(Math.min(Math.max(value, Math.min(start,stop)), Math.max(start,stop)))
+            }
+            index++
+        }
+        return Tensor.vector(values)
+    }
+}
+
+func sequence_position(value:int) uint64 {
+    let minimum:int = (-9223372036854775807) - 1
+    let bias:uint64 = 0x8000_0000_0000_0000
+    if value < 0 { return (value - minimum) as uint64 }
+    return bias + (value as uint64)
+}
+func sequence_value(position:uint64) int {
+    let minimum:int = (-9223372036854775807) - 1
+    let bias:uint64 = 0x8000_0000_0000_0000
+    if position < bias { return minimum + (position as int) }
+    return (position - bias) as int
+}
+func require_sequence_int32(value:int) {
+    if value < -2147483648 || value > 2147483647 { panic("Tensor.arange values must fit dtype int32") }
+}
