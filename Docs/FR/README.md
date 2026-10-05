@@ -6,6 +6,7 @@ même type public couvre `float32`, les entiers signés et non signés de 8, 16,
 
 ## Parcours de lecture
 
+- Construisez les [masques de longueurs et de causalité](SequenceMasks.md).
 - Apprenez des [vecteurs d’embedding avec padding](Embeddings.md).
 - Interrompez et [reprenez un entraînement complet](TrainingCheckpoint.md).
 

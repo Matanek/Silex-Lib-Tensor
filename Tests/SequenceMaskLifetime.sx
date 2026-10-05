@@ -1,0 +1,33 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Autograd
+use Tensor.Profile
+use Tensor.autograd_performance_statistics
+use GFX.GPU
+
+func sequence_mask_graph(device:GPU.Device, consume:bool) {
+    let keys=Neural.sequence_mask([0,2,4],4).to(device)
+    let causal=Neural.causal_mask(3,4).to(device)
+    let mask=keys.unsqueeze(1).logical_and(causal.unsqueeze(0))
+    var input=Autograd.Variable(Tensor.ones([3,3,4]).to(device))
+    let loss=Tensor.where(mask,input.value(),input.value().negate()).sum()
+    if consume {loss.backward()}
+}
+test "sequence masks release consumed and abandoned graphs and device buffers" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let baseline=autograd_performance_statistics()
+    var profile=Profile(device)
+    var cycle=0
+    while cycle<32 {
+        sequence_mask_graph(device,true)
+        sequence_mask_graph(device,false)
+        let stats=profile.snapshot()
+        assert(stats.live_buffers==0 && stats.active_bytes==0)
+        assert(stats.buffer_allocations==stats.buffer_releases)
+        assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
+        cycle++
+    }
+    let after=autograd_performance_statistics()
+    assert(after.edge_retentions-baseline.edge_retentions==after.edge_releases-baseline.edge_releases)
+}

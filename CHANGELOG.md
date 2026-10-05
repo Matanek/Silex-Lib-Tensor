@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Sequence masks `Neural.sequence_mask` and `Neural.causal_mask`: CPU booleans, exact prefixes and positions, explicit offset, composition and GPU transfer; selection gradients qualified on CPU/Metal.
+
 - `Neural.Embedding` learns a seeded float32 table from batch-first int32 indices, with repeated dense gradients and a stopped padding derivative. Layer composition, state/resume and resident CPU/Metal lookup are qualified; see the [guide](Docs/EN/Embeddings.md).
 
 - `Autograd.Operation` and `Autograd.apply` connect an external rule built from public Tensor operations to the first-order graph. Leaf gradients are prepared before publication and retained values are released on consumption/destruction. See the [guide](Docs/EN/CustomOperations.md).

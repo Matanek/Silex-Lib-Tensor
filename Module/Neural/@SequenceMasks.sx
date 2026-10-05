@@ -1,0 +1,39 @@
+use Tensor
+use Tensor.checked_product
+
+// True denotes a visible position. Construction uses exact CPU metadata.
+public func sequence_mask(lengths:int[], maximum_length:int) Tensor {
+    if maximum_length<0 {panic("Tensor.Neural.sequence_mask maximum_length must be non-negative")}
+    checked_product(lengths.count(),maximum_length,"Tensor.Neural.sequence_mask cardinality overflows int")
+    for length in lengths {
+        if length<0 || length>maximum_length {
+            panic("Tensor.Neural.sequence_mask lengths must be between zero and maximum_length")
+        }
+    }
+    var values:bool[]=[]
+    for length in lengths {
+        var position=0
+        while position<maximum_length {values.append(position<length);position++}
+    }
+    return Tensor(values,[lengths.count(),maximum_length])
+}
+
+public func causal_mask(query_length:int, key_length:int, query_offset:int = 0) Tensor {
+    if query_length<0 || key_length<0 || query_offset<0 {
+        panic("Tensor.Neural.causal_mask lengths and query_offset must be non-negative")
+    }
+    if query_length>0 && query_offset>9223372036854775807-(query_length-1) {
+        panic("Tensor.Neural.causal_mask last query position overflows int")
+    }
+    let count=checked_product(query_length,key_length,"Tensor.Neural.causal_mask cardinality overflows int")
+    var values:bool[]=[]
+    if count>0 {
+        var query=0
+        while query<query_length {
+            var key=0
+            while key<key_length {values.append(key<=query+query_offset);key++}
+            query++
+        }
+    }
+    return Tensor(values,[query_length,key_length])
+}

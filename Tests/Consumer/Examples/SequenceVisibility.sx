@@ -1,0 +1,16 @@
+use Tensor
+use Tensor.Neural
+
+func main() {
+    let lengths:int[]=[0,2,4]
+    let keys=Neural.sequence_mask(lengths,maximum_length:4)
+    let causal=Neural.causal_mask(query_length:3,key_length:4)
+    let visible=keys.unsqueeze(1).logical_and(causal.unsqueeze(0))
+    let scores=Tensor.ones([3,3,4])
+    let selected=Tensor.where(visible,scores,Tensor.zeros([3,3,4]))
+    assert(selected.shape()[0]==3 && selected.shape()[1]==3 && selected.shape()[2]==4)
+    assert(selected.sum().item()==11.0)
+    let continuation=Neural.causal_mask(query_length:2,key_length:5,query_offset:2)
+    assert(continuation.bool_at([0,2]) && !continuation.bool_at([0,3]))
+    print("Sequence visibility: lengths and causal positions composed")
+}

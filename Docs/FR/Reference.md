@@ -18,6 +18,7 @@ contrats de chaque opération.
 | `concatenate`, `stack` | les neuf + booléens | les neuf + booléens résidents | `float32` |
 | `gather` | source quelconque, indices `int32` | source `float32`, indices `int32` | source `float32` |
 | `Neural.Embedding` | indices `int32`, poids `float32` | idem, calcul résident | poids dense ; padding à dérivée arrêtée |
+| `Neural.sequence_mask`, `Neural.causal_mask` | booléens construits depuis métadonnées `int` | transfert explicite, logique résidente | détachés ; `true` autorise |
 | comparaisons numériques | les neuf | `float32` | non, résultat booléen détaché |
 | égalité booléenne, logique | booléens | booléens | non |
 | `where` | branches : les neuf ; masque booléen | branches `float32` ; masque booléen | branches `float32` |
@@ -142,3 +143,7 @@ paramètres historique reste distinct et compatible.
 ## Embedding
 
 `Neural.Embedding(name, vocabulary_size, embedding_features, seed, padding_index:null)` : indices int32 de rang1/2, table float32 et gradient dense. Padding à dérivée arrêtée, placements explicites et limites CPU/GPU dans le [guide](Embeddings.md).
+
+## Masques de séquence
+
+`Neural.sequence_mask(lengths:int[],maximum_length:int)` et `Neural.causal_mask(query_length:int,key_length:int,query_offset:int=0)` : masques CPU booléens, longueurs et positions exactes, transfert explicite. Conventions et composition dans le [guide des séquences](SequenceMasks.md).

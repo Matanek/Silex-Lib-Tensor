@@ -1,0 +1,2 @@
+use Tensor.Neural
+func main() {let invalid=Neural.sequence_mask([0],-1)}

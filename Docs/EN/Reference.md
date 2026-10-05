@@ -18,6 +18,7 @@ contract.
 | `concatenate`, `stack` | all nine + booleans | all nine + booleans when resident | `float32` |
 | `gather` | any source, `int32` indices | `float32` source, `int32` indices | `float32` source |
 | `Neural.Embedding` | `int32` indices, `float32` weight | same, resident computation | dense weight; stopped padding derivative |
+| `Neural.sequence_mask`, `Neural.causal_mask` | booleans built from `int` metadata | explicit transfer, resident logic | detached; `true` allows |
 | numeric comparisons | all nine | `float32` | no, detached boolean output |
 | boolean equality, logic | booleans | booleans | no |
 | `where` | branches: all nine; boolean mask | `float32` branches; boolean mask | `float32` branches |
@@ -142,3 +143,7 @@ parameter checkpoint remains separate and compatible.
 ## Embedding
 
 `Neural.Embedding(name, vocabulary_size, embedding_features, seed, padding_index:null)`: rank1/2 int32 indices, float32 table and dense gradient. Stopped padding derivative, explicit placement and CPU/GPU limits are detailed in the [guide](Embeddings.md).
+
+## Sequence masks
+
+`Neural.sequence_mask(lengths:int[],maximum_length:int)` and `Neural.causal_mask(query_length:int,key_length:int,query_offset:int=0)`: CPU boolean masks, exact lengths and positions, explicit transfer. Conventions and composition in the [sequence visibility guide](SequenceMasks.md).

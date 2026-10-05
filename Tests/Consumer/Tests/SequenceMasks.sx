@@ -1,0 +1,102 @@
+use Tensor
+use Tensor.Neural
+use Tensor.DType
+use Tensor.Autograd
+use Tensor.Profile
+use GFX.GPU
+
+func assert_flags(mask:Tensor, rows:int, columns:int, expected:bool[]) {
+    assert(mask.dtype()==DType.boolean() && mask.is_cpu())
+    assert(mask.rank()==2 && mask.shape()[0]==rows && mask.shape()[1]==columns)
+    let actual=mask.bool_values()
+    assert(actual.count()==expected.count())
+    var i=0;while i<actual.count() {assert(actual[i]==expected[i]);i++}
+}
+test "sequence lengths expose exact visible prefixes" {
+    assert_flags(Neural.sequence_mask([0,2,4],4),3,4,[false,false,false,false,true,true,false,false,true,true,true,true])
+    assert_flags(Neural.sequence_mask([1,3],3),2,3,[true,false,false,true,true,true])
+}
+test "causal visibility uses explicit rectangular positions" {
+    assert_flags(Neural.causal_mask(3,4),3,4,[true,false,false,false,true,true,false,false,true,true,true,false])
+    assert_flags(Neural.causal_mask(2,5,query_offset:2),2,5,[true,true,true,false,false,true,true,true,true,false])
+    assert_flags(Neural.causal_mask(4,2),4,2,[true,false,true,true,true,true,true,true])
+    assert_flags(Neural.causal_mask(1,3,query_offset:9223372036854775807),1,3,[true,true,true])
+}
+test "zero axes and empty batches preserve rank and exact dimensions" {
+    assert_flags(Neural.sequence_mask([],4),0,4,[])
+    assert_flags(Neural.sequence_mask([0,0],0),2,0,[])
+    assert_flags(Neural.sequence_mask([],9223372036854775807),0,9223372036854775807,[])
+    assert_flags(Neural.causal_mask(0,4),0,4,[])
+    assert_flags(Neural.causal_mask(3,0),3,0,[])
+    assert_flags(Neural.causal_mask(9223372036854775807,0),9223372036854775807,0,[])
+}
+func sequence_composition(device:GPU.Device?) {
+    var valid=Neural.sequence_mask([0,2,4],4)
+    var causal=Neural.causal_mask(3,4)
+    var left=Tensor.ones([1,2,3,4]);var right=Tensor.full([3,1,3,1],-1.0)
+    if let gpu=device {valid=valid.to(gpu);causal=causal.to(gpu);left=left.to(gpu);right=right.to(gpu)}
+    var a=Autograd.Variable(left);var b=Autograd.Variable(right)
+    var profile:Profile?=null
+    if let gpu=device {profile=Profile(gpu)}
+    let mask=valid.unsqueeze(1).logical_and(causal.unsqueeze(0)).unsqueeze(1)
+    let selected=Tensor.where(mask,a.value(),b.value())
+    let seed=Tensor.full([3,2,3,4],0.5)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    var actual_seed=seed
+    if let gpu=device {actual_seed=seed.to(gpu);if let p=profile {p.reset()}}
+    var gradients=Autograd.grad(selected,[a.value(),b.value()],seed:actual_seed)
+    if let p=profile {assert(p.snapshot().uploads==0 && p.snapshot().downloads==0)}
+    let flags=mask.cpu().bool_values();var expected:bool[]=[false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,true,true,false,false,true,true,false,false,true,false,false,false,true,true,false,false,true,true,true,false]
+    var i=0;while i<36 {assert(flags[i]==expected[i]);i++}
+    let output=selected.detach().cpu().values()
+    var batch=0
+    while batch<3 {
+        var head=0
+        while head<2 {
+            i=0
+            while i<12 {
+                if expected[batch*12+i] {assert(output[(batch*2+head)*12+i]==1.0)}
+                else {assert(output[(batch*2+head)*12+i]== -1.0)}
+                i++
+            }
+            head++
+        }
+        batch++
+    }
+    let ga=gradients[0].cpu().values();let gb=gradients[1].cpu().values()
+    var expected_a:float[]=[1.0,0.0,0.0,0.0,1.0,1.0,0.0,0.0,1.0,1.0,0.5,0.0,1.0,0.0,0.0,0.0,1.0,1.0,0.0,0.0,1.0,1.0,0.5,0.0]
+    var expected_b:float[]=[4.0,4.0,4.0,3.0,2.0,2.0,3.0,2.0,1.0]
+    i=0;while i<24 {assert(ga[i]==expected_a[i]);i++}
+    i=0;while i<9 {assert(gb[i]==expected_b[i]);i++}
+    assert(a.gradient()==null && b.gradient()==null)
+}
+test "batch head broadcast and all false rows route CPU branch gradients" {sequence_composition(null)}
+test "batch head broadcast and all false rows route resident Metal gradients" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));sequence_composition(device)
+}
+test "mask construction does not transfer and explicit upload counts boolean bytes" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var profile=Profile(device)
+    let valid=Neural.sequence_mask([0,2,4],4);let causal=Neural.causal_mask(3,4)
+    assert(profile.snapshot().uploads==0 && profile.snapshot().downloads==0 && profile.snapshot().dispatches==0)
+    let placed=valid.to(device);let future=causal.to(device)
+    assert(profile.snapshot().uploads==2 && profile.snapshot().uploaded_bytes==24)
+    profile.reset()
+    let visible=placed.unsqueeze(1).logical_and(future.unsqueeze(0))
+    assert(profile.snapshot().uploads==0 && profile.snapshot().downloads==0)
+    assert(visible.is_gpu() && visible.rank()==3)
+}
+
+test "empty sequence visibility remains empty on Metal without compute or readback" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    let keys=Neural.sequence_mask([0,0],0).to(device)
+    let causal=Neural.causal_mask(3,0).to(device)
+    var profile=Profile(device)
+    let visible=keys.unsqueeze(1).logical_and(causal.unsqueeze(0))
+    assert(visible.rank()==3 && visible.shape()[0]==2 && visible.shape()[1]==3 && visible.shape()[2]==0)
+    assert(profile.snapshot().dispatches==0 && profile.snapshot().submissions==0)
+    assert(profile.snapshot().uploads==0 && profile.snapshot().downloads==0)
+    assert(visible.cpu().bool_values().is_empty())
+}

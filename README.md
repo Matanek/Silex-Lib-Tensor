@@ -42,6 +42,7 @@ silex install Tensor
 - [French top-k guide](Docs/FR/TopK.md) · [English](Docs/EN/TopK.md)
 - [French extremum index guide](Docs/FR/IndexedReductions.md) · [English](Docs/EN/IndexedReductions.md)
 - [French sequence guide](Docs/FR/Sequences.md) · [English](Docs/EN/Sequences.md)
+- [French sequence visibility guide](Docs/FR/SequenceMasks.md) · [English](Docs/EN/SequenceMasks.md)
 - [French mask guide](Docs/FR/Masks.md) · [English](Docs/EN/Masks.md)
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
@@ -51,6 +52,7 @@ batches and complete training checkpoints also require the corresponding
 `try` fixes for mutating and static methods in Silex’s Unreleased notes.
 Unreleased custom operations require the hierarchical module composition,
 owner storage visibility, owned protocol call and unused abstract helper fixes
-in those same notes.
+in those same notes. Unreleased embeddings and sequence-mask factories also use
+the contextual constructor argument support documented there.
 
 Resume the model, optimizer, batch cursor and RNG together using the [complete training checkpoint](Docs/EN/TrainingCheckpoint.md).

@@ -248,7 +248,7 @@ func require_axis(axis:int, rank:int, operation:str) {
     if axis < 0 || axis >= rank { panic("Tensor.$(operation) axis is outside the tensor rank") }
 }
 
-func checked_product(left:int, right:int, message:str) int {
+package func checked_product(left:int, right:int, message:str) int {
     if left < 0 || right < 0 { panic("Tensor internal product requires non-negative values") }
     if left != 0 && right > 9223372036854775807 / left { panic(message) }
     return left * right

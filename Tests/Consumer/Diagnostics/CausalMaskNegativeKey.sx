@@ -1,0 +1,2 @@
+use Tensor.Neural
+func main() {let invalid=Neural.causal_mask(2,-1)}
