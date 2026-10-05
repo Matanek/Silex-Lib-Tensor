@@ -32,8 +32,8 @@ test "Transformer optional graphs stay within retained-ancestor bounds and relea
                     profile.reset()
                     transformer_graph(device,mode,weights,norm_first,cycle)
                     let stats=profile.snapshot()
-                    assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases)
-                    assert(stats.buffer_allocations==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
+                    assert(stats.live_buffers==0 && stats.active_bytes==0 && stats.buffer_allocations==stats.buffer_releases && stats.cached_bytes==0 && stats.allocated_bytes==0)
+                    assert(stats.buffer_allocations+stats.buffer_reuses==allocations[index] && stats.peak_bytes<=bounds[index] && stats.downloads==0)
                     assert(autograd_performance_statistics().live_nodes==baseline.live_nodes)
                     if stats.peak_bytes>peak {peak=stats.peak_bytes}
                     index++

@@ -1,0 +1,207 @@
+use Tensor
+use Tensor.Profile
+use GFX.GPU
+
+func exercise_ready_aliases(device:GPU.Device) {
+    var values:float[]=[0.25,-1.0]
+    let input=Tensor.vector(values).to(device)
+    var profile=Profile(device)
+    let kept=input.add(3.0)
+    let alias=kept.reshape([1,2])
+    var saved:Tensor[]=[]
+    var iteration=0
+    while iteration<4096 {
+        let result=input.add(iteration as float)
+        if iteration%1024==0 {saved.append(result)}
+        iteration++
+    }
+    let stats=profile.snapshot()
+    assert(stats.buffer_allocations==6 && stats.buffer_reuses==4091)
+    assert(stats.compute_passes==4097 && stats.uploads==0 && stats.downloads==0)
+    assert(stats.in_use_buffers==6 && stats.cached_buffers==1 && stats.live_buffers==7)
+    assert(stats.active_bytes==48 && stats.cached_bytes==8 && stats.allocated_bytes==56)
+    let original=input.cpu().values()
+    let preserved=alias.cpu().values()
+    assert(original[0]==0.25 && original[1]==-1.0)
+    assert(preserved[0]==3.25 && preserved[1]==2.0)
+    var index=0
+    for tensor in saved {
+        let observed=tensor.cpu().values()
+        assert(observed[0]==0.25+(index*1024) as float && observed[1]==-1.0+(index*1024) as float)
+        index++
+    }
+}
+
+test "ready buffers preserve retained values and aliases across thousands of dispatches" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var observer=Profile(device)
+    exercise_ready_aliases(device)
+    let after=observer.snapshot()
+    assert(after.live_buffers==0 && after.in_use_buffers==0 && after.cached_buffers==0)
+    assert(after.active_bytes==0 && after.cached_bytes==0 && after.allocated_bytes==0)
+    assert(after.buffer_allocations==after.buffer_releases)
+}
+
+func discard_upload(device:GPU.Device,count:int) {
+    let temporary=Tensor.ones([count]).to(device)
+}
+
+func exercise_ready_capacity(device:GPU.Device) {
+    let anchor=Tensor.ones([1]).to(device)
+    var profile=Profile(device)
+    var count=2
+    while count<66 {
+        discard_upload(device,count)
+        let current=profile.snapshot()
+        assert(current.in_use_buffers==1 && current.active_bytes==4)
+        assert(current.cached_buffers<=32 && current.cached_bytes<=1048576)
+        assert(current.live_buffers==current.in_use_buffers+current.cached_buffers)
+        assert(current.allocated_bytes==current.active_bytes+current.cached_bytes)
+        count++
+    }
+    assert(profile.snapshot().cached_buffers==32)
+    count=16384
+    while count<16408 {
+        discard_upload(device,count)
+        let current=profile.snapshot()
+        assert(current.cached_buffers<=32 && current.cached_bytes<=1048576)
+        count++
+    }
+    let bounded=profile.snapshot()
+    assert(bounded.cache_evictions>0)
+    assert(bounded.cache_capacity_buffers==32 && bounded.cache_capacity_bytes==1048576)
+    discard_upload(device,262145)
+    let after_large=profile.snapshot()
+    assert(after_large.cached_buffers==bounded.cached_buffers && after_large.cached_bytes==bounded.cached_bytes)
+    assert(after_large.buffer_allocations==bounded.buffer_allocations+1)
+    assert(after_large.buffer_releases==bounded.buffer_releases+1)
+    profile.reset()
+    let first=profile.snapshot();let second=profile.snapshot()
+    assert(first.cache_evictions==0 && first.buffer_reuses==0 && first.uploads==0 && first.downloads==0)
+    assert(first.cached_bytes==second.cached_bytes && first.cached_buffers==second.cached_buffers)
+    assert(first.submissions==second.submissions && first.cache_evictions==second.cache_evictions)
+}
+
+test "ready buffer capacity evicts bounded entries and releases without depending on profile destruction" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    var observer=Profile(device)
+    exercise_ready_capacity(device)
+    let after=observer.snapshot()
+    assert(after.live_buffers==0 && after.cached_buffers==0 && after.allocated_bytes==0)
+    assert(after.buffer_allocations==after.buffer_releases)
+}
+
+use Tensor.DType
+
+func pool_same<T>(a:T[],b:T[]) bool {
+    if a.count()!=b.count() {return false}
+    var index=0
+    while index<a.count() {
+        if a[index]!=b[index] {return false}
+        index++
+    }
+    return true
+}
+
+func verify_pool_roundtrip(source:Tensor,device:GPU.Device) {
+    let resident=source.to(device)
+    let host=resident.cpu()
+    assert(host.dtype()==source.dtype() && host.count()==source.count())
+    if source.dtype()==DType.float32() {assert(pool_same(host.values(),source.values()))}
+    if source.dtype()==DType.int8() {assert(pool_same(host.int8_values(),source.int8_values()))}
+    if source.dtype()==DType.uint8() {assert(pool_same(host.uint8_values(),source.uint8_values()))}
+    if source.dtype()==DType.int16() {assert(pool_same(host.int16_values(),source.int16_values()))}
+    if source.dtype()==DType.uint16() {assert(pool_same(host.uint16_values(),source.uint16_values()))}
+    if source.dtype()==DType.int32() {assert(pool_same(host.int32_values(),source.int32_values()))}
+    if source.dtype()==DType.uint32() {assert(pool_same(host.uint32_values(),source.uint32_values()))}
+    if source.dtype()==DType.int64() {assert(pool_same(host.int64_values(),source.int64_values()))}
+    if source.dtype()==DType.uint64() {assert(pool_same(host.uint64_values(),source.uint64_values()))}
+    if source.dtype()==DType.boolean() {assert(pool_same(host.bool_values(),source.bool_values()))}
+}
+
+func exercise_pool_dtypes(first:GPU.Device,second:GPU.Device) {
+    let anchor=Tensor.ones([1]).to(first)
+    let other_anchor=Tensor.ones([1]).to(second)
+    var a=Profile(first);var b=Profile(second)
+    // Each dtype reserves 32 bytes: equal byte sizes must still use distinct keys.
+    let maximum:uint64=18446744073709551615
+    let minimum:int64=-9223372036854775808
+    var sources:Tensor[]=[Tensor.full([8],-0.25),Tensor.full([32],(-128) as int8),
+        Tensor.full([32],255 as uint8),Tensor.full([16],(-32768) as int16),
+        Tensor.full([16],65535 as uint16),Tensor.full([8],(-2147483648) as int32),
+        Tensor.full([8],4294967295 as uint32),Tensor.full([4],minimum),
+        Tensor.full([4],maximum),Tensor.full([32],true)]
+    for source in sources {verify_pool_roundtrip(source,first)}
+    let warmed=a.snapshot()
+    assert(warmed.buffer_allocations==10 && warmed.buffer_reuses==0 && warmed.cached_buffers==10)
+    var cycle=0
+    while cycle<128 {
+        for source in sources {verify_pool_roundtrip(source,first)}
+        cycle++
+    }
+    let reused=a.snapshot()
+    assert(reused.buffer_allocations==10 && reused.buffer_reuses==1280)
+    assert(reused.uploads==1290 && reused.downloads==1290)
+    let untouched=b.snapshot()
+    assert(untouched.uploads==0 && untouched.downloads==0 && untouched.buffer_reuses==0)
+    for source in sources {verify_pool_roundtrip(source,second)}
+    let independent=b.snapshot()
+    assert(independent.buffer_allocations==10 && independent.buffer_reuses==0)
+    assert(independent.cached_buffers==10 && independent.in_use_buffers==1)
+    assert(a.snapshot().buffer_reuses==reused.buffer_reuses)
+    for source in sources {verify_pool_roundtrip(source,second)}
+    assert(b.snapshot().buffer_reuses==10)
+}
+
+test "ready buffer keys isolate all storage dtypes and devices at equal sizes" {
+    if !GPU.Device.is_supported() {return}
+    var first=GPU.Device(GPU.DeviceSettings(debug:true))
+    var second=GPU.Device(GPU.DeviceSettings(debug:true))
+    var a=Profile(first);var b=Profile(second)
+    exercise_pool_dtypes(first,second)
+    let x=a.snapshot();let y=b.snapshot()
+    assert(x.live_buffers==0 && y.live_buffers==0 && x.cached_bytes==0 && y.cached_bytes==0)
+    assert(x.buffer_allocations==x.buffer_releases && y.buffer_allocations==y.buffer_releases)
+}
+
+func verify_pool_boolean(device:GPU.Device,count:int,cycle:int) {
+    var flags:bool[]=[]
+    var index=0
+    while index<count {flags.append((index+cycle)%3==0);index++}
+    let input=Tensor.vector(flags).to(device)
+    let inverted=input.logical_not()
+    let paired=Tensor.concatenate([input,inverted],0)
+    let output=paired.cpu().bool_values()
+    assert(output.count()==2*count)
+    index=0
+    while index<count {
+        assert(output[index]==flags[index] && output[count+index]!=flags[index])
+        index++
+    }
+    assert(pool_same(input.cpu().bool_values(),flags))
+}
+
+func exercise_pool_boolean(device:GPU.Device) {
+    let anchor=Tensor.ones([1]).to(device)
+    var profile=Profile(device)
+    var cycle=0
+    while cycle<128 {
+        for count in [1,2,3,5,7,9,15,17,31,33,63,65] {verify_pool_boolean(device,count,cycle)}
+        cycle++
+    }
+    let stats=profile.snapshot()
+    assert(stats.buffer_reuses>4000 && stats.cache_evictions==0)
+    assert(stats.in_use_buffers==1 && stats.cached_buffers<=32 && stats.cached_bytes<=1048576)
+    assert(stats.uploads==1536 && stats.downloads==3072 && stats.compute_passes==1536)
+}
+
+test "reused packed boolean words fully overwrite partial tails and preserve their inputs" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true));var observer=Profile(device)
+    exercise_pool_boolean(device)
+    let stats=observer.snapshot()
+    assert(stats.live_buffers==0 && stats.in_use_buffers==0 && stats.cached_buffers==0)
+    assert(stats.buffer_allocations==stats.buffer_releases)
+}

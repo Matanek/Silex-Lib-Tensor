@@ -422,12 +422,13 @@ nocopy class GPUStorage {
     }
 
     drop {
-        if self.current_buffer != null { GPUPerformanceCounters.record_buffer_release() }
         if var fence = self.completion { fence.wait() }
         self.completion = null
         self.upload_buffer = null
+        if var buffer = self.current_buffer {
+            self.kernel_cache.profile_state.recycle_buffer(buffer,self.current_dtype,self.buffer_bytes)
+        }
         self.current_buffer = null
-        if self.buffer_bytes > 0 { self.kernel_cache.profile_state.release(self.buffer_bytes) }
         self.parent = null
         self.other_parent = null
         self.third_parent = null
@@ -546,7 +547,7 @@ nocopy class GPUStorage {
         let width = self.current_dtype.byte_width()
         let byte_count = checked_byte_count(layout.count(), width)
         var output = GPUStorage.allocate_buffer(
-            self.current_device, storage_buffer_bytes(byte_count, self.current_dtype), "Tensor contiguous storage"
+            self.current_device, storage_buffer_bytes(byte_count, self.current_dtype), "Tensor contiguous storage", self.current_dtype
         )
         var commands = self.current_device.commands()
         var transfer = commands.copy()
@@ -582,7 +583,7 @@ nocopy class GPUStorage {
         require_gpu_uint32(bytes, "mask output byte size")
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, dtype) }
         var output = GPUStorage.allocate_buffer(self.current_device,
-            bytes, "Tensor mask result")
+            bytes, "Tensor mask result", dtype)
         var pipeline = self.kernel_cache.masks()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -777,7 +778,7 @@ nocopy class GPUStorage {
         if count == 0 { return GPUStorage.empty(self.current_device,self.kernel_cache,DType.int32()) }
         let groups = layout.count() / layout.shape()[axis]
         var metadata = topk_metadata(layout,k,axis,largest,groups)
-        var output = GPUStorage.allocate_buffer(self.current_device,checked_byte_count(count,4),"Tensor int32 top-k indices")
+        var output = GPUStorage.allocate_buffer(self.current_device,checked_byte_count(count,4),"Tensor int32 top-k indices",DType.int32())
         var pipeline = self.kernel_cache.topk()
         var commands = self.current_device.commands()
         commands.compute_uniform(0,@metadata[0:metadata.count()])
@@ -804,7 +805,7 @@ nocopy class GPUStorage {
         if maximum { operation = ReductionOperation.maximum }
         var metadata = reduction_metadata(operation, layout, axes, keep_dimensions, count)
         if count == 0 { return GPUStorage.empty(self.current_device, self.kernel_cache, DType.int32()) }
-        var output = GPUStorage.allocate_buffer(self.current_device, checked_byte_count(count, 4), "Tensor int32 extrema indices")
+        var output = GPUStorage.allocate_buffer(self.current_device, checked_byte_count(count, 4), "Tensor int32 extrema indices",DType.int32())
         var pipeline = self.kernel_cache.index_reduction()
         var commands = self.current_device.commands()
         commands.compute_uniform(0, @metadata[0:metadata.count()])
@@ -902,7 +903,7 @@ nocopy class GPUStorage {
         var output = GPUStorage.allocate_buffer(
             self.current_device,
             storage_buffer_bytes(checked_byte_count(count, width), self.current_dtype),
-            "Tensor concatenated storage"
+            "Tensor concatenated storage", self.current_dtype
         )
         var commands = self.current_device.commands()
         var transfer = commands.copy()
@@ -1172,7 +1173,7 @@ nocopy class GPUStorage {
     }
 
     private static func empty(device:GPU.Device, cache:GPUKernelCache, dtype:DType) GPUStorage {
-        var buffer = GPUStorage.allocate_buffer(device, 4, "Tensor empty storage")
+        var buffer = GPUStorage.allocate_buffer(device, 4, "Tensor empty storage",dtype)
         return GPUStorage(device, cache, buffer, null, null, null, null, dtype, 0)
     }
 
@@ -1181,7 +1182,7 @@ nocopy class GPUStorage {
         GPUPerformanceCounters.record_upload_staging()
         var profile_state = GPUProfileRegistry.state(device)
         profile_state.upload(byte_count)
-        var buffer = GPUStorage.allocate_buffer(device, storage_buffer_bytes(byte_count, dtype), "Tensor storage")
+        var buffer = GPUStorage.allocate_buffer(device, storage_buffer_bytes(byte_count, dtype), "Tensor storage",dtype)
         var commands = device.commands()
         var transfer = commands.copy()
         transfer.upload(upload, buffer, byte_count)
@@ -1192,15 +1193,8 @@ nocopy class GPUStorage {
         return GPUStorage(device, GPUKernelCache(device), buffer, upload, completed, null, null, dtype, count)
     }
 
-    private static func allocate_buffer(device:GPU.Device, size:int, name:str) GPU.Buffer {
-        var buffer = device.buffer(GPU.BufferSettings(
-            size:size,
-            usage:GPU.BufferUsage.storage(),
-            name:name
-        ))
-        GPUPerformanceCounters.record_buffer()
-        GPUProfileRegistry.state(device).allocate(size)
-        return buffer
+    private static func allocate_buffer(device:GPU.Device, size:int, name:str, dtype:DType = DType.float32()) GPU.Buffer {
+        return GPUProfileRegistry.state(device).acquire_buffer(size,dtype,name)
     }
 
     private func required_buffer() GPU.Buffer {

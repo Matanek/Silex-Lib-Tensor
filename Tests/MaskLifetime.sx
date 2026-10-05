@@ -29,10 +29,17 @@ test "retain all three temporary GPU parents until result observation" {
     var profile = Profile(device)
     let output = temporary_mask_selection(device)
     let values = output.cpu().values()
-    assert(values[0] == 1.0 && values[1] == -2.0 && values[4] == 5.0)
+    assert(values[0] == 1.0 && values[1] == -2.0 && values[2] == 3.0 && values[3] == -4.0 && values[4] == 5.0)
+    // The first readback can start before the result fence is ready.
+    // A second read observes completed parents while preserving the result.
+    let repeated = output.cpu().values()
+    assert(repeated[0] == 1.0 && repeated[1] == -2.0 && repeated[4] == 5.0)
     let stats = profile.snapshot()
+    assert(stats.downloads == 2)
     assert(stats.buffer_allocations == 4)
-    assert(stats.buffer_releases == 3 && stats.live_buffers == 1 && stats.active_bytes == 20)
+    assert(stats.buffer_releases == 0 && stats.live_buffers == 4 && stats.active_bytes == 20)
+    assert(stats.in_use_buffers == 1 && stats.cached_buffers == 3)
+    assert(stats.cached_bytes == 48 && stats.allocated_bytes == 68)
 }
 
 test "release mask graphs and GPU buffers across repeated backward" {

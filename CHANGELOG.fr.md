@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Réutilise les buffers GPU prêts à taille/dtype exacts dans un cache privé borné à 32 entrées et 1 MiB par device, vidé au dernier stockage. Le profil distingue créations natives, réutilisations, réservations en cache et mémoire utilisée par les valeurs. Sur Apple M3 Pro/Metal, trois étapes Transformer ont un gain apparié admis de 5,89 % ; les cinq autres familles et microcas restent indéterminés. Les données brutes et le coût mémoire sont conservés dans Silex-Benchmarks.
+
 - Les gardes de durée de vie de MultiHeadAttention, Transformer et de la chaîne résidente vérifient des bornes par variante avec tous les ancêtres retenus, indépendantes de la vitesse de complétion GPU, ainsi que les nombres exacts d’allocations et la libération complète.
 
 - Ajoute LSTM batch-first i/f/g/o avec paire hidden/cell et séquence explicites, quatre paramètres, oracles CPU/Metal, segmentation et reprise exacte.

@@ -1,6 +1,7 @@
 use GFX.GPU
 use STD.Math
 use Tensor
+use Tensor.Profile
 use Tensor.gpu_performance_statistics
 use Tensor.reset_gpu_performance_statistics
 use Tensor.Neural.Parameter
@@ -26,13 +27,15 @@ func adam_resident_step(optimizer:Adam, device:GPU.Device, expected_passes:int) 
     device.wait_until_idle()
     device.reset_command_stats()
     reset_gpu_performance_statistics()
+    var profile = Profile(device)
     optimizer.step()
     device.wait_until_idle()
     let commands = device.command_stats()
     let resources = gpu_performance_statistics()
     assert(commands.uploads == 0 && commands.downloads == 0)
     assert(commands.compute_passes == expected_passes)
-    assert(resources.buffer_allocations == expected_passes)
+    assert(resources.buffer_allocations + profile.snapshot().buffer_reuses == expected_passes)
+    assert(resources.buffer_allocations == profile.snapshot().buffer_allocations)
     assert(resources.fence_creations == expected_passes)
     assert(resources.upload_staging_allocations == 0 && resources.download_staging_allocations == 0)
 }

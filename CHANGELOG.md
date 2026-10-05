@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Reuse ready GPU buffers with exact size/dtype keys in a private per-device cache bounded to 32 entries and 1 MiB, cleared at the last storage. Profiling distinguishes native creation, reuse, cached reservations and bytes in use by values. Three Transformer steps on Apple M3 Pro/Metal show an admitted paired gain of 5.89%; the five other families and microcases remain indeterminate. Raw data and memory costs are retained in Silex-Benchmarks.
+
 - MultiHeadAttention, Transformer and resident-chain lifetime guards check per-variant bounds with all ancestors retained, independently of GPU completion speed, plus exact allocation counts and complete release.
 
 - Add batch-first i/f/g/o LSTM with explicit hidden/cell pair and sequence, four parameters, CPU/Metal oracles, chunking and exact resumption.

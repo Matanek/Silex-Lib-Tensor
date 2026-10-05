@@ -40,17 +40,24 @@ counter does not measure GPU execution time.
 
 ## Counters
 
-All events count work issued during the period. Live buffers and active bytes
-instead describe the device's current state, including Tensor buffers created
-before the period began.
+All events count work issued during the period. Buffer counts and bytes describe
+the current device state, including Tensor reservations created before the period
+started. Tensor can reuse ready buffers: distinguish live native resources from
+buffers still in use by values.
 
 | `ProfileStatistics` fields | Meaning |
 | --- | --- |
 | `uploads`, `downloads` | Tensor CPU→GPU and GPU→CPU transfers. |
 | `uploaded_bytes`, `downloaded_bytes` | Logical transfer bytes according to dtype. |
-| `buffer_allocations`, `buffer_releases` | Tensor storage buffer creation and release during the period. Releases may concern earlier buffers. |
-| `live_buffers`, `peak_live_buffers` | Currently live Tensor buffers and maximum since the period began. |
-| `active_bytes`, `peak_bytes` | Sum of requested sizes of these buffers and maximum during the period. |
+| `buffer_allocations`, `buffer_releases` | Actual Tensor storage buffer creation and release during the period. Reuse creates no buffer. Releases may concern earlier buffers. |
+| `buffer_reuses` | Ready buffer acquisitions without a new native creation. |
+| `cache_evictions` | Buffers removed from the cache to respect capacity or clear it at the last storage. |
+| `live_buffers`, `peak_live_buffers` | Live native Tensor buffers, including ready cached buffers, and maximum since the period began. |
+| `in_use_buffers`, `peak_in_use_buffers` | Buffers owned by value storage and maximum during the period; views share their storage. |
+| `active_bytes`, `peak_bytes` | Sum of requested sizes of buffers in use by values and maximum during the period. |
+| `allocated_bytes`, `peak_allocated_bytes` | Sum of requested sizes of all live native buffers, including the cache, and maximum during the period. |
+| `cached_buffers`, `cached_bytes` | Available ready buffers and sum of their requested sizes. |
+| `cache_capacity_buffers`, `cache_capacity_bytes` | Per-device cache limits: currently 32 buffers and 1 MiB. |
 | `upload_staging_allocations`, `download_staging_allocations` | Corresponding Tensor transfer buffer creations. |
 | `fence_creations`, `submissions` | Fences created and command buffers submitted by Tensor. |
 | `pipeline_compilations` | Tensor pipeline creations; cache reuse adds none. |
@@ -75,6 +82,34 @@ active while its buffer is retained. A profile retains no tensor: it keeps its
 device and period data. Internal device state disappears when no Tensor storage
 or profile remains alive; no global device or period history is retained.
 
+## Reuse and reserved memory
+
+Tensor's private cache only acquires a buffer whose fence is complete and on
+which no live storage, view or branch depends. Size and dtype must match
+exactly. Buffers larger than the limit are released directly. The cache respects
+both 32 entries and 1 MiB per device; the oldest ready entry is removed when a
+limit would be exceeded. The optimization reuses storage without grouping
+commands or avoiding computation fences.
+
+`live_buffers == in_use_buffers + cached_buffers` and
+`allocated_bytes == active_bytes + cached_bytes` describe current state.
+Maximums are observed separately and need not add up. After temporary
+computation, `active_bytes` can return to its previous level while
+`allocated_bytes` remains higher and `buffer_releases` is unchanged: the buffer
+is available for a later computation. `reset()` does not clear the cache. It
+starts all peaks from current state and only zeroes events; `snapshot()` changes
+no reservation.
+
+The cache is cleared when the device's last Tensor storage disappears, even if
+a `Profile` remains alive. Destroying a profile does not clear the cache of
+values still alive. Requested sizes include provider minimums but measure
+neither physical Metal memory nor internal driver allocations. The cache adds
+no transfer or wait to profiling.
+
+The new `ProfileStatistics` fields default to zero, preserving named
+constructions that only provide the earlier fields. Snapshots produced by
+`Profile` report the effective limits.
+
 A period follows calls from the calling thread; it provides no concurrent
 collection guarantee. Inactive collection keeps the buffer tracking needed to
 open a profile on already resident tensors. Active collection adds increments
@@ -83,7 +118,8 @@ profiles and workload. `Neural.sx` distinguishes `--measure-mlp`/`--measure-cnn`
 `--measure-rnn` (no profile) from their `--profile-mlp`/`--profile-cnn`/
 `--profile-rnn` variants. Snapshots and printing occur after timed sections.
 
-Release qualification on 5 October 2026, Apple M3 Pro / Metal, retains 75
+The initial public-profile qualification, before buffer reuse, in Release on
+5 October 2026, Apple M3 Pro / Metal, retains 75
 processes (five repetitions per variant/family and A/A controls). Across nine
 complete resident steps, median changes with one active period range from
 −3.11% to +5.35% compared to the candidate without a profile. Other phases have
@@ -91,3 +127,28 @@ positive changes up to +20.75%; A/A controls themselves show signals. This
 proves neither zero cost nor universal non-regression. Raw data, MAD and
 counterchecks are retained under
 `Silex-Benchmarks/Sources/TensorStableCompute/Baselines/2026-10-05-macos-arm64-public-profile/`.
+
+## Measured reuse result
+
+The Release comparison on 5 October 2026, Apple M3 Pro / Metal, uses the same
+exact compiler, 16 eager/cache pairs and eight A/A controls for each binary.
+Three resident Transformer steps change from 40.260 ms to 37.853 ms in median;
+the median paired difference is −5.89%, with a MAD of 1.20 percentage points
+and 14 favorable pairs out of 16. Controls are valid under the rule fixed
+before measurement. All 1,700 values across the six models, including gradients
+and states, remain qualified at tolerance 2e-5 with AdamW epsilon1e-4.
+
+The five other models and twelve microcases demonstrate no gain under the
+admission rule. Cold costs remain indeterminate. Median Transformer native
+creations decrease from 1,365 to 643; passes and submissions remain identical.
+Fewer creations do not mean all workloads run faster. Median process RSS for
+the six-family workload increases from 81,510,400 to 83,869,696 bytes; it includes
+the driver and allocator and does not measure physical GPU memory. The cache
+keeps at most 1 MiB of requested buffer sizes per device.
+
+Sources, configurations, raw data, dispersion, controls and a verifier belong
+to `Silex-Benchmarks/Sources/TensorStableCompute/Baselines/` under
+`2026-10-05-macos-arm64-ready-buffer-reuse-micro` and
+`2026-10-05-macos-arm64-ready-buffer-reuse-models`. This result concerns these
+workloads, hardware and binaries; no performance generalization to other
+targets is established.

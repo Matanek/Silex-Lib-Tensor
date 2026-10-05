@@ -1,6 +1,7 @@
 use GFX.GPU
 use Tensor
 use Tensor.Profile
+use Tensor.ProfileStatistics
 use Tensor.Neural.Parameter
 use Tensor.Optim.SGD
 use STD.Math
@@ -40,20 +41,26 @@ test "reset one overlapping period and release temporary buffers" {
     var outer = Profile(device)
     profile_temporary_compute(input)
     let first = outer.snapshot()
-    assert(first.buffer_allocations == 2 && first.buffer_releases == 2)
+    assert(first.buffer_allocations == 2 && first.buffer_releases == 0 && first.buffer_reuses == 0)
     assert(first.active_bytes == 8 && first.peak_bytes == 24)
-    assert(first.live_buffers == 1 && first.peak_live_buffers == 3)
+    assert(first.live_buffers == 3 && first.peak_live_buffers == 3)
+    assert(first.in_use_buffers == 1 && first.cached_buffers == 2 && first.cached_bytes == 16)
+    assert(first.allocated_bytes == 24)
     assert(first.pipeline_compilations == 1)
     var inner = Profile(device)
     outer.reset()
     let reset = outer.snapshot()
     assert(reset.buffer_allocations == 0 && reset.buffer_releases == 0)
-    assert(reset.peak_bytes == 8 && reset.peak_live_buffers == 1)
+    assert(reset.peak_bytes == 8 && reset.peak_live_buffers == 3)
+    assert(reset.peak_in_use_buffers == 1 && reset.peak_allocated_bytes == 24)
     profile_temporary_compute(input)
     let a = outer.snapshot()
     let b = inner.snapshot()
     assert(a.dispatches == 2 && b.dispatches == 2)
-    assert(a.buffer_releases == 2 && b.buffer_releases == 2)
+    assert(a.buffer_releases == 0 && b.buffer_releases == 0)
+    assert(a.buffer_allocations == 0 && b.buffer_allocations == 0)
+    assert(a.buffer_reuses == 2 && b.buffer_reuses == 2)
+    assert(a.in_use_buffers == 1 && a.cached_buffers == 2 && a.active_bytes == 8)
     assert(a.pipeline_compilations == 0 && b.pipeline_compilations == 0)
     assert(a.downloads == 0 && b.downloads == 0)
     inner.reset()
@@ -206,4 +213,17 @@ test "preserve training values with public collection active or inactive" {
     assert(inactive[0] == active[0] && inactive[1] == active[1])
     assert(Math.abs(active[0] - 0.92) < 0.00001)
     assert(Math.abs(active[1] + 1.38) < 0.00001)
+}
+
+
+test "construct statistics with the earlier named fields and neutral cache defaults" {
+    let previous=ProfileStatistics(uploads:0,downloads:0,uploaded_bytes:0,downloaded_bytes:0,
+        buffer_allocations:0,buffer_releases:0,upload_staging_allocations:0,
+        download_staging_allocations:0,fence_creations:0,submissions:0,
+        pipeline_compilations:0,compute_passes:0,pipeline_bindings:0,dispatches:0,
+        live_buffers:0,peak_live_buffers:0,active_bytes:0,peak_bytes:0)
+    assert(previous.buffer_reuses==0 && previous.cache_evictions==0)
+    assert(previous.cached_buffers==0 && previous.cached_bytes==0 && previous.in_use_buffers==0)
+    assert(previous.peak_in_use_buffers==0 && previous.allocated_bytes==0 && previous.peak_allocated_bytes==0)
+    assert(previous.cache_capacity_buffers==0 && previous.cache_capacity_bytes==0)
 }

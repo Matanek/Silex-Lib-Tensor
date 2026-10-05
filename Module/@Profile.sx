@@ -21,6 +21,16 @@ public struct ProfileStatistics {
     let peak_live_buffers:int
     let active_bytes:int
     let peak_bytes:int
+    let buffer_reuses:int = 0
+    let cache_evictions:int = 0
+    let cached_buffers:int = 0
+    let cached_bytes:int = 0
+    let in_use_buffers:int = 0
+    let peak_in_use_buffers:int = 0
+    let allocated_bytes:int = 0
+    let peak_allocated_bytes:int = 0
+    let cache_capacity_buffers:int = 0
+    let cache_capacity_bytes:int = 0
 }
 
 public nocopy class Profile {
@@ -63,6 +73,21 @@ class GPUProfilePeriod {
     var dispatches:int = 0
     var peak_live_buffers:int = 0
     var peak_bytes:int = 0
+    var buffer_reuses:int = 0
+    var cache_evictions:int = 0
+    var peak_in_use_buffers:int = 0
+    var peak_allocated_bytes:int = 0
+}
+
+nocopy class GPUReadyBuffer {
+    var buffer:GPU.Buffer
+    let dtype:DType
+    let bytes:int
+    init(buffer:GPU.Buffer, dtype:DType, bytes:int) {
+        self.buffer=buffer
+        self.dtype=dtype
+        self.bytes=bytes
+    }
 }
 
 nocopy class GPUProfileState {
@@ -70,6 +95,12 @@ nocopy class GPUProfileState {
     private var periods:GPUProfilePeriod[] = []
     private var live_buffers:int = 0
     private var active_bytes:int = 0
+    private var in_use_buffers:int = 0
+    private var allocated_bytes:int = 0
+    private var cached_bytes:int = 0
+    private var ready_buffers:GPUReadyBuffer[] = []
+    private let cache_capacity_buffers:int = 32
+    private let cache_capacity_bytes:int = 1048576
 
     init(device:GPU.Device) { self.device = device }
 
@@ -80,6 +111,8 @@ nocopy class GPUProfileState {
         var period = GPUProfilePeriod()
         period.peak_live_buffers = self.live_buffers
         period.peak_bytes = self.active_bytes
+        period.peak_in_use_buffers = self.in_use_buffers
+        period.peak_allocated_bytes = self.allocated_bytes
         self.periods.append(period)
         return period
     }
@@ -114,25 +147,101 @@ nocopy class GPUProfileState {
             live_buffers:self.live_buffers,
             peak_live_buffers:period.peak_live_buffers,
             active_bytes:self.active_bytes,
-            peak_bytes:period.peak_bytes
+            peak_bytes:period.peak_bytes,
+            buffer_reuses:period.buffer_reuses,
+            cache_evictions:period.cache_evictions,
+            cached_buffers:self.ready_buffers.count(),
+            cached_bytes:self.cached_bytes,
+            in_use_buffers:self.in_use_buffers,
+            peak_in_use_buffers:period.peak_in_use_buffers,
+            allocated_bytes:self.allocated_bytes,
+            peak_allocated_bytes:period.peak_allocated_bytes,
+            cache_capacity_buffers:self.cache_capacity_buffers,
+            cache_capacity_bytes:self.cache_capacity_bytes
         )
     }
 
     func allocate(bytes:int) {
         self.live_buffers++
-        self.active_bytes += bytes
+        self.allocated_bytes += bytes
         for period in self.periods {
             period.buffer_allocations++
             if self.live_buffers > period.peak_live_buffers { period.peak_live_buffers = self.live_buffers }
-            if self.active_bytes > period.peak_bytes { period.peak_bytes = self.active_bytes }
+            if self.allocated_bytes > period.peak_allocated_bytes { period.peak_allocated_bytes = self.allocated_bytes }
         }
     }
 
     func release(bytes:int) {
         self.live_buffers--
-        self.active_bytes -= bytes
+        self.allocated_bytes -= bytes
         for period in self.periods { period.buffer_releases++ }
         GPUProfileRegistry.retire(self)
+    }
+
+    func acquire_buffer(bytes:int, dtype:DType, name:str) GPU.Buffer {
+        var index=0
+        while index<self.ready_buffers.count() {
+            var candidate=self.ready_buffers[index]
+            if candidate.bytes==bytes && candidate.dtype==dtype {
+                var reused=self.ready_buffers.take(index)
+                self.cached_bytes-=bytes
+                for period in self.periods {period.buffer_reuses++}
+                self.begin_use(bytes)
+                reused.buffer.name(name)
+                return reused.buffer
+            }
+            index++
+        }
+        var buffer=self.device.buffer(GPU.BufferSettings(size:bytes,usage:GPU.BufferUsage.storage(),name:name))
+        GPUPerformanceCounters.record_buffer()
+        self.allocate(bytes)
+        self.begin_use(bytes)
+        return buffer
+    }
+
+    private func begin_use(bytes:int) {
+        self.in_use_buffers++
+        self.active_bytes+=bytes
+        for period in self.periods {
+            if self.in_use_buffers>period.peak_in_use_buffers {period.peak_in_use_buffers=self.in_use_buffers}
+            if self.active_bytes>period.peak_bytes {period.peak_bytes=self.active_bytes}
+        }
+    }
+
+    // The caller has waited for the storage fence. No Tensor or parent is cached.
+    func recycle_buffer(buffer:GPU.Buffer, dtype:DType, bytes:int) {
+        self.in_use_buffers--
+        self.active_bytes-=bytes
+        if self.in_use_buffers==0 {
+            self.release_buffer(bytes)
+            self.clear_ready_buffers()
+            return
+        }
+        if bytes>self.cache_capacity_bytes {
+            self.release_buffer(bytes)
+            return
+        }
+        while self.ready_buffers.count()>=self.cache_capacity_buffers || self.cached_bytes>self.cache_capacity_bytes-bytes {
+            self.evict_ready_buffer()
+        }
+        self.ready_buffers.append(GPUReadyBuffer(buffer,dtype,bytes))
+        self.cached_bytes+=bytes
+    }
+
+    private func release_buffer(bytes:int) {
+        GPUPerformanceCounters.record_buffer_release()
+        self.release(bytes)
+    }
+
+    private func evict_ready_buffer() {
+        var removed=self.ready_buffers.take(0)
+        self.cached_bytes-=removed.bytes
+        for period in self.periods {period.cache_evictions++}
+        self.release_buffer(removed.bytes)
+    }
+
+    private func clear_ready_buffers() {
+        while !self.ready_buffers.is_empty() {self.evict_ready_buffer()}
     }
 
     func upload(bytes:int) {
