@@ -1,0 +1,178 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+use Tensor.Profile
+use GFX.GPU
+use STD.Math
+
+func baseline_model(normalized:bool) Neural.Sequential {
+    var layers:Neural.Layer[]=[Neural.Dense("hidden",2,4,101)]
+    if normalized {layers.append(Neural.LayerNorm("norm",[4],epsilon:0.25))}
+    layers.append(Neural.Activation.tanh())
+    layers.append(Neural.Dense("output",4,2,102))
+    return Neural.Sequential(layers)
+}
+
+func near(left:Tensor,right:Tensor,tolerance:float) {
+    let a=left.detach().cpu().values()
+    let b=right.detach().cpu().values()
+    assert(a.count()==b.count() && left.dtype()==right.dtype())
+    assert(left.shape().count()==right.shape().count())
+    var i=0
+    while i<left.shape().count() {assert(left.shape()[i]==right.shape()[i]);i++}
+    i=0
+    while i<a.count() {
+        if !Math.is_finite(a[i]) || !Math.is_finite(b[i]) || Math.abs(a[i]-b[i])>tolerance {
+            print("TRAINING_BASELINE_MISMATCH index=$(i) left=$(a[i]) right=$(b[i]) tolerance=$(tolerance)")
+        }
+        assert(Math.is_finite(a[i]) && Math.is_finite(b[i]) && Math.abs(a[i]-b[i])<=tolerance)
+        i++
+    }
+}
+func optional_near(left:Tensor?,right:Tensor?,tolerance:float) {
+    if let a=left {
+        if let b=right {near(a,b,tolerance)} else {panic("missing training state")}
+    } else {assert(right==null)}
+}
+func state_near(left:Optim.AdamWState,right:Optim.AdamWState,tolerance:float) {
+    assert(left.learning_rate==right.learning_rate && left.beta1==right.beta1 && left.beta2==right.beta2)
+    assert(left.epsilon==right.epsilon && left.weight_decay==right.weight_decay)
+    assert(left.parameters.count()==right.parameters.count())
+    var i=0
+    while i<left.parameters.count() {
+        let a=left.parameters[i]
+        let b=right.parameters[i]
+        assert(a.name==b.name && a.step_count==b.step_count && a.shape.count()==b.shape.count())
+        var axis=0
+        while axis<a.shape.count() {assert(a.shape[axis]==b.shape[axis]);axis++}
+        optional_near(a.first_moment,b.first_moment,tolerance)
+        optional_near(a.second_moment,b.second_moment,tolerance)
+        i++
+    }
+}
+func model_near(left:Neural.Layer,right:Neural.Layer,tolerance:float) {
+    var a=left.parameters()
+    var b=right.parameters()
+    assert(a.count()==b.count() && left.is_training()==right.is_training())
+    assert(left.buffers().count()==right.buffers().count())
+    var i=0
+    while i<a.count() {
+        assert(a[i].name()==b[i].name() && a[i].is_trainable()==b[i].is_trainable())
+        near(a[i].value(),b[i].value(),tolerance)
+        optional_near(a[i].gradient(),b[i].gradient(),tolerance)
+        i++
+    }
+}
+func prepare(model:Neural.Layer,input:Tensor) {
+    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+}
+
+struct Observation {var output:Tensor;var loss:Tensor}
+
+func region(profile:Profile,arm:str,part:str,iteration:int) {
+    let count=profile.snapshot()
+    assert(count.uploads==0 && count.downloads==0)
+    if iteration==0 || iteration==9 {
+        print("TRAINING_BASELINE_REGION arm=$(arm) step=$(iteration) part=$(part) passes=$(count.compute_passes) submissions=$(count.submissions) fences=$(count.fence_creations) pipelines=$(count.pipeline_compilations) allocations=$(count.buffer_allocations) reuses=$(count.buffer_reuses)")
+    }
+    profile.reset()
+}
+func step(model:Neural.Layer,optimizer:Optim.AdamW,input:Tensor,target:Tensor,
+    profile:Profile?,device:GPU.Device,arm:str,iteration:int) Observation {
+    optimizer.zero_grad()
+    if var active=profile {active.reset()}
+    let output=model.forward(input)
+    if var active=profile {device.wait_until_idle();region(active,arm,"forward",iteration)}
+    let loss=output.mse_loss(target)
+    loss.backward()
+    if var active=profile {device.wait_until_idle();region(active,arm,"loss-backward",iteration)}
+    optimizer.step()
+    if var active=profile {device.wait_until_idle();region(active,arm,"update",iteration)}
+    return Observation(output:output.detach(),loss:loss.detach())
+}
+
+public func qualify(device:GPU.Device,normalized:bool) {
+    var cpu=baseline_model(normalized)
+    var eager=baseline_model(normalized)
+    var planned=baseline_model(normalized)
+    var resumed=baseline_model(normalized)
+    eager.to(device);planned.to(device);resumed.to(device)
+    var cp=cpu.parameters();var ep=eager.parameters();var pp=planned.parameters();var rp=resumed.parameters()
+    var co=Optim.AdamW(cp,learning_rate:0.01,beta1:0.8,beta2:0.9,epsilon:0.01,weight_decay:0.07)
+    var eo=Optim.AdamW(ep,learning_rate:0.01,beta1:0.8,beta2:0.9,epsilon:0.01,weight_decay:0.07)
+    var po=Optim.AdamW(pp,learning_rate:0.01,beta1:0.8,beta2:0.9,epsilon:0.01,weight_decay:0.07)
+    var ro=Optim.AdamW(rp)
+    var inputs:float[]=[0.125,-0.25,0.5,-0.75,-0.375,0.25,0.75,0.125]
+    var targets:float[]=[0.25,-0.125,-0.5,0.375,0.625,-0.25,0.125,0.75]
+    let ci=Tensor(inputs,[4,2]);let ct=Tensor(targets,[4,2])
+    let gi=ci.to(device);let gt=ct.to(device)
+    prepare(planned,gi)
+    var profile=Profile(device)
+    var saved_loss:Tensor?=null
+    var saved_values:Tensor?=null
+    var iteration=0
+    while iteration<12 {
+        co.zero_grad();eo.zero_grad();po.zero_grad();ro.zero_grad()
+        if iteration==3 {cp[1].freeze();ep[1].freeze();pp[1].freeze()}
+        if iteration==6 {cp[1].unfreeze();ep[1].unfreeze();pp[1].unfreeze()}
+        if iteration==5 {
+            cp[0].replace(cp[0].value().detach().multiply(0.75))
+            ep[0].replace(ep[0].value().detach().multiply(0.75))
+            pp[0].replace(pp[0].value().detach().multiply(0.75))
+        }
+        if iteration==6 {
+            var i=0
+            while i<pp.count() {rp[i].replace(pp[i].value().detach());i++}
+            try ro.restore(po.state()) else error {panic(error)}
+            prepare(resumed,gi)
+            model_near(planned,resumed,0.0)
+            state_near(po.state(),ro.state(),0.0)
+        }
+        var rate:float=0.01
+        if iteration>=4 {rate=0.006}
+        co.set_learning_rate(rate);eo.set_learning_rate(rate);po.set_learning_rate(rate)
+        if iteration>=6 {ro.set_learning_rate(rate)}
+        let c=step(cpu,co,ci,ct,null,device,"cpu",iteration)
+        let e=step(eager,eo,gi,gt,profile,device,"eager",iteration)
+        let p=step(planned,po,gi,gt,profile,device,"forward-plan",iteration)
+        near(p.output,e.output,0.0);near(p.loss,e.loss,0.0)
+        near(p.output,c.output,0.00002);near(p.loss,c.loss,0.00002)
+        model_near(planned,eager,0.0);state_near(po.state(),eo.state(),0.0)
+        model_near(planned,cpu,0.00002);state_near(po.state(),co.state(),0.00002)
+        if iteration>=6 {
+            let r=step(resumed,ro,gi,gt,profile,device,"resumed",iteration)
+            near(p.output,r.output,0.0);near(p.loss,r.loss,0.0)
+            model_near(planned,resumed,0.0);state_near(po.state(),ro.state(),0.0)
+        }
+        if iteration==2 {saved_loss=p.loss;saved_values=p.loss.cpu()}
+        if iteration==7 {
+            var before=po.state()
+            var values:Tensor[]=[];var gradients:Tensor?[]=[]
+            for var parameter in pp {values.append(parameter.value().detach());gradients.append(parameter.gradient())}
+            // Existing hot gradients and moments must survive a rejected preparation.
+            match planned.prepare_forward(ci) {failure(reason)=>{assert(reason!="")};success=>{panic("CPU example unexpectedly prepared")}}
+            state_near(before,po.state(),0.0)
+            var i=0
+            while i<pp.count() {near(values[i],pp[i].value(),0.0);optional_near(gradients[i],pp[i].gradient(),0.0);i++}
+            assert(planned.forward_plan_statistics().captures==1)
+        }
+        assert(planned.forward_plan_statistics().captures==1 && planned.forward_plan_statistics().fallbacks==0)
+        iteration++
+    }
+    optional_near(saved_loss,saved_values,0.0)
+    assert(planned.forward_plan_statistics().executions==12)
+    assert(resumed.forward_plan_statistics().captures==1 && resumed.forward_plan_statistics().executions==6)
+    let preserved=gi.cpu().values()
+    let original=ci.values()
+    var i=0
+    while i<original.count() {assert(preserved[i]==original[i]);i++}
+    near(gt,ct,0.0)
+    print("TRAINING_BASELINE_STATE status=pass normalized=$(normalized) steps=12 restore_boundary=6 eager_gpu=exact cpu_tolerance=0.00002 captures=1")
+}
+
+test "qualify complete AdamW steps with the prepared forward and warm restoration" {
+    if !GPU.Device.is_supported() {return}
+    var device=GPU.Device(GPU.DeviceSettings(debug:true))
+    qualify(device,false)
+    qualify(device,true)
+}
