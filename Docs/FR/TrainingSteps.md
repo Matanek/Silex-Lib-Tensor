@@ -79,8 +79,10 @@ intermédiaires et ne garantit pas un gain sur chaque taille. Mesurer l’étape
 entière après échauffement, avec synchronisation, séparément de la préparation.
 Les résultats qualifiés et contre-épreuves du candidat sont conservés dans
 Silex-Benchmarks ; les performances hors macOS arm64/Metal restent ouvertes.
-Float16, précision mixte et les six familles de modèles restent des obligations
-séparées. Voir aussi le [forward préparé](ForwardPlans.md) et le [profilage](Profiling.md).
+Les six familles sont qualifiées avec eager comme référence et refus explicites
+hors du domaine préparé. La gate float16 reste indéterminée, sans API mixte ;
+voir la [matrice et la précision](Reference.md). Voir aussi le [forward préparé](ForwardPlans.md)
+et le [profilage](Profiling.md).
 
 Sur Apple M3 Pro/Metal en Release, le 6 octobre 2026 : 16 paires et 8 contrôles A/A
 par bras admettent 6,21 % sur MLP(2,2,4,2) et 20,66 % sur le modèle normalisé

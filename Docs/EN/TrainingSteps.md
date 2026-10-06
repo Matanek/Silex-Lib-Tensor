@@ -77,8 +77,9 @@ Grouping reduces submissions but may increase intermediate allocations, and
 does not guarantee a gain at every size. Measure the complete synchronized hot
 step after warmup, separately from preparation. Qualified results and
 counter-evidence for the candidate live in Silex-Benchmarks; performance outside
-macOS arm64/Metal remains open. Float16, mixed precision and the six model
-families remain separate obligations. See [prepared forward](ForwardPlans.md)
+macOS arm64/Metal remains open. All six families are qualified against eager
+with explicit rejections outside the prepared domain. The float16 gate remains indeterminate,
+with no mixed API; see the [capability and precision reference](Reference.md). See also [prepared forward](ForwardPlans.md)
 and [profiling](Profiling.md).
 
 On Apple M3 Pro/Metal in Release, October 6, 2026: 16 pairs and 8 A/A controls per

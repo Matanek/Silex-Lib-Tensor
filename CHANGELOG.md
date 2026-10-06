@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-- `Neural.Layer.prepare_forward`, `clear_forward_plan`, and `forward_plan_statistics` prepare a GPU float32 forward for exact Sequential, Dense, Activation, and LayerNorm classes. A private single-plan cache checks compatibility and explains eager fallback, reads current parameters, and preserves autograd without capturing callbacks or example storage. Local hot gains of 40.15%, 33.42%, and 19.58% on three Metal MLPs; preparation and profiling measured separately, with prepared training and other families still open. 464 tests/110 sources, Debug/Release and six compiled/linked targets; see the [guide](Docs/EN/ForwardPlans.md).
+- Consolidate the six-model matrix, plan domain and indeterminate float16 decision; distinguish the published baseline from the source compiler required for Unreleased capabilities. See the [reference](Docs/EN/Reference.md).
+
+- `Neural.TrainingStep.mse` explicitly prepares a closed MSE/AdamW step: prepared forward and loss, reference backward and grouped update. The independent plan rereads weights, moments, learning rate and trainability; invalid signatures are rejected before zero-grad, with statistics and detached observations. Workload-dependent gains, limits and counter-evidence are described in the [guide](Docs/EN/TrainingSteps.md).
+
+- `Neural.Layer.prepare_forward`, `clear_forward_plan`, and `forward_plan_statistics` prepare a GPU float32 forward for exact Sequential, Dense, Activation, and LayerNorm classes. A private single-plan cache checks compatibility and explains eager fallback, reads current parameters, and preserves autograd without capturing callbacks or example storage. Local hot gains of 40.15%, 33.42%, and 19.58% on three Metal MLPs; preparation and profiling measured separately; the MSE/AdamW step is described in the [prepared training guide](Docs/EN/TrainingSteps.md), while other families remain outside the plan domain. 464 tests/110 sources, Debug/Release and six compiled/linked targets; see the [guide](Docs/EN/ForwardPlans.md).
 
 - Fuse epsilon addition and sqrt in GPU float32 LayerNorm: six passes instead of seven, qualified gradients and lifetimes, unchanged reductions. Apple M3 Pro/Metal admits gains of 9.50%, 10.38% and 9.08% on small normalizations and the strided view; all six models and other sizes remain indeterminate. A 457-test corpus, six compiled/linked targets, campaigns and limitations are documented in [profiling](Docs/EN/Profiling.md).
 

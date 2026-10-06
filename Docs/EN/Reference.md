@@ -169,3 +169,49 @@ parameter checkpoint remains separate and compatible.
 ## Transformer
 
 `Neural.TransformerBlock(name,features,heads,feed_forward_features,seed,norm_first:true,dropout_probability:0.0,epsilon:0.00001)` : `encode` with mask/iteration/optional weights; `forward` at iteration0. Residuals, pre/post-norm, MLP and resume in the [guide](Transformer.md).
+
+## Development sources and Silex compatibility
+
+Capabilities marked `Unreleased` on this branch are qualified with Silex source
+compiler `a41bf8b269e0f31e2664a77c4c58b029d260115b`, using local Tensor sources
+and dependencies. They require, among other changes, the module composition,
+provider extension and indexed-field ownership fixes in Silex’s `Unreleased`
+notes.
+
+The manifest’s historical `>=0.44.1` range describes the published baseline;
+it does not guarantee these additions with an older release. Manifest versions
+retain their last published values during development. The next publication’s
+minimum compatibility must be qualified with its corresponding Silex release.
+`silex install Tensor` retrieves the published version, whose capabilities may
+differ from this checkout.
+
+## Model preparation
+
+| Model or composition | Eager CPU/Metal float32 | GPU prepared forward | GPU MSE/AdamW step |
+|---|---|---|---|
+| MLP composed of exact Sequential, Dense, Activation and LayerNorm classes | yes | yes | yes |
+| CNN, SimpleRNN, GRU, LSTM, Transformer | yes | preparation rejected | preparation rejected |
+| External layer, subclass, buffers or dropout | according to the layer’s contract | preparation rejected | preparation rejected |
+
+Rejections preserve numerical state. Without a compatible plan, the application
+chooses its eager loop or another explicit preparation. An existing prepared
+forward can fall back to eager with an observable reason; TrainingStep returns
+an error before zero-grad. The [forward signatures](ForwardPlans.md) and
+[MSE step signatures](TrainingSteps.md) describe bounds, layouts and ownership.
+
+Six-family qualification compares five complete steps, outputs, losses,
+gradients, weights, moments and counters, with deterministic repetition and
+resource release. Families outside the plan domain retain eager execution;
+this does not establish a general performance gain.
+
+## Float16 and mixed precision
+
+No float16 dtype or mixed mode is exposed. The local macOS arm64/Metal gate
+is indeterminate: HLSL conversions to half bits are exact, but `half`/`min16float`
+arithmetic is promoted to float32 by the qualified shadercross configuration.
+A native Metal control actually computes in half; it is not a Tensor path.
+Matmul, reductions and mixed training are therefore not admitted. Tensor
+computation remains float32.
+
+Recomputable sources, controls and results are preserved in Silex-Benchmarks
+under `TensorStableCompute/Baselines/2026-10-06-macos-arm64-float16-gate`.
