@@ -447,7 +447,7 @@ nocopy class GPUStorage {
         return match rule {
             matrix_multiply => self.kernel_cache.linear()
             binary(operation) => self.kernel_cache.binary()
-            mean(axes) => self.kernel_cache.reduction()
+            mean(axes,keep) => self.kernel_cache.reduction()
             else => self.kernel_cache.elementwise()
         }
     }
@@ -461,6 +461,7 @@ nocopy class GPUStorage {
         var bytes=metadata
         commands.compute_uniform(0,@bytes[0:bytes.count()])
         match kernel.rule {
+            scalar(operation,value) => { commands.compute_uniform(1,value) }
             unary(operation) => { commands.compute_uniform(1,0.0) }
             shifted_square_root(offset) => { commands.compute_uniform(1,offset) }
             else => {}

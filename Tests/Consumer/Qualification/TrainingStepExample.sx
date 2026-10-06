@@ -1,0 +1,22 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+use GFX.GPU
+
+func main() {
+    assert(GPU.Device.is_supported())
+    var device=GPU.Device()
+    var layers:Neural.Layer[]=[Neural.Dense("hidden",2,4,101),Neural.Activation.tanh(),Neural.Dense("output",4,2,102)]
+    var model=Neural.Sequential(layers)
+    model.to(device)
+    var optimizer=Optim.AdamW(model.parameters(),epsilon:0.01)
+    let input=Tensor.ones([4,2]).to(device)
+    let target=Tensor.zeros([4,2]).to(device)
+    var step=try Neural.TrainingStep.mse(model,optimizer,input,target) else error {panic(error)}
+    for iteration in 0...12 {
+        var result=try step.run(input,target) else error {panic(error)}
+        assert(result.output.shape()[0]==4 && result.loss.rank()==0)
+    }
+    let statistics=step.statistics()
+    assert(statistics.captures==1 && statistics.executions==12 && statistics.rejections==0)
+}

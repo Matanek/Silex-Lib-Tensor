@@ -4,8 +4,9 @@ use Package.Neural.Parameter
 enum ForwardRule {
     matrix_multiply
     binary(BinaryOperation)
+    scalar(BinaryOperation,float)
     unary(UnaryOperation)
-    mean(int[])
+    mean(int[],bool)
     shifted_square_root(float)
 }
 
@@ -72,8 +73,9 @@ extend Tensor {
         }
         let result = Tensor.autograd_from_storage(Storage.gpu(storage.encode_forward(batch,right,kernel,metadata)),kernel.output)
         return match kernel.rule {
+            scalar(operation,value) => autograd_record_scalar(result,self,value,operation)
             unary(operation) => autograd_record_unary(result,self,operation)
-            mean(axes) => autograd_record_reduction(result,self,axes,true,ReductionOperation.mean)
+            mean(axes,keep) => autograd_record_reduction(result,self,axes,keep,ReductionOperation.mean)
             shifted_square_root(offset) => autograd_record_shifted_square_root(result,self,offset)
             binary(operation) => forward_record_binary(result,self,other,operation)
             matrix_multiply => forward_record_linear(result,self,other)
@@ -95,8 +97,9 @@ func forward_metadata(rule:ForwardRule,left:Layout,right:Layout,output:Layout) u
     return match rule {
         matrix_multiply => linear_metadata(left,right,LinearOperation.matrix_multiply,output.count())
         binary(operation) => binary_metadata(binary_code(operation),output.shape(),left,right)
+        scalar(operation,value) => elementwise_metadata(binary_code(operation),left)
         unary(operation) => elementwise_metadata(unary_code(operation),left)
-        mean(axes) => reduction_metadata(ReductionOperation.mean,left,axes,true,output.count())
+        mean(axes,keep) => reduction_metadata(ReductionOperation.mean,left,axes,keep,output.count())
         shifted_square_root(offset) => elementwise_metadata(15,left)
     }
 }
@@ -149,6 +152,14 @@ package nocopy class PreparedForward {
     }
 
     func operation_count() int { return self.kernels.count() }
+
+    func output_shape() int[] {
+        return match self.sources[self.result_slot] {
+            input => self.input_layout.shape()
+            parameter(index) => self.parameter_shapes[index]
+            computed(index) => self.kernels[index].output.shape()
+        }
+    }
 
     func incompatibility(input:Tensor,training:bool,values:&Tensor[]) str {
         if training != self.training { return "model mode changed" }
@@ -296,12 +307,12 @@ package nocopy class ForwardBuilder {
         match self.parameter(scale) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{scale_slot=slot}}
         match self.parameter(offset) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{offset_slot=slot}}
         let reduced=reduced_shape(layout.shape(),axes,true)
-        match self.append(ForwardRule.mean(axes),input,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.mean(axes,true),input,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         let mean=self.current_slot
         match self.append(ForwardRule.binary(BinaryOperation.subtract),input,mean,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         let centered=self.current_slot
         match self.append(ForwardRule.binary(BinaryOperation.multiply),centered,centered,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        match self.append(ForwardRule.mean(axes),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match self.append(ForwardRule.mean(axes,true),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         match self.append(ForwardRule.shifted_square_root(epsilon),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         match self.append(ForwardRule.binary(BinaryOperation.divide),centered,self.current_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         match self.append(ForwardRule.binary(BinaryOperation.multiply),self.current_slot,scale_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}

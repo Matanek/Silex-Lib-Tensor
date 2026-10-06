@@ -1,0 +1,166 @@
+use GFX.GPU
+
+// Private specialization of the established AdamW expression order.
+// This prototype is not a public training-step API.
+package struct AdamUpdateSettings {
+    let rate:float
+    let beta1:float
+    let beta2:float
+    let epsilon:float
+    let decay:float
+    let first_correction:float
+    let second_correction:float
+}
+package struct AdamUpdateValues {var value:Tensor;var first:Tensor;var second:Tensor}
+package struct AdamUpdateInput {
+    var weight:Tensor
+    var gradient:Tensor
+    var first:Tensor
+    var second:Tensor
+    let settings:AdamUpdateSettings
+    let initialized:bool
+}
+
+enum AdamCoefficient {
+    fixed(float)
+    beta1
+    beta2
+    first_complement
+    second_complement
+    first_correction
+    second_correction
+    epsilon
+    decay
+    rate
+}
+func adam_coefficient(source:AdamCoefficient,settings:AdamUpdateSettings) float {
+    return match source {
+        fixed(value)=>value
+        beta1=>settings.beta1
+        beta2=>settings.beta2
+        first_complement=>1.0-settings.beta1
+        second_complement=>1.0-settings.beta2
+        first_correction=>settings.first_correction
+        second_correction=>settings.second_correction
+        epsilon=>settings.epsilon
+        decay=>1.0-settings.rate*settings.decay
+        rate=>settings.rate
+    }
+}
+struct AdamKernel {var kernel:ForwardKernel;let coefficient:AdamCoefficient}
+
+nocopy class AdamRecipe {
+    private var kernels:AdamKernel[]=[]
+    private let layout:Layout
+    private var preparing_storage:GPUStorage?=null
+    private var first:int=0
+    private var second:int=0
+    private var result:int=0
+
+    init(example:Tensor,cold:bool,decay:bool) {
+        self.preparing_storage=example.autograd_gpu_storage()
+        self.layout=Layout(example.shape())
+        // Inputs: current weight, incoming gradient, first moment, second moment.
+        var first=2
+        var second=3
+        if cold {
+            first=self.scalar(0,BinaryOperation.multiply,AdamCoefficient.fixed(0.0))
+            second=self.scalar(0,BinaryOperation.multiply,AdamCoefficient.fixed(0.0))
+        }
+        let retained_first=self.scalar(first,BinaryOperation.multiply,AdamCoefficient.beta1)
+        let incoming_first=self.scalar(1,BinaryOperation.multiply,AdamCoefficient.first_complement)
+        self.first=self.binary(retained_first,incoming_first,BinaryOperation.add)
+        let retained_second=self.scalar(second,BinaryOperation.multiply,AdamCoefficient.beta2)
+        let squared=self.binary(1,1,BinaryOperation.multiply)
+        let incoming_second=self.scalar(squared,BinaryOperation.multiply,AdamCoefficient.second_complement)
+        self.second=self.binary(retained_second,incoming_second,BinaryOperation.add)
+        let numerator=self.scalar(self.first,BinaryOperation.divide,AdamCoefficient.first_correction)
+        let corrected_second=self.scalar(self.second,BinaryOperation.divide,AdamCoefficient.second_correction)
+        let square_root=self.append(ForwardRule.unary(UnaryOperation.square_root),corrected_second,0,AdamCoefficient.fixed(0.0))
+        let denominator=self.scalar(square_root,BinaryOperation.add,AdamCoefficient.epsilon)
+        var base=0
+        if decay {base=self.scalar(0,BinaryOperation.multiply,AdamCoefficient.decay)}
+        let direction=self.binary(numerator,denominator,BinaryOperation.divide)
+        let change=self.scalar(direction,BinaryOperation.multiply,AdamCoefficient.rate)
+        self.result=self.binary(base,change,BinaryOperation.subtract)
+        // The example owns no role after pipelines/layout metadata are prepared.
+        self.preparing_storage=null
+    }
+    private func scalar(input:int,operation:BinaryOperation,coefficient:AdamCoefficient) int {
+        return self.append(ForwardRule.scalar(operation,0.0),input,0,coefficient)
+    }
+    private func binary(left:int,right:int,operation:BinaryOperation) int {
+        return self.append(ForwardRule.binary(operation),left,right,AdamCoefficient.fixed(0.0))
+    }
+    private func pipeline(rule:ForwardRule) GPU.ComputePipeline {
+        if var storage=self.preparing_storage {return storage.forward_pipeline(rule)}
+        panic("Tensor Adam recipe is no longer being prepared")
+    }
+    private func append(rule:ForwardRule,left:int,right:int,coefficient:AdamCoefficient) int {
+        // Noncontiguous sources rebuild this private metadata at execution.
+        let metadata=forward_metadata(rule,self.layout,self.layout,self.layout)
+        var kernel=ForwardKernel(rule:rule,left:left,right:right,left_layout:self.layout,
+            right_layout:self.layout,output:self.layout,metadata:metadata,
+            pipeline:self.pipeline(rule))
+        self.kernels.append(AdamKernel(kernel:kernel,coefficient:coefficient))
+        assert(self.kernels.count()<=17)
+        return 3+self.kernels.count()
+    }
+    func run(batch:ForwardCommands,weight:Tensor,gradient:Tensor,first:Tensor,second:Tensor,settings:AdamUpdateSettings) AdamUpdateValues {
+        var values:Tensor[]=[weight.detach(),gradient.detach(),first.detach(),second.detach()]
+        for descriptor in self.kernels {
+            var kernel=descriptor.kernel
+            match kernel.rule {
+                scalar(operation,value)=>{kernel=ForwardKernel(rule:ForwardRule.scalar(operation,adam_coefficient(descriptor.coefficient,settings)),
+                    left:kernel.left,right:kernel.right,left_layout:kernel.left_layout,right_layout:kernel.right_layout,
+                    output:kernel.output,metadata:kernel.metadata,pipeline:kernel.pipeline)}
+                else=>{}
+            }
+            var right:Tensor?=null
+            match kernel.rule {binary(operation)=>{right=values[kernel.right]};else=>{}}
+            values.append(values[kernel.left].forward_kernel(right,batch,kernel))
+        }
+        return AdamUpdateValues(value:values[self.result],first:values[self.first],second:values[self.second])
+    }
+}
+
+package nocopy class PreparedAdamUpdate {
+    private let shape:int[]
+    private let decay:bool
+    private var device:GPU.Device
+    private var cold:AdamRecipe
+    private var warm:AdamRecipe
+    init(example:Tensor,decay:bool) {
+        self.shape=example.shape()
+        self.decay=decay
+        self.device=example.autograd_gpu_storage().forward_device()
+        self.cold=AdamRecipe(example,true,decay)
+        self.warm=AdamRecipe(example,false,decay)
+    }
+    func compatible(value:Tensor,decay:bool) bool {
+        return self.decay==decay && value.is_gpu() && value.dtype()==DType.float32() &&
+            forward_supported_layout(value.autograd_layout()) && forward_same_shape(value.shape(),self.shape) &&
+            value.autograd_gpu_storage().same_device(self.device)
+    }
+    module func run(batch:ForwardCommands,weight:Tensor,gradient:Tensor,first:Tensor,second:Tensor,settings:AdamUpdateSettings,initialized:bool) AdamUpdateValues {
+        if initialized {return self.warm.run(batch,weight,gradient,first,second,settings)}
+        return self.cold.run(batch,weight,gradient,weight,weight,settings)
+    }
+}
+package func adam_update_supported(value:Tensor) bool {return forward_example_supported(value)}
+package func run_adam_updates(programs:PreparedAdamUpdate[],inputs:AdamUpdateInput?[],reference:Tensor) AdamUpdateValues?[] {
+    assert(programs.count()==inputs.count())
+    var batch=reference.autograd_gpu_storage().forward_commands()
+    var results:AdamUpdateValues?[]=[]
+    var index=0
+    while index<inputs.count() {
+        var result:AdamUpdateValues?=null
+        if var input=inputs[index] {
+            result=programs[index].run(batch,input.weight,input.gradient,input.first,input.second,input.settings,input.initialized)
+        }
+        results.append(result)
+        index++
+    }
+    batch.finish()
+    return results
+}

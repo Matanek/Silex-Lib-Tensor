@@ -151,6 +151,17 @@ public nocopy class Layer {
         return Result<void,str>.success()
     }
 
+    module static func capture_training_forward(model:Layer,example:Tensor) Result<PreparedForward,str> {
+        var visited:Layer[]=[]
+        try forward_preflight(model,visited)
+        if !forward_example_supported(example) {
+            return Result<PreparedForward,str>.failure("Tensor prepared training requires a nonempty GPU float32 input of rank at most 5")
+        }
+        var builder=ForwardBuilder(example)
+        try model.describe_forward(builder)
+        return Result<PreparedForward,str>.success(builder.finish(example,model.current_training))
+    }
+
     module static func clear_owned_forward(model:Layer) { model.prepared_forward=null }
 
     module static func owned_forward_statistics(model:Layer) ForwardPlanStatistics {

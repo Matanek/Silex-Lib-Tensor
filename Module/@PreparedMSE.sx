@@ -1,0 +1,92 @@
+use GFX.GPU
+
+// Closed loss recipe: subtract, square, then mean over every axis.
+// Capture owns only layouts and pipelines, never the example or an autograd graph.
+package nocopy class PreparedMSE {
+    private var device:GPU.Device
+    private let target_layout:Layout
+    private var kernels:ForwardKernel[]
+
+    init(example:Tensor,target:Tensor,shape:int[]) {
+        self.device=example.autograd_gpu_storage().forward_device()
+        self.target_layout=target.autograd_layout()
+        let output=Layout(shape)
+        let scalar=Layout([])
+        var axes:int[]=[]
+        var axis=0
+        while axis<shape.count() {axes.append(axis);axis++}
+        self.kernels=[]
+        self.append(example,ForwardRule.binary(BinaryOperation.subtract),output,self.target_layout,output)
+        self.append(example,ForwardRule.binary(BinaryOperation.multiply),output,output,output)
+        self.append(example,ForwardRule.mean(axes,false),output,scalar,scalar)
+    }
+
+    private func append(example:Tensor,rule:ForwardRule,left:Layout,right:Layout,output:Layout) {
+        var storage=example.autograd_gpu_storage()
+        self.kernels.append(ForwardKernel(rule:rule,left:0,right:0,left_layout:left,right_layout:right,
+            output:output,metadata:forward_metadata(rule,left,right,output),pipeline:storage.forward_pipeline(rule)))
+    }
+
+    func incompatibility(target:Tensor) str {
+        if !target.is_gpu() || target.dtype()!=DType.float32() || !forward_same_layout(target.autograd_layout(),self.target_layout) {
+            return "target signature changed"
+        }
+        if !target.autograd_gpu_storage().same_device(self.device) {return "target device changed"}
+        return ""
+    }
+
+    func run(output:Tensor,target:Tensor) Tensor {
+        var batch=output.autograd_gpu_storage().forward_commands()
+        let difference=output.forward_kernel(target,batch,self.kernels[0])
+        let square=difference.forward_kernel(difference,batch,self.kernels[1])
+        let loss=square.forward_kernel(null,batch,self.kernels[2])
+        batch.finish()
+        return loss
+    }
+}
+
+package func prepared_mse_target_supported(example:Tensor,target:Tensor,shape:int[]) bool {
+    return forward_example_supported(target) && forward_same_shape(target.shape(),shape) &&
+        example.autograd_gpu_storage().same_device(target.autograd_gpu_storage())
+}
+
+package func prepared_training_has_tracking(input:Tensor,target:Tensor,parameters:Tensor[]) bool {
+    if input.autograd_node()!=null || target.autograd_node()!=null {return true}
+    for value in parameters {if value.autograd_node()!=null {return true}}
+    return false
+}
+
+// Incoming provenance is outside the model recipe. Reject callbacks and consumed
+// graphs before clearing gradients; the traversal itself has no numerical effect.
+package func prepared_training_graph_incompatibility(input:Tensor,target:Tensor) str {
+    var input_node=input.autograd_node()
+    var target_node=target.autograd_node()
+    if input_node==null && target_node==null {return ""}
+    var nodes:AutogradNode[]=[]
+    if var node=input_node {nodes.append(node)}
+    if var node=target_node {
+        var found=false
+        for existing in nodes {if existing==node {found=true}}
+        if !found {nodes.append(node)}
+    }
+    var index=0
+    while index<nodes.count() {
+        var node=nodes[index]
+        if node.consumed {return "input or target autograd graph is consumed"}
+        match node.rule {
+            custom(operation)=>{return "prepared training does not capture custom autograd callbacks"}
+            released=>{return "input or target autograd graph is consumed"}
+            else=>{}
+        }
+        for parent in autograd_parents(node.rule) {
+            var found=false
+            for existing in nodes {if existing==parent {found=true;break}}
+            if !found {
+                if nodes.count()>=4096 {return "prepared training supports at most 4096 input and target autograd nodes"}
+                nodes.append(parent)
+            }
+        }
+        index++
+    }
+    return ""
+}

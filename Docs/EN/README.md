@@ -6,6 +6,7 @@ same public type covers `float32` and signed and unsigned 8-, 16-, 32-, and
 
 ## Reading path
 
+- Prepare an [MSE step with AdamW](TrainingSteps.md), reading current state and rejecting before mutation.
 - Prepare a [repeated GPU forward](ForwardPlans.md) with a model-owned cache.
 - Train an [LSTM with explicit hidden and cell states](LSTM.md).
 - Train a [GRU with explicitly passed state](GRU.md).

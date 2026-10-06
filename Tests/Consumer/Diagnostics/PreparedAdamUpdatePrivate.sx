@@ -1,0 +1,3 @@
+use Tensor.PreparedAdamUpdate
+func consume(value:PreparedAdamUpdate) {}
+func main() {}

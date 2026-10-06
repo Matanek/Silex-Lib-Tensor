@@ -1,0 +1,89 @@
+use Tensor
+use Tensor.Optim.AdamW
+use Package.PreparedForward
+use Package.PreparedMSE
+use Package.PreparedAdamUpdate
+use Package.prepared_mse_target_supported
+use Package.prepared_training_has_tracking
+use Package.prepared_training_graph_incompatibility
+
+public struct TrainingStepResult {var output:Tensor;var loss:Tensor}
+
+// Standalone owner: the model does not retain this plan, so there is
+// no model/plan cycle. Moments and parameters remain owned by AdamW and Layer.
+public nocopy class TrainingStep {
+    private var model:Layer
+    private var optimizer:AdamW
+    private var forward:PreparedForward
+    private var loss:PreparedMSE
+    private var updates:PreparedAdamUpdate[]
+    private var executions:int=0
+    private var rejections:int=0
+    private var last_rejection:str=""
+
+    private init(model:Layer,optimizer:AdamW,forward:PreparedForward,loss:PreparedMSE,updates:PreparedAdamUpdate[]) {
+        self.model=model;self.optimizer=optimizer;self.forward=forward;self.loss=loss;self.updates=updates
+    }
+
+    static func mse(model:Layer,optimizer:AdamW,input:Tensor,target:Tensor) Result<TrainingStep,str> {
+        if reflect(optimizer).type!="Tensor.Optim.AdamW" {return Result<TrainingStep,str>.failure("Tensor prepared training requires exact AdamW")}
+        let graph_reason=prepared_training_graph_incompatibility(input,target)
+        if graph_reason!="" {return Result<TrainingStep,str>.failure(graph_reason)}
+        var forward=try Layer.capture_training_forward(model,input)
+        try optimizer.checkpoint_parameters(model.parameters())
+        if !prepared_mse_target_supported(input,target,forward.output_shape()) {
+            return Result<TrainingStep,str>.failure("Tensor prepared MSE requires a matching nonempty GPU float32 target on the input device")
+        }
+        var updates=try optimizer.build_prepared_updates()
+        var loss=PreparedMSE(input,target,forward.output_shape())
+        return Result<TrainingStep,str>.success(TrainingStep(model,optimizer,forward,loss,updates))
+    }
+
+    func statistics() TrainingStepStatistics {
+        return TrainingStepStatistics(captures:1,compilations:1,executions:self.executions,rejections:self.rejections,
+            cached_plans:1,forward_operations:self.forward.operation_count(),loss_operations:3,
+            optimizer_parameters:self.updates.count(),last_rejection:self.last_rejection)
+    }
+
+    func run(input:Tensor,target:Tensor) Result<TrainingStepResult,str> {
+        match self.run_compatible(input,target) {
+            failure(reason)=>{self.rejections++;self.last_rejection=reason;return Result<TrainingStepResult,str>.failure(reason)}
+            success(result)=>{self.last_rejection="";return Result<TrainingStepResult,str>.success(result)}
+        }
+    }
+
+    private func run_compatible(input:Tensor,target:Tensor) Result<TrainingStepResult,str> {
+        // All rejection paths precede zero_grad and any numerical mutation.
+        let graph_reason=prepared_training_graph_incompatibility(input,target)
+        if graph_reason!="" {return Result<TrainingStepResult,str>.failure(graph_reason)}
+        try self.optimizer.checkpoint_parameters(self.model.parameters())
+        var parameters:Tensor[]=[]
+        let forward_reason=self.forward.incompatibility(input,self.model.is_training(),parameters)
+        if forward_reason!="" {return Result<TrainingStepResult,str>.failure(forward_reason)}
+        let loss_reason=self.loss.incompatibility(target)
+        if loss_reason!="" {return Result<TrainingStepResult,str>.failure(loss_reason)}
+        let update_reason=self.optimizer.prepared_update_incompatibility(self.updates)
+        if update_reason!="" {return Result<TrainingStepResult,str>.failure(update_reason)}
+        if !prepared_training_has_tracking(input,target,parameters) {return Result<TrainingStepResult,str>.failure("training requires a tracked input, target or trainable parameter")}
+        self.optimizer.zero_grad()
+        let output=self.forward.run(input,parameters)
+        let loss=self.loss.run(output,target)
+        loss.backward()
+        self.optimizer.step_prepared(self.updates)
+        self.executions++
+        return Result<TrainingStepResult,str>.success(TrainingStepResult(output:output.detach(),loss:loss.detach()))
+    }
+}
+
+public struct TrainingStepStatistics {
+    let captures:int
+    let compilations:int
+    let executions:int
+    let rejections:int
+    let cached_plans:int
+    let forward_operations:int
+    let loss_operations:int
+    let optimizer_parameters:int
+    let last_rejection:str
+    let cache_capacity_plans:int=1
+}

@@ -1,0 +1,3 @@
+use TrainingSteps
+use GFX.GPU
+func main() {var device=GPU.Device(GPU.DeviceSettings(debug:true));TrainingSteps.graph_guards(device)}

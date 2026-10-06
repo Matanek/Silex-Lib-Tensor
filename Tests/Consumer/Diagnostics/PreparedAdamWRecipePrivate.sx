@@ -1,0 +1,8 @@
+use Tensor
+use Tensor.Neural
+use Tensor.Optim
+func main() {
+    var model=Neural.Dense("layer",2,2,1)
+    var optimizer=Optim.AdamW(model.parameters())
+    let callback=optimizer.build_prepared_updates
+}

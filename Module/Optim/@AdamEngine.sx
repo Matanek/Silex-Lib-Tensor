@@ -1,6 +1,12 @@
 use STD.Math
 use Tensor
 use Tensor.Neural.Parameter
+use Package.PreparedAdamUpdate
+use Package.AdamUpdateSettings
+use Package.AdamUpdateValues
+use Package.adam_update_supported
+use Package.AdamUpdateInput
+use Package.run_adam_updates
 
 class AdamSlot {
     var step_count:int
@@ -155,6 +161,110 @@ nocopy class AdamEngine {
                 state.first_moment = first.detach()
                 state.second_moment = second.detach()
                 state.step_count = next_step
+            }
+            index++
+        }
+    }
+
+    // Package-only prototype; ordinary step remains the reference.
+    func build_prepared_updates() Result<PreparedAdamUpdate[],str> {
+        if !self.decoupled_decay {return Result<PreparedAdamUpdate[],str>.failure("Prepared update requires AdamW")}
+        if self.parameters.count()>128 {return Result<PreparedAdamUpdate[],str>.failure("Prepared update supports at most 128 parameters")}
+        var reference:Tensor?=null
+        var index=0
+        for parameter in self.parameters {
+            if reflect(parameter).type!="Tensor.Neural.Parameter" {return Result<PreparedAdamUpdate[],str>.failure("Prepared update requires exact Parameter classes")}
+            let value=parameter.value()
+            if !adam_update_supported(value) {return Result<PreparedAdamUpdate[],str>.failure("Prepared update requires nonempty GPU float32 parameters")}
+            if let first=reference {
+                if !first.same_optimizer_placement(value) {return Result<PreparedAdamUpdate[],str>.failure("Prepared update requires one device")}
+            } else {reference=value}
+            var state=self.states[index]
+            if state.step_count>0 {
+                if !adam_update_supported(state.first_moment) || !adam_update_supported(state.second_moment) ||
+                    !optimizer_shapes_equal(value.shape(),state.first_moment.shape()) || !optimizer_shapes_equal(value.shape(),state.second_moment.shape()) ||
+                    !value.same_optimizer_placement(state.first_moment) || !value.same_optimizer_placement(state.second_moment) {
+                    return Result<PreparedAdamUpdate[],str>.failure("Prepared update requires compatible current moments")
+                }
+            }
+            index++
+        }
+        var programs:PreparedAdamUpdate[]=[]
+        for parameter in self.parameters {programs.append(PreparedAdamUpdate(parameter.value().detach(),self.weight_decay!=0.0))}
+        return Result<PreparedAdamUpdate[],str>.success(programs)
+    }
+
+    func prepared_update_incompatibility(programs:PreparedAdamUpdate[]) str {
+        if programs.count()!=self.parameters.count() {return "optimizer parameter count changed"}
+        var index=0
+        while index<self.parameters.count() {
+            var parameter=self.parameters[index]
+            let value=parameter.value()
+            var state=self.states[index]
+            if !programs[index].compatible(value,self.weight_decay!=0.0) {return "optimizer parameter signature changed"}
+            if state.step_count>0 {
+                if !adam_update_supported(state.first_moment) || !adam_update_supported(state.second_moment) ||
+                    !optimizer_shapes_equal(value.shape(),state.first_moment.shape()) || !optimizer_shapes_equal(value.shape(),state.second_moment.shape()) ||
+                    !value.same_optimizer_placement(state.first_moment) || !value.same_optimizer_placement(state.second_moment) {
+                    return "optimizer moment signature changed"
+                }
+            }
+            if parameter.is_trainable() && state.step_count==9223372036854775807 {return "optimizer counter overflows int"}
+            index++
+        }
+        return ""
+    }
+
+    func step_prepared(programs:PreparedAdamUpdate[]) {
+        if programs.count()!=self.parameters.count() {self.step();return}
+        var gradients:Tensor?[]=[]
+        var active=false
+        var index=0
+        while index<self.parameters.count() {
+            var parameter=self.parameters[index]
+            var state=self.states[index]
+            let value=parameter.value()
+            if !programs[index].compatible(value,self.weight_decay!=0.0) {self.step();return}
+            if state.step_count>0 {
+                require_optimizer_tensor(parameter,state.first_moment,"first-moment state",self.operation)
+                require_optimizer_tensor(parameter,state.second_moment,"second-moment state",self.operation)
+                if !adam_update_supported(state.first_moment) || !adam_update_supported(state.second_moment) {self.step();return}
+            }
+            let gradient=optimizer_gradient(parameter,self.operation)
+            if let incoming=gradient {
+                if !adam_update_supported(incoming) {self.step();return}
+                if state.step_count==9223372036854775807 {panic("Tensor.Optim.$(self.operation).step counter overflows int")}
+                active=true
+            }
+            gradients.append(gradient)
+            index++
+        }
+        if !active {return}
+        var inputs:AdamUpdateInput?[]=[]
+        index=0
+        while index<self.parameters.count() {
+            var state=self.states[index]
+            var input:AdamUpdateInput?=null
+            if let gradient=gradients[index] {
+                let next=state.step_count+1
+                let settings=AdamUpdateSettings(rate:self.current_learning_rate,beta1:self.beta1,beta2:self.beta2,
+                    epsilon:self.epsilon,decay:self.weight_decay,first_correction:1.0-optimizer_power(self.beta1,next),
+                    second_correction:1.0-optimizer_power(self.beta2,next))
+                input=AdamUpdateInput(weight:self.parameters[index].value().detach(),gradient:gradient,
+                    first:state.first_moment,second:state.second_moment,settings:settings,initialized:state.step_count>0)
+            }
+            inputs.append(input)
+            index++
+        }
+        var updates=run_adam_updates(programs,inputs,self.parameters[0].value())
+        // Numerical state is published only after the entire encoding succeeds.
+        index=0
+        while index<self.parameters.count() {
+            if var update=updates[index] {
+                self.parameters[index].apply(update.value.detach())
+                self.states[index].first_moment=update.first.detach()
+                self.states[index].second_moment=update.second.detach()
+                self.states[index].step_count++
             }
             index++
         }

@@ -1,0 +1,15 @@
+use TrainingSteps as Proof
+use GFX.GPU
+use Tensor.Profile
+func main() {
+    var first=GPU.Device(GPU.DeviceSettings(debug:true));var second=GPU.Device(GPU.DeviceSettings(debug:true))
+    var a=Profile(first);var b=Profile(second)
+    Proof.qualify(first,false);Proof.qualify(first,true);Proof.guards(first,second)
+    Proof.graph_guards(first)
+    Proof.nonfinite(first)
+    Proof.replay(first,false);Proof.replay(second,true)
+    let x=a.snapshot();let y=b.snapshot()
+    assert(x.live_buffers==0 && x.in_use_buffers==0 && x.cached_buffers==0 && x.allocated_bytes==0)
+    assert(y.live_buffers==0 && y.in_use_buffers==0 && y.cached_buffers==0 && y.allocated_bytes==0)
+    print("TRAINING_STEP_RESOURCES status=pass devices=2 live=0 peak_buffers=$(x.peak_in_use_buffers) peak_bytes=$(x.peak_allocated_bytes)")
+}

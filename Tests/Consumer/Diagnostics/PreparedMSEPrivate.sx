@@ -1,0 +1,3 @@
+use Tensor.PreparedMSE
+func consume(value:PreparedMSE) {}
+func main() {}
