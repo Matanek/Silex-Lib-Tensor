@@ -68,7 +68,7 @@ func model_near(left:Neural.Layer,right:Neural.Layer,tolerance:float) {
     }
 }
 func prepare(model:Neural.Layer,input:Tensor) {
-    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+    match (try model.prepare_forward(input)) {failure(reason)=>{panic(reason)};success=>{}}
 }
 
 struct Observation {var output:Tensor;var loss:Tensor}
@@ -171,12 +171,12 @@ public func qualify(device:GPU.Device,normalized:bool) {
             var values:Tensor[]=[];var gradients:Tensor?[]=[]
             for var parameter in pp {values.append(parameter.value().detach());gradients.append(parameter.gradient())}
             // Existing hot gradients and moments must survive a rejected preparation.
-            match Neural.TrainingStep.mse(planned,po,ci,gt) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU example unexpectedly prepared")}}
+            match (try Neural.TrainingStep.mse(planned,po,ci,gt)) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU example unexpectedly prepared")}}
             state_near(before,po.state(),0.0)
             var i=0
             while i<pp.count() {near(values[i],pp[i].value(),0.0);optional_near(gradients[i],pp[i].gradient(),0.0);i++}
-            match plan.run(ci,gt) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU input unexpectedly ran")}}
-            match plan.run(gi,ct) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU target unexpectedly ran")}}
+            match (try plan.run(ci,gt)) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU input unexpectedly ran")}}
+            match (try plan.run(gi,ct)) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("CPU target unexpectedly ran")}}
             state_near(before,po.state(),0.0)
             i=0
             while i<pp.count() {near(values[i],pp[i].value(),0.0);optional_near(gradients[i],pp[i].gradient(),0.0);i++}
@@ -206,13 +206,13 @@ nocopy class OpenTrainingLayer:Neural.Layer {
     func reset() {self.calls=0}
 }
 func rejected_capture(model:Neural.Layer,optimizer:Optim.AdamW,input:Tensor,target:Tensor) {
-    match Neural.TrainingStep.mse(model,optimizer,input,target) {
+    match (try Neural.TrainingStep.mse(model,optimizer,input,target)) {
         failure(reason)=>{assert(reason!="")}
         success(value)=>{panic("expected training capture rejection")}
     }
 }
 func rejected_run(plan:Neural.TrainingStep,input:Tensor,target:Tensor) {
-    match plan.run(input,target) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("expected training signature rejection")}}
+    match (try plan.run(input,target)) {failure(reason)=>{assert(reason!="")};success(value)=>{panic("expected training signature rejection")}}
 }
 func short_capture(model:Neural.Layer,optimizer:Optim.AdamW,device:GPU.Device) Neural.TrainingStep {
     return try Neural.TrainingStep.mse(model,optimizer,Tensor.ones([4,2]).to(device),Tensor.zeros([4,2]).to(device)) else error {panic(error)}
@@ -414,7 +414,7 @@ public func graph_guards(device:GPU.Device) {
     for var parameter in parameters {weights.append(parameter.value().detach());gradients.append(parameter.gradient())}
     device.wait_until_idle()
     var profile=Profile(device);profile.reset()
-    match plan.run(custom,target) {
+    match (try plan.run(custom,target)) {
         failure(reason)=>{assert(reason=="prepared training does not capture custom autograd callbacks")}
         success(value)=>{print("TRAINING_GRAPH_BEFORE callback_count=$(TrainingCallbackCount.backwards)");panic("custom callback unexpectedly executed")}
     }
@@ -444,7 +444,7 @@ public func graph_guards(device:GPU.Device) {
         roots=next
     }
     let deep=roots[0]
-    match plan.run(deep,target) {
+    match (try plan.run(deep,target)) {
         failure(reason)=>{assert(reason=="prepared training supports at most 4096 input and target autograd nodes")}
         success(value)=>{panic("unbounded incoming graph unexpectedly accepted")}
     }

@@ -29,12 +29,12 @@ public nocopy class TrainingStep {
         if reflect(optimizer).type!="Tensor.Optim.AdamW" {return Result<TrainingStep,str>.failure("Tensor prepared training requires exact AdamW")}
         let graph_reason=prepared_training_graph_incompatibility(input,target)
         if graph_reason!="" {return Result<TrainingStep,str>.failure(graph_reason)}
-        var forward=try Layer.capture_training_forward(model,input)
-        try optimizer.checkpoint_parameters(model.parameters())
+        var forward=try Layer.capture_training_forward(model,input) else error { return Result<TrainingStep,str>.failure(error) }
+        try optimizer.checkpoint_parameters(model.parameters()) else error { return Result<TrainingStep,str>.failure(error) }
         if !prepared_mse_target_supported(input,target,forward.output_shape()) {
             return Result<TrainingStep,str>.failure("Tensor prepared MSE requires a matching nonempty GPU float32 target on the input device")
         }
-        var updates=try optimizer.build_prepared_updates()
+        var updates=try optimizer.build_prepared_updates() else error { return Result<TrainingStep,str>.failure(error) }
         var loss=PreparedMSE(input,target,forward.output_shape())
         return Result<TrainingStep,str>.success(TrainingStep(model,optimizer,forward,loss,updates))
     }
@@ -46,7 +46,7 @@ public nocopy class TrainingStep {
     }
 
     func run(input:Tensor,target:Tensor) Result<TrainingStepResult,str> {
-        match self.run_compatible(input,target) {
+        match (try self.run_compatible(input,target)) {
             failure(reason)=>{self.rejections++;self.last_rejection=reason;return Result<TrainingStepResult,str>.failure(reason)}
             success(result)=>{self.last_rejection="";return Result<TrainingStepResult,str>.success(result)}
         }
@@ -56,7 +56,7 @@ public nocopy class TrainingStep {
         // All rejection paths precede zero_grad and any numerical mutation.
         let graph_reason=prepared_training_graph_incompatibility(input,target)
         if graph_reason!="" {return Result<TrainingStepResult,str>.failure(graph_reason)}
-        try self.optimizer.checkpoint_parameters(self.model.parameters())
+        try self.optimizer.checkpoint_parameters(self.model.parameters()) else error { return Result<TrainingStepResult,str>.failure(error) }
         var parameters:Tensor[]=[]
         let forward_reason=self.forward.incompatibility(input,self.model.is_training(),parameters)
         if forward_reason!="" {return Result<TrainingStepResult,str>.failure(forward_reason)}

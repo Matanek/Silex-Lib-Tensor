@@ -96,7 +96,7 @@ package func training_checkpoint_decode_tensor(value:str,shape:int[],dtype:DType
     if value!="" {fields=Text.split(value,",")}
     if fields.count()!=count {return Result<Tensor,str>.failure("Tensor.Neural.TrainingCheckpoint value count disagrees with shape")}
     var words:uint64[]=[]
-    for field in fields {words.append(try training_checkpoint_parse_hex(field,dtype.byte_width()*2))}
+    for field in fields {words.append(try training_checkpoint_parse_hex(field,dtype.byte_width()*2) else error { return Result<Tensor,str>.failure(error) })}
     if dtype==DType.float32() {
         var values:float[]=[]
         for word in words {values.append(training_checkpoint_word_float(word as uint32))}

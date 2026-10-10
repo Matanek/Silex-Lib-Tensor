@@ -59,23 +59,23 @@ class TrainingReader {
         return Result<str[],str>.success(fields)
     }
     private func section(tag:str) Result<int,str> {
-        let fields=try self.fields(tag,2);let count=try training_checkpoint_integer(fields[1])
+        let fields=try self.fields(tag,2) else error { return Result<int,str>.failure(error) };let count=try training_checkpoint_integer(fields[1]) else error { return Result<int,str>.failure(error) }
         if count>self.lines.count()-self.index {return Result<int,str>.failure("Tensor.Neural.TrainingCheckpoint section count exceeds the document")}
         return Result<int,str>.success(count)
     }
     private func tensor(tag:str) Result<TrainingTensorState,str> {
-        let fields=try self.fields(tag,6)
-        let name=try training_checkpoint_read_text(fields[1])
+        let fields=try self.fields(tag,6) else error { return Result<TrainingTensorState,str>.failure(error) }
+        let name=try training_checkpoint_read_text(fields[1]) else error { return Result<TrainingTensorState,str>.failure(error) }
         if name=="" {return Result<TrainingTensorState,str>.failure("Tensor.Neural.TrainingCheckpoint requires non-empty state names")}
-        let dtype=try training_checkpoint_dtype(fields[2]);let shape=try training_checkpoint_shape(fields[3])
-        let flag=try training_checkpoint_boolean(fields[4]);var value=try training_checkpoint_decode_tensor(fields[5],shape,dtype)
+        let dtype=try training_checkpoint_dtype(fields[2]) else error { return Result<TrainingTensorState,str>.failure(error) };let shape=try training_checkpoint_shape(fields[3]) else error { return Result<TrainingTensorState,str>.failure(error) }
+        let flag=try training_checkpoint_boolean(fields[4]) else error { return Result<TrainingTensorState,str>.failure(error) };var value=try training_checkpoint_decode_tensor(fields[5],shape,dtype) else error { return Result<TrainingTensorState,str>.failure(error) }
         return Result<TrainingTensorState,str>.success(TrainingTensorState(name:name,value:value,flag:flag))
     }
     func read() Result<TrainingState,str> {
-        let header=try self.fields("SILEX_TENSOR_TRAINING",2)
+        let header=try self.fields("SILEX_TENSOR_TRAINING",2) else error { return Result<TrainingState,str>.failure(error) }
         if header[1]!="1" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires schema version 1")}
-        let progress_fields=try self.fields("progress",7)
-        let step=try training_checkpoint_integer(progress_fields[1]);var schedule:Optim.LearningRateSchedule?=null
+        let progress_fields=try self.fields("progress",7) else error { return Result<TrainingState,str>.failure(error) }
+        let step=try training_checkpoint_integer(progress_fields[1]) else error { return Result<TrainingState,str>.failure(error) };var schedule:Optim.LearningRateSchedule?=null
         if progress_fields[2]=="-" {
             var index=3
             while index<7 {
@@ -88,43 +88,43 @@ class TrainingReader {
             elif progress_fields[2]=="exponential" {kind=Tensor.Optim.RateScheduleKind.exponential}
             elif progress_fields[2]=="cosine" {kind=Tensor.Optim.RateScheduleKind.cosine}
             elif progress_fields[2]!="constant" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains unknown schedule")}
-            let initial=try training_checkpoint_float(progress_fields[3]);let gamma=try training_checkpoint_float(progress_fields[4])
-            let interval=try training_checkpoint_integer(progress_fields[5]);let minimum=try training_checkpoint_float(progress_fields[6])
-            schedule=try Optim.LearningRateSchedule.from_checkpoint(Tensor.Optim.RateScheduleState(kind:kind,initial_rate:initial,gamma:gamma,interval:interval,minimum_rate:minimum))
+            let initial=try training_checkpoint_float(progress_fields[3]) else error { return Result<TrainingState,str>.failure(error) };let gamma=try training_checkpoint_float(progress_fields[4]) else error { return Result<TrainingState,str>.failure(error) }
+            let interval=try training_checkpoint_integer(progress_fields[5]) else error { return Result<TrainingState,str>.failure(error) };let minimum=try training_checkpoint_float(progress_fields[6]) else error { return Result<TrainingState,str>.failure(error) }
+            schedule=try Optim.LearningRateSchedule.from_checkpoint(Tensor.Optim.RateScheduleState(kind:kind,initial_rate:initial,gamma:gamma,interval:interval,minimum_rate:minimum)) else error { return Result<TrainingState,str>.failure(error) }
         }
-        let cursor_fields=try self.fields("cursor",8)
-        let count=try training_checkpoint_integer(cursor_fields[1]);let size=try training_checkpoint_integer(cursor_fields[2])
-        let shuffle=try training_checkpoint_boolean(cursor_fields[3]);let seed=try training_checkpoint_signed(cursor_fields[4])
-        let dropped=try training_checkpoint_boolean(cursor_fields[5]);let epoch=try training_checkpoint_integer(cursor_fields[6]);let position=try training_checkpoint_integer(cursor_fields[7])
+        let cursor_fields=try self.fields("cursor",8) else error { return Result<TrainingState,str>.failure(error) }
+        let count=try training_checkpoint_integer(cursor_fields[1]) else error { return Result<TrainingState,str>.failure(error) };let size=try training_checkpoint_integer(cursor_fields[2]) else error { return Result<TrainingState,str>.failure(error) }
+        let shuffle=try training_checkpoint_boolean(cursor_fields[3]) else error { return Result<TrainingState,str>.failure(error) };let seed=try training_checkpoint_signed(cursor_fields[4]) else error { return Result<TrainingState,str>.failure(error) }
+        let dropped=try training_checkpoint_boolean(cursor_fields[5]) else error { return Result<TrainingState,str>.failure(error) };let epoch=try training_checkpoint_integer(cursor_fields[6]) else error { return Result<TrainingState,str>.failure(error) };let position=try training_checkpoint_integer(cursor_fields[7]) else error { return Result<TrainingState,str>.failure(error) }
         var state=TrainingState(TrainingProgress(step:step,schedule:schedule),Data.BatchSamplerState(count:count,batch_size:size,shuffle:shuffle,seed:seed,drop_last:dropped,epoch:epoch,position:position))
-        let node_count=try self.section("nodes");var index=0
+        let node_count=try self.section("nodes") else error { return Result<TrainingState,str>.failure(error) };var index=0
         while index<node_count {
-            let fields=try self.fields("node",4);let signature=try training_checkpoint_read_text(fields[1])
-            let training=try training_checkpoint_boolean(fields[2]);let random=try training_checkpoint_read_text(fields[3])
+            let fields=try self.fields("node",4) else error { return Result<TrainingState,str>.failure(error) };let signature=try training_checkpoint_read_text(fields[1]) else error { return Result<TrainingState,str>.failure(error) }
+            let training=try training_checkpoint_boolean(fields[2]) else error { return Result<TrainingState,str>.failure(error) };let random=try training_checkpoint_read_text(fields[3]) else error { return Result<TrainingState,str>.failure(error) }
             state.nodes.append(TrainingLocalState(signature:signature,training:training,random_state:random));index++
         }
-        let parameter_count=try self.section("parameters");index=0
-        while index<parameter_count {state.parameters.append(try self.tensor("parameter"));index++}
-        let buffer_count=try self.section("buffers");index=0
-        while index<buffer_count {state.buffers.append(try self.tensor("buffer"));index++}
-        let optimizer=try self.fields("optimizer",3);state.optimizer=optimizer[1]
+        let parameter_count=try self.section("parameters") else error { return Result<TrainingState,str>.failure(error) };index=0
+        while index<parameter_count {state.parameters.append(try self.tensor("parameter") else error { return Result<TrainingState,str>.failure(error) });index++}
+        let buffer_count=try self.section("buffers") else error { return Result<TrainingState,str>.failure(error) };index=0
+        while index<buffer_count {state.buffers.append(try self.tensor("buffer") else error { return Result<TrainingState,str>.failure(error) });index++}
+        let optimizer=try self.fields("optimizer",3) else error { return Result<TrainingState,str>.failure(error) };state.optimizer=optimizer[1]
         var rate_count=5
         if state.optimizer=="SGD" {rate_count=3}
         elif state.optimizer!="Adam" && state.optimizer!="AdamW" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains unsupported optimizer")}
         let rates=Text.split(optimizer[2],",")
         if rates.count()!=rate_count {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid optimizer hyperparameters")}
-        for rate in rates {state.rates.append(try training_checkpoint_float(rate))}
-        let slot_count=try self.section("slots");index=0
+        for rate in rates {state.rates.append(try training_checkpoint_float(rate) else error { return Result<TrainingState,str>.failure(error) })}
+        let slot_count=try self.section("slots") else error { return Result<TrainingState,str>.failure(error) };index=0
         while index<slot_count {
-            let fields=try self.fields("slot",6);let name=try training_checkpoint_read_text(fields[1])
+            let fields=try self.fields("slot",6) else error { return Result<TrainingState,str>.failure(error) };let name=try training_checkpoint_read_text(fields[1]) else error { return Result<TrainingState,str>.failure(error) }
             if name=="" {return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint requires non-empty slot names")}
-            let shape=try training_checkpoint_shape(fields[2]);let steps=try training_checkpoint_integer(fields[3])
+            let shape=try training_checkpoint_shape(fields[2]) else error { return Result<TrainingState,str>.failure(error) };let steps=try training_checkpoint_integer(fields[3]) else error { return Result<TrainingState,str>.failure(error) }
             var first:Tensor?=null;var second:Tensor?=null
-            if fields[4]!="-" {first=try training_checkpoint_decode_tensor(fields[4],shape,DType.float32())}
-            if fields[5]!="-" {second=try training_checkpoint_decode_tensor(fields[5],shape,DType.float32())}
+            if fields[4]!="-" {first=try training_checkpoint_decode_tensor(fields[4],shape,DType.float32()) else error { return Result<TrainingState,str>.failure(error) }}
+            if fields[5]!="-" {second=try training_checkpoint_decode_tensor(fields[5],shape,DType.float32()) else error { return Result<TrainingState,str>.failure(error) }}
             state.slots.append(Optim.AdamMomentState(name:name,shape:shape,step_count:steps,first_moment:first,second_moment:second));index++
         }
-        let footer=try self.fields("END",1)
+        let footer=try self.fields("END",1) else error { return Result<TrainingState,str>.failure(error) }
         if self.index!=self.lines.count() && !(self.index==self.lines.count()-1 && self.lines[self.index]=="") {
             return Result<TrainingState,str>.failure("Tensor.Neural.TrainingCheckpoint contains trailing data")
         }

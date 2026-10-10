@@ -28,7 +28,7 @@ public nocopy class BatchCursor {
         if self.closed { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor is closed") }
         if self.reading { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor cannot read recursively") }
         self.reading = true
-        var result = self.read_next()
+        var result = (try self.read_next())
         self.reading = false
         return result
     }
@@ -75,7 +75,7 @@ public nocopy class BatchCursor {
         if self.reading {return Result<void,str>.failure("Tensor.Data.BatchCursor cannot restore during a read")}
         if var preloading = self.preloading { preloading.join() }
         if self.source.count()!=self.sample_count {return Result<void,str>.failure("Tensor.Data.BatchCursor requires a stable source count")}
-        return self.sampler.validate_restore(state)
+        return (try self.sampler.validate_restore(state))
     }
 
     private func require_stable_source() {
@@ -84,28 +84,28 @@ public nocopy class BatchCursor {
 
     private func read_next() Result<Batch?,str> {
         if var preloading = self.preloading {
-            let batch = try preloading.next()
+            let batch = try preloading.next() else error { return Result<Batch?,str>.failure(error) }
             self.sampler.consume()
             return Result<Batch?,str>.success(batch)
         }
-        return self.read_sync()
+        return (try self.read_sync())
     }
 
-    package func read_cpu_batch() Result<Batch?,str> { return self.read_sync(cpu_only:true) }
+    package func read_cpu_batch() Result<Batch?,str> { return (try self.read_sync(cpu_only:true)) }
 
     private func read_sync(cpu_only:bool = false) Result<Batch?,str> {
         if self.source.count() != self.sample_count { return Result<Batch?,str>.failure("Tensor.Data.BatchCursor requires a stable source count") }
         if let indices = self.sampler.peek() {
             var observations:Observation[] = []
             for index in indices {
-                var observation = try self.source.observation(index as int)
+                var observation = try self.source.observation(index as int) else error { return Result<Batch?,str>.failure(error) }
                 if cpu_only && (!observation.input.is_cpu() || !observation.target.is_cpu() ||
                     !observation.input.is_detached() || !observation.target.is_detached()) {
                     return Result<Batch?,str>.failure("Tensor.Data.BatchCursor prefetch requires CPU detached observations")
                 }
                 observations.append(observation)
             }
-            var batch = try self.collate(observations)
+            var batch = try self.collate(observations) else error { return Result<Batch?,str>.failure(error) }
             if cpu_only && (!batch.input.is_cpu() || !batch.target.is_cpu() ||
                 !batch.input.is_detached() || !batch.target.is_detached()) {
                 return Result<Batch?,str>.failure("Tensor.Data.BatchCursor prefetch requires CPU detached collation output")

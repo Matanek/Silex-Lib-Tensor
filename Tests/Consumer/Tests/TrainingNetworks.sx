@@ -34,7 +34,7 @@ func network_values_match(left:float[], right:float[], tolerance:float = 0.00001
 }
 
 func remove_network_checkpoint(path:str) {
-    match FileSystem.remove_file(path) {
+    match (try FileSystem.remove_file(path)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }
@@ -105,7 +105,7 @@ test "repeat one seeded training trajectory" {
 
 test "train checkpoint and restore a deterministic MLP" {
     let path = "/private/tmp/tensor-part11-mlp.sxtc"
-    let ignored = FileSystem.remove_file(path)
+    let ignored = (try FileSystem.remove_file(path))
     var input_values:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
     var target_values:int32[] = [0, 1, 1, 0]
     let input = Tensor(input_values, [4, 2])
@@ -134,7 +134,7 @@ test "train checkpoint and restore a deterministic MLP" {
 
 test "train checkpoint and restore a deterministic CNN" {
     let path = "/private/tmp/tensor-part11-cnn.sxtc"
-    let ignored = FileSystem.remove_file(path)
+    let ignored = (try FileSystem.remove_file(path))
     var input_values:float[] = [
         1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,  1.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,  0.0, 0.0, 0.0, 1.0,
@@ -168,7 +168,7 @@ test "train checkpoint and restore a deterministic CNN" {
 
 test "train clip checkpoint and restore a deterministic recurrent classifier" {
     let path = "/private/tmp/tensor-part11-rnn.sxtc"
-    let ignored = FileSystem.remove_file(path)
+    let ignored = (try FileSystem.remove_file(path))
     var input_values:float[] = [
         -1.0, 0.0, 1.0,
         -0.5, 0.0, 0.5,

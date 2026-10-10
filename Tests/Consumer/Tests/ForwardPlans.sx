@@ -18,10 +18,10 @@ func near(actual:Tensor, expected:Tensor, tolerance:float=0.00002) {
 }
 
 func prepare(model:Neural.Layer,input:Tensor) {
-    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+    match (try model.prepare_forward(input)) {failure(reason)=>{panic(reason)};success=>{}}
 }
 func reject(model:Neural.Layer,input:Tensor) {
-    match model.prepare_forward(input) {failure(reason)=>{assert(reason!="")};success=>{panic("Expected prepared forward rejection")}}
+    match (try model.prepare_forward(input)) {failure(reason)=>{assert(reason!="")};success=>{panic("Expected prepared forward rejection")}}
 }
 func mlp() Neural.Sequential {
     var layers:Neural.Layer[]=[Neural.Dense("hidden",2,4,101),Neural.Activation.tanh(),Neural.Dense("output",4,2,102)]
@@ -293,7 +293,7 @@ public func qualify_capacity_and_capture(device:GPU.Device) {
     var excessive_layers=Neural.Sequential(layers)
     let input=Tensor.ones([2,2]).to(device)
     profile.reset()
-    match excessive_layers.prepare_forward(input) {
+    match (try excessive_layers.prepare_forward(input)) {
         failure(reason)=>{assert(reason=="Tensor prepared forward supports at most 256 unique layers")}
         success=>{panic("Expected layer capacity rejection")}
     }
@@ -302,7 +302,7 @@ public func qualify_capacity_and_capture(device:GPU.Device) {
     var excessive_parameters=Neural.Sequential(parameters)
     excessive_parameters.to(device)
     profile.reset()
-    match excessive_parameters.prepare_forward(input) {
+    match (try excessive_parameters.prepare_forward(input)) {
         failure(reason)=>{assert(reason=="Tensor prepared forward supports at most 128 unique parameters")}
         success=>{panic("Expected parameter capacity rejection")}
     }

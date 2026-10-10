@@ -38,7 +38,7 @@ public nocopy class Dense:Layer {
     }
 
     override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
-        return builder.dense(self.weight,self.bias,self.input_features,self.output_features)
+        return (try builder.dense(self.weight,self.bias,self.input_features,self.output_features))
     }
 
 }

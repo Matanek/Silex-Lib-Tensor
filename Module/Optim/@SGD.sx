@@ -141,10 +141,10 @@ public nocopy class SGD {
         return SGDState(learning_rate:self.current_learning_rate,momentum:self.momentum,weight_decay:self.weight_decay,parameters:entries)
     }
 
-    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return validate_checkpoint_parameters(self.parameters,expected)}
+    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return (try validate_checkpoint_parameters(self.parameters,expected))}
 
-    func restore(snapshot:SGDState) Result<void,str> {return self.restore_state(snapshot,true)}
-    package func validate_restore(snapshot:SGDState) Result<void,str> {return self.restore_state(snapshot,false)}
+    func restore(snapshot:SGDState) Result<void,str> {return (try self.restore_state(snapshot,true))}
+    package func validate_restore(snapshot:SGDState) Result<void,str> {return (try self.restore_state(snapshot,false))}
 
     private func restore_state(snapshot:SGDState,apply:bool) Result<void,str> {
         if !state_positive(snapshot.learning_rate) || !state_nonnegative(snapshot.momentum) || !state_nonnegative(snapshot.weight_decay) {
@@ -169,7 +169,7 @@ public nocopy class SGD {
             var slot=SGDSlot()
             if let value=entry.momentum {
                 if snapshot.momentum==0.0 {return Result<void,str>.failure("Tensor.Optim.SGD.restore cannot restore momentum with momentum zero")}
-                try validate_state_tensor(parameter,value)
+                try validate_state_tensor(parameter,value) else error { return Result<void,str>.failure(error) }
                 slot.momentum_buffer=value.detach();slot.initialized=true
             }
             restored.append(slot)

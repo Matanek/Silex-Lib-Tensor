@@ -21,7 +21,7 @@ public static class Checkpoint {
             let values = checkpoint_floats(value.values(), parameter.name())
             document += "$(checkpoint_name(parameter.name()))\tfloat32\t$(value.rank())\t$(shape)\t$(value.count())\t$(values)\n"
         }
-        match File.write_all(path, document) {
+        match (try File.write_all(path, document)) {
             success => {}
             failure(error) => { panic("Tensor.Neural.Checkpoint.save failed: $(error.detail)") }
         }
@@ -32,7 +32,7 @@ public static class Checkpoint {
             panic("Tensor.Neural.Checkpoint.load requires positive maximum_bytes")
         }
         var content = ""
-        match File.read_text(path, maximum_bytes) {
+        match (try File.read_text(path, maximum_bytes)) {
             success(value) => { content = value }
             failure(error) => { panic("Tensor.Neural.Checkpoint.load failed: $(error.detail)") }
         }
@@ -191,7 +191,7 @@ func checkpoint_decoded_name(value:str) str {
         index += 2
     }
     let view = @decoded[0:decoded.count()]
-    match UTF8.decode(view) {
+    match (try UTF8.decode(view)) {
         success(name) => { return name }
         failure(error) => { panic("Tensor.Neural.Checkpoint.load contains an invalid UTF-8 parameter name") }
     }

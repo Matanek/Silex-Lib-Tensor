@@ -31,7 +31,7 @@ public func qualify(device:GPU.Device) {
             var cpu_input=reference.value()
             if layout==2 {input=input.expand([2,1,1,1,4]);cpu_input=cpu_input.expand([2,1,1,1,4])}
             let eager=model.forward(input)
-            match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+            match (try model.prepare_forward(input)) {failure(reason)=>{panic(reason)};success=>{}}
             let output=model.forward(input)
             let expected=cpu.forward(cpu_input)
             near(output,eager)

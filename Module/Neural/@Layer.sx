@@ -119,14 +119,14 @@ public nocopy class Layer {
     }
     func is_training() bool { return self.current_training }
 
-    func prepare_forward(example:Tensor) Result<void,str> { return Layer.prepare_owned_forward(self,example) }
+    func prepare_forward(example:Tensor) Result<void,str> { return (try Layer.prepare_owned_forward(self,example)) }
     func clear_forward_plan() { Layer.clear_owned_forward(self) }
     func forward_plan_statistics() ForwardPlanStatistics { return Layer.owned_forward_statistics(self) }
 
     module static func prepare_owned_forward(model:Layer,example:Tensor) Result<void,str> {
         model.forward_preparations++
         var visited:Layer[]=[]
-        match forward_preflight(model,visited) {
+        match (try forward_preflight(model,visited)) {
             failure(reason)=>{model.forward_rejections++;return Result<void,str>.failure(reason)}
             success=>{}
         }
@@ -139,7 +139,7 @@ public nocopy class Layer {
             if plan.incompatibility(example,model.current_training,values)=="" { return Result<void,str>.success() }
         }
         var builder=ForwardBuilder(example)
-        match model.describe_forward(builder) {
+        match (try model.describe_forward(builder)) {
             failure(reason)=>{model.forward_rejections++;return Result<void,str>.failure(reason)}
             success=>{}
         }
@@ -153,12 +153,12 @@ public nocopy class Layer {
 
     module static func capture_training_forward(model:Layer,example:Tensor) Result<PreparedForward,str> {
         var visited:Layer[]=[]
-        try forward_preflight(model,visited)
+        try forward_preflight(model,visited) else error { return Result<PreparedForward,str>.failure(error) }
         if !forward_example_supported(example) {
             return Result<PreparedForward,str>.failure("Tensor prepared training requires a nonempty GPU float32 input of rank at most 5")
         }
         var builder=ForwardBuilder(example)
-        try model.describe_forward(builder)
+        try model.describe_forward(builder) else error { return Result<PreparedForward,str>.failure(error) }
         return Result<PreparedForward,str>.success(builder.finish(example,model.current_training))
     }
 

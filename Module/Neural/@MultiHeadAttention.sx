@@ -66,7 +66,7 @@ public nocopy class MultiHeadAttention:Layer {
     }
     override package func checkpoint_random_state() str {return "$(self.seed)"}
     override package func checkpoint_validate_random_state(value:str) Result<void,str> {
-        let seed=try training_checkpoint_integer(value)
+        let seed=try training_checkpoint_integer(value) else error { return Result<void,str>.failure(error) }
         if seed>4294967295 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint attention seed exceeds its RNG domain")}
         return Result<void,str>.success()
     }

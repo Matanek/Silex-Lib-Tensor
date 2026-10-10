@@ -74,8 +74,8 @@ public nocopy class TransformerBlock:Layer {
     override package func checkpoint_validate_random_state(value:str) Result<void,str> {
         let fields=Text.split(value,",")
         if fields.count()!=2 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid Transformer dropout state")}
-        let attention=try training_checkpoint_integer(fields[0])
-        let feed_forward=try training_checkpoint_integer(fields[1])
+        let attention=try training_checkpoint_integer(fields[0]) else error { return Result<void,str>.failure(error) }
+        let feed_forward=try training_checkpoint_integer(fields[1]) else error { return Result<void,str>.failure(error) }
         if attention>4294967295 || feed_forward>4294967295 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint Transformer seeds exceed their RNG domain")}
         return Result<void,str>.success()
     }

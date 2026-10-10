@@ -96,19 +96,19 @@ test "builtin parameter names and order remain stable after registration" {
 
 test "registered shared parameters preserve the existing checkpoint schema" {
     let path = "/private/tmp/tensor-registry-checkpoint.sxtc"
-    let ignored = FileSystem.remove_file(path)
+    let ignored = (try FileSystem.remove_file(path))
     var shared = RegistryNode(); var weight = Neural.Parameter("shared",Tensor.scalar(2.0))
     var buffer = Neural.Buffer("counter",Tensor.scalar(3.0)); shared.add_parameter(weight); shared.add_buffer(buffer)
     var root = registry_diamond(shared)
     Neural.Checkpoint.save(root,path)
-    match File.read_text(path,10000) {
+    match (try File.read_text(path,10000)) {
         success(document) => { assert(Text.starts_with(document,"SILEX_TENSOR_CHECKPOINT\t1\n1\n")) }
         failure(error) => { panic(error.detail) }
     }
     weight.replace(Tensor.scalar(9.0)); buffer.replace(Tensor.scalar(8.0))
     Neural.Checkpoint.load(root,path)
     assert(weight.value().item() == 2.0 && root.parameters()[0] == weight && buffer.value().item() == 8.0)
-    match FileSystem.remove_file(path) {
+    match (try FileSystem.remove_file(path)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }

@@ -10,7 +10,7 @@ struct PrepareBatches:Threading.Job {
     func execute() {
         var index = 0
         while index < self.limit {
-            let result = self.cursor.read_cpu_batch()
+            let result = (try self.cursor.read_cpu_batch())
             self.records.append(result)
             match result {
                 failure(error) => { return }

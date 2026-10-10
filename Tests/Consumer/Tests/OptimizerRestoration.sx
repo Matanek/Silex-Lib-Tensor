@@ -53,7 +53,7 @@ func resume_sgd_equal(left:Optim.SGDState,right:Optim.SGDState) bool {
 
 func resume_adam_failure(optimizer:Optim.Adam,snapshot:Optim.AdamState) {
     var before=optimizer.state()
-    match optimizer.restore(snapshot) {
+    match (try optimizer.restore(snapshot)) {
         success => {panic("invalid Adam state accepted")}
         failure(error) => {assert(error!="")}
     }
@@ -62,7 +62,7 @@ func resume_adam_failure(optimizer:Optim.Adam,snapshot:Optim.AdamState) {
 
 func resume_sgd_failure(optimizer:Optim.SGD,snapshot:Optim.SGDState) {
     var before=optimizer.state()
-    match optimizer.restore(snapshot) {
+    match (try optimizer.restore(snapshot)) {
         success => {panic("invalid SGD state accepted")}
         failure(error) => {assert(error!="")}
     }

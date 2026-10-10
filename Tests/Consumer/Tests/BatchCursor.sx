@@ -22,7 +22,7 @@ func batch_of(cursor:Data.BatchCursor) Data.Batch {
 }
 func failure_of(cursor:Data.BatchCursor) str {
     var reading=cursor
-    match reading.next() {
+    match (try reading.next()) {
         failure(error) => {return error}
         success(value) => {panic("expected recoverable batch error")}
     }
@@ -46,7 +46,7 @@ nocopy class FlakySource:Data.Source {
 }
 
 func scaled_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
-    var batch = try Data.stack_batch(observations)
+    var batch = try Data.stack_batch(observations) else error { return Result<Data.Batch,str>.failure(error) }
     batch.input = batch.input.multiply(2)
     return Result<Data.Batch,str>.success(batch)
 }
@@ -61,7 +61,7 @@ func short_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
 }
 
 func misplaced_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
-    var batch=try Data.stack_batch(observations)
+    var batch=try Data.stack_batch(observations) else error { return Result<Data.Batch,str>.failure(error) }
     batch.target=batch.target.cpu()
     return Result<Data.Batch,str>.success(batch)
 }
@@ -82,7 +82,7 @@ func padded_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
         var parts:Tensor[]=[observation.input,Tensor.zeros(padding_shape)]
         padded.append(Data.Observation(input:Tensor.concatenate(parts,0),target:observation.target))
     }
-    return Data.stack_batch(padded)
+    return (try Data.stack_batch(padded))
 }
 
 test "external sources and named collators preserve aligned supervised order" {
@@ -220,7 +220,7 @@ test "default collation validates dtype placement and devices before GPU work" {
     var first=Data.Observation(input:Tensor.ones([2]),target:Tensor.scalar(0))
     var wrong=Data.Observation(input:Tensor.full([2],1),target:Tensor.scalar(1))
     var observations:Data.Observation[]=[first,wrong]
-    match Data.stack_batch(observations) {
+    match (try Data.stack_batch(observations)) {
         failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation dtypes")}
         success(batch) => {panic("mixed dtype accepted")}
     }
@@ -229,13 +229,13 @@ test "default collation validates dtype placement and devices before GPU work" {
     first.input=first.input.to(left);first.target=first.target.to(left)
     wrong.input=Tensor.ones([2]).to(right);wrong.target=wrong.target.to(right)
     var profile=Profile(left);observations=[first,wrong]
-    match Data.stack_batch(observations) {
+    match (try Data.stack_batch(observations)) {
         failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation placements and GPU devices")}
         success(batch) => {panic("mixed devices accepted")}
     }
     assert(profile.snapshot().buffer_allocations==0 && profile.snapshot().uploads==0 && profile.snapshot().downloads==0)
     wrong.input=Tensor.ones([2]);wrong.target=Tensor.scalar(0);observations=[first,wrong]
-    match Data.stack_batch(observations) {
+    match (try Data.stack_batch(observations)) {
         failure(error) => {assert(error=="Tensor.Data.stack_batch requires matching observation placements and GPU devices")}
         success(batch) => {panic("mixed placements accepted")}
     }

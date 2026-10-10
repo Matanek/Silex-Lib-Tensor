@@ -29,7 +29,7 @@ func padded_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
         var parts:Tensor[]=[observation.input,Tensor.zeros(padding_shape)]
         padded.append(Data.Observation(input:Tensor.concatenate(parts,0),target:observation.target))
     }
-    return Data.stack_batch(padded)
+    return (try Data.stack_batch(padded))
 }
 
 func main() {

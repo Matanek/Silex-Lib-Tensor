@@ -17,9 +17,9 @@ public nocopy class Adam {
     func zero_grad() { self.engine.zero_grad() }
     func step() { self.engine.step() }
     func state() AdamState { return self.engine.state() }
-    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return self.engine.checkpoint_parameters(expected)}
-    func restore(snapshot:AdamState) Result<void,str> { return self.engine.restore(snapshot) }
-    package func validate_restore(snapshot:AdamState) Result<void,str> { return self.engine.validate_restore(snapshot) }
+    package func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return (try self.engine.checkpoint_parameters(expected))}
+    func restore(snapshot:AdamState) Result<void,str> { return (try self.engine.restore(snapshot)) }
+    package func validate_restore(snapshot:AdamState) Result<void,str> { return (try self.engine.validate_restore(snapshot)) }
 
     func clip_grad_norm(
         maximum_norm:float,

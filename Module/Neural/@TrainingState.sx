@@ -53,12 +53,12 @@ package func training_checkpoint_integer(value:str) Result<int,str> {
     return Result<int,str>.success(result)
 }
 func training_checkpoint_signed(value:str) Result<int,str> {
-    let word=try training_checkpoint_parse_hex(value,16)
+    let word=try training_checkpoint_parse_hex(value,16) else error { return Result<int,str>.failure(error) }
     return Result<int,str>.success(training_checkpoint_bits<uint64,int64>(word))
 }
 func training_checkpoint_signed_text(value:int) str {return training_checkpoint_hex(training_checkpoint_bits<int64,uint64>(value),16)}
 func training_checkpoint_float(value:str) Result<float,str> {
-    let word=try training_checkpoint_parse_hex(value,8)
+    let word=try training_checkpoint_parse_hex(value,8) else error { return Result<float,str>.failure(error) }
     return Result<float,str>.success(training_checkpoint_word_float(word as uint32))
 }
 func training_checkpoint_float_text(value:float) str {return training_checkpoint_hex(training_checkpoint_float_word(value) as uint64,8)}
@@ -81,11 +81,11 @@ func training_checkpoint_read_text(value:str) Result<str,str> {
     if bytes.is_empty() || bytes.count()%2!=0 {return Result<str,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid encoded text")}
     var decoded:uint8[]=[];var index=0
     while index<bytes.count() {
-        let word=try training_checkpoint_parse_hex(Text.slice(value,index,index+2),2)
+        let word=try training_checkpoint_parse_hex(Text.slice(value,index,index+2),2) else error { return Result<str,str>.failure(error) }
         decoded.append(word as uint8);index+=2
     }
     let view=@decoded[0:decoded.count()]
-    match UTF8.decode(view) {
+    match (try UTF8.decode(view)) {
         success(text) => {return Result<str,str>.success(text)}
         failure(error) => {return Result<str,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid UTF-8")}
     }
@@ -93,7 +93,7 @@ func training_checkpoint_read_text(value:str) Result<str,str> {
 func training_checkpoint_shape(value:str) Result<int[],str> {
     if value=="-" {return Result<int[],str>.success([])}
     var shape:int[]=[]
-    for field in Text.split(value,",") {shape.append(try training_checkpoint_integer(field))}
+    for field in Text.split(value,",") {shape.append(try training_checkpoint_integer(field) else error { return Result<int[],str>.failure(error) })}
     return Result<int[],str>.success(shape)
 }
 func training_checkpoint_dtype(value:str) Result<DType,str> {

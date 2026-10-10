@@ -23,7 +23,7 @@ func main() {
     var model = Neural.Sequential(layers)
     model.to(device)
     let input = Tensor.ones([16, 2]).to(device)
-    match model.prepare_forward(input) {
+    match (try model.prepare_forward(input)) {
         failure(reason) => { panic(reason) }
         success => {}
     }

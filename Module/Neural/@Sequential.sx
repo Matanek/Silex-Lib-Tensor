@@ -28,7 +28,7 @@ public nocopy class Sequential:Layer {
     override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
         var layers=self.layers
         for var layer in layers {
-            match layer.describe_forward(builder) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+            match (try layer.describe_forward(builder)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         }
         return Result<void,str>.success()
     }

@@ -46,7 +46,7 @@ test "training checkpoint encoding follows logical strides and empty or scalar s
 }
 
 func training_encoding_failure(value:str,shape:int[],dtype:DType) {
-    match training_checkpoint_decode_tensor(value,shape,dtype) {
+    match (try training_checkpoint_decode_tensor(value,shape,dtype)) {
         failure(error) => {assert(error!="")}
         success(result) => {panic("corrupt checkpoint tensor was accepted")}
     }

@@ -276,18 +276,18 @@ package nocopy class ForwardBuilder {
         }
         var weight_slot=0
         var bias_slot=0
-        match self.parameter(weight) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{weight_slot=slot}}
-        match self.parameter(bias) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{bias_slot=slot}}
+        match (try self.parameter(weight)) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{weight_slot=slot}}
+        match (try self.parameter(bias)) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{bias_slot=slot}}
         let shape=linear_shape(layout,self.layouts[weight_slot],LinearOperation.matrix_multiply)
-        match self.append(ForwardRule.matrix_multiply,input,weight_slot,shape) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        return self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,bias_slot,shape)
+        match (try self.append(ForwardRule.matrix_multiply,input,weight_slot,shape)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        return (try self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,bias_slot,shape))
     }
 
-    func relu() Result<void,str> { return self.activation(UnaryOperation.rectified_linear) }
-    func sigmoid() Result<void,str> { return self.activation(UnaryOperation.sigmoid) }
-    func tanh() Result<void,str> { return self.activation(UnaryOperation.hyperbolic_tangent) }
+    func relu() Result<void,str> { return (try self.activation(UnaryOperation.rectified_linear)) }
+    func sigmoid() Result<void,str> { return (try self.activation(UnaryOperation.sigmoid)) }
+    func tanh() Result<void,str> { return (try self.activation(UnaryOperation.hyperbolic_tangent)) }
     private func activation(operation:UnaryOperation) Result<void,str> {
-        return self.append(ForwardRule.unary(operation),self.current_slot,0,self.layouts[self.current_slot].shape())
+        return (try self.append(ForwardRule.unary(operation),self.current_slot,0,self.layouts[self.current_slot].shape()))
     }
 
     func layer_norm(shape:int[],epsilon:float,scale:Parameter,offset:Parameter) Result<void,str> {
@@ -304,19 +304,19 @@ package nocopy class ForwardBuilder {
         }
         var scale_slot=0
         var offset_slot=0
-        match self.parameter(scale) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{scale_slot=slot}}
-        match self.parameter(offset) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{offset_slot=slot}}
+        match (try self.parameter(scale)) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{scale_slot=slot}}
+        match (try self.parameter(offset)) {failure(reason)=>{return Result<void,str>.failure(reason)};success(slot)=>{offset_slot=slot}}
         let reduced=reduced_shape(layout.shape(),axes,true)
-        match self.append(ForwardRule.mean(axes,true),input,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.mean(axes,true),input,0,reduced)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         let mean=self.current_slot
-        match self.append(ForwardRule.binary(BinaryOperation.subtract),input,mean,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.binary(BinaryOperation.subtract),input,mean,layout.shape())) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
         let centered=self.current_slot
-        match self.append(ForwardRule.binary(BinaryOperation.multiply),centered,centered,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        match self.append(ForwardRule.mean(axes,true),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        match self.append(ForwardRule.shifted_square_root(epsilon),self.current_slot,0,reduced) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        match self.append(ForwardRule.binary(BinaryOperation.divide),centered,self.current_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        match self.append(ForwardRule.binary(BinaryOperation.multiply),self.current_slot,scale_slot,layout.shape()) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
-        return self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,offset_slot,layout.shape())
+        match (try self.append(ForwardRule.binary(BinaryOperation.multiply),centered,centered,layout.shape())) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.mean(axes,true),self.current_slot,0,reduced)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.shifted_square_root(epsilon),self.current_slot,0,reduced)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.binary(BinaryOperation.divide),centered,self.current_slot,layout.shape())) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try self.append(ForwardRule.binary(BinaryOperation.multiply),self.current_slot,scale_slot,layout.shape())) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        return (try self.append(ForwardRule.binary(BinaryOperation.add),self.current_slot,offset_slot,layout.shape()))
     }
 
     func finish(example:Tensor,training:bool) PreparedForward {

@@ -283,10 +283,10 @@ nocopy class AdamEngine {
         return AdamState(learning_rate:self.current_learning_rate,beta1:self.beta1,beta2:self.beta2,epsilon:self.epsilon,weight_decay:self.weight_decay,parameters:entries)
     }
 
-    func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return validate_checkpoint_parameters(self.parameters,expected)}
+    func checkpoint_parameters(expected:Parameter[]) Result<void,str> {return (try validate_checkpoint_parameters(self.parameters,expected))}
 
-    func restore(snapshot:AdamState) Result<void,str> {return self.restore_state(snapshot,true)}
-    func validate_restore(snapshot:AdamState) Result<void,str> {return self.restore_state(snapshot,false)}
+    func restore(snapshot:AdamState) Result<void,str> {return (try self.restore_state(snapshot,true))}
+    func validate_restore(snapshot:AdamState) Result<void,str> {return (try self.restore_state(snapshot,false))}
 
     private func restore_state(snapshot:AdamState,apply:bool) Result<void,str> {
         if !state_positive(snapshot.learning_rate) || !state_unit_interval(snapshot.beta1) || !state_unit_interval(snapshot.beta2) ||
@@ -316,8 +316,8 @@ nocopy class AdamEngine {
             } else {
                 if let first=entry.first_moment {
                     if let second=entry.second_moment {
-                        try validate_state_tensor(parameter,first)
-                        try validate_state_tensor(parameter,second)
+                        try validate_state_tensor(parameter,first) else error { return Result<void,str>.failure(error) }
+                        try validate_state_tensor(parameter,second) else error { return Result<void,str>.failure(error) }
                         slot.first_moment=first.detach();slot.second_moment=second.detach();slot.step_count=entry.step_count
                     } else {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires both moments after step zero")}
                 } else {return Result<void,str>.failure("Tensor.Optim.$(self.operation).restore requires both moments after step zero")}

@@ -24,7 +24,7 @@ func forward_preflight(layer:Layer,visited:&Layer[]) Result<void,str> {
     if visited.count()>=256 { return Result<void,str>.failure("Tensor prepared forward supports at most 256 unique layers") }
     visited.append(layer)
     for child in layer.children() {
-        match forward_preflight(child,visited) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
+        match (try forward_preflight(child,visited)) {failure(reason)=>{return Result<void,str>.failure(reason)};success=>{}}
     }
     return Result<void,str>.success()
 }

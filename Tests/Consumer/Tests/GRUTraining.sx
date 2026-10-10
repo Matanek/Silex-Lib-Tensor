@@ -34,10 +34,10 @@ func gru_training_step(model:GRUClassifier,optimizer:Optim.AdamW,cursor:Data.Bat
     } else {panic("empty GRU checkpoint source")}
 }
 func gru_checkpoint_text(path:str) str {
-    match File.read_text(path,1024*1024) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
+    match (try File.read_text(path,1024*1024)) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
 }
 func gru_checkpoint_remove(path:str) {
-    match FileSystem.remove_file(path) {success=>{};failure(error)=>{panic(error.detail)}}
+    match (try FileSystem.remove_file(path)) {success=>{};failure(error)=>{panic(error.detail)}}
 }
 func gru_checkpoint_resume(device:GPU.Device?) {
     let first="/private/tmp/tensor-gru-checkpoint-a.sxtc";let second="/private/tmp/tensor-gru-checkpoint-b.sxtc"
@@ -58,7 +58,7 @@ func gru_checkpoint_resume(device:GPU.Device?) {
     var incompatible=GRUClassifier(seed:99,hidden_features:3)
     var rejected=Optim.AdamW(incompatible.parameters(),learning_rate:1.0)
     let before=incompatible.parameters()[0].value().detach().values()
-    match Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first) {
+    match (try Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first)) {
         success(ignored)=>{panic("accepted incompatible GRU hidden size")}
         failure(error)=>{assert(error!="")}
     }

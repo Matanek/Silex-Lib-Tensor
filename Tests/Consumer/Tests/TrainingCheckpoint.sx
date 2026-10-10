@@ -36,13 +36,13 @@ func checkpoint_step(model:Neural.Layer,optimizer:Optim.AdamW,cursor:Data.BatchC
     return Neural.TrainingProgress(step:progress.step+1,schedule:progress.schedule)
 }
 func checkpoint_text(path:str) str {
-    match File.read_text(path,1024*1024) {
+    match (try File.read_text(path,1024*1024)) {
         success(content)=>{return content}
         failure(error)=>{panic(error.detail)}
     }
 }
 func checkpoint_remove(path:str) {
-    match FileSystem.remove_file(path) {success=>{}
+    match (try FileSystem.remove_file(path)) {success=>{}
         failure(error)=>{panic("checkpoint temporary file cleanup failed")}}
 }
 func checkpoint_resume(device:GPU.Device?,prefetch:int = 0) {

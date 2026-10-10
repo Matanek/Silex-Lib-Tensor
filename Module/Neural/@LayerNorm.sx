@@ -47,7 +47,7 @@ public nocopy class LayerNorm:Layer {
     }
 
     override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
-        return builder.layer_norm(self.normalized_shape,self.epsilon,self.scale,self.offset)
+        return (try builder.layer_norm(self.normalized_shape,self.epsilon,self.scale,self.offset))
     }
 
 }

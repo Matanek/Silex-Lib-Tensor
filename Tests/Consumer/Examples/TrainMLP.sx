@@ -25,7 +25,7 @@ func values_match(left:float[], right:float[]) bool {
 
 func main() {
     let checkpoint = "/private/tmp/tensor-example-mlp.sxtc"
-    let ignored = FileSystem.remove_file(checkpoint)
+    let ignored = (try FileSystem.remove_file(checkpoint))
     var inputs:float[] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
     var labels:int32[] = [0, 1, 1, 0]
     let input = Tensor(inputs, [4, 2])
@@ -49,7 +49,7 @@ func main() {
     var restored = mlp_model(777)
     Neural.Checkpoint.load(restored, checkpoint)
     assert(values_match(restored.forward(input).detach().values(), trained.values()))
-    match FileSystem.remove_file(checkpoint) {
+    match (try FileSystem.remove_file(checkpoint)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }

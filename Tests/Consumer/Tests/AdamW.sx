@@ -91,7 +91,7 @@ test "AdamW restores resident state without transfer and stages cpu state explic
     try optimizer.restore(saved) else error {panic(error)}
     assert(device.command_stats().uploads==0 && device.command_stats().downloads==0)
     var cpu=saved.cpu();assert(device.command_stats().downloads==2)
-    match optimizer.restore(cpu) {failure(error) => {assert(error!="")};success => {panic("CPU moments accepted for GPU parameter")}}
+    match (try optimizer.restore(cpu)) {failure(error) => {assert(error!="")};success => {panic("CPU moments accepted for GPU parameter")}}
     assert(optimizer.state().parameters[0].step_count==1)
     var entries=cpu.parameters;var entry=entries[0]
     entry.first_moment=adamw_moment(entry.first_moment).to(device);entry.second_moment=adamw_moment(entry.second_moment).to(device);entries[0]=entry
@@ -105,7 +105,7 @@ test "AdamW rejects invalid last state atomically and preserves model values and
     first.value().sum().backward();last.value().sum().backward();optimizer.step();optimizer.zero_grad()
     var before=optimizer.state();let first_value=first.value().detach();let last_value=last.value().detach()
     var entries:Optim.AdamMomentState[]=[Optim.AdamMomentState(name:"first",shape:[],step_count:8,first_moment:Tensor.scalar(7.0),second_moment:Tensor.scalar(9.0)),Optim.AdamMomentState(name:"last",shape:[],step_count:1,first_moment:Tensor.scalar(1.0),second_moment:Tensor.ones([1]))]
-    match optimizer.restore(Optim.AdamWState(learning_rate:0.7,beta1:0.2,beta2:0.3,epsilon:0.01,weight_decay:0.0,parameters:entries)) {
+    match (try optimizer.restore(Optim.AdamWState(learning_rate:0.7,beta1:0.2,beta2:0.3,epsilon:0.01,weight_decay:0.0,parameters:entries))) {
         failure(error) => {assert(error!="")}
         success => {panic("invalid final AdamW moment accepted")}
     }

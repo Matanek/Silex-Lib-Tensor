@@ -25,7 +25,7 @@ public nocopy class Activation:Layer {
     }
 
     override package func describe_forward(builder:ForwardBuilder) Result<void,str> {
-        return match self.kind {relu=>builder.relu();sigmoid=>builder.sigmoid();tanh=>builder.tanh()}
+        return match self.kind {relu=>(try builder.relu());sigmoid=>(try builder.sigmoid());tanh=>(try builder.tanh())}
     }
 
 }

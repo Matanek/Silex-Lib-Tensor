@@ -25,8 +25,8 @@ func checkpoint_model(seed:int) Neural.Sequential {
 test "save deterministic parameters and restore a fresh model" {
     let first_path = "/private/tmp/tensor-part11-checkpoint-a.sxtc"
     let second_path = "/private/tmp/tensor-part11-checkpoint-b.sxtc"
-    let ignored_first = FileSystem.remove_file(first_path)
-    let ignored_second = FileSystem.remove_file(second_path)
+    let ignored_first = (try FileSystem.remove_file(first_path))
+    let ignored_second = (try FileSystem.remove_file(second_path))
     var source = checkpoint_model(31)
     var restored = checkpoint_model(97)
     var input_values:float[] = [1.0, -2.0, 0.5, 0.25]
@@ -35,9 +35,9 @@ test "save deterministic parameters and restore a fresh model" {
 
     Neural.Checkpoint.save(source, first_path)
     Neural.Checkpoint.save(source, second_path)
-    match File.read_text(first_path, 1_000_000) {
+    match (try File.read_text(first_path, 1_000_000)) {
         success(first) => {
-            match File.read_text(second_path, 1_000_000) {
+            match (try File.read_text(second_path, 1_000_000)) {
                 success(second) => { assert(first == second) }
                 failure(error) => { panic(error.detail) }
             }
@@ -48,11 +48,11 @@ test "save deterministic parameters and restore a fresh model" {
     Neural.Checkpoint.load(restored, first_path)
     let actual = restored.forward(input).detach().values()
     assert(checkpoint_values_match(actual, expected))
-    match FileSystem.remove_file(first_path) {
+    match (try FileSystem.remove_file(first_path)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }
-    match FileSystem.remove_file(second_path) {
+    match (try FileSystem.remove_file(second_path)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }

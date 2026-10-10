@@ -23,10 +23,10 @@ func multihead_checkpoint_step(model:Neural.MultiHeadAttention,optimizer:Optim.A
     } else {panic("empty attention checkpoint source")}
 }
 func multihead_checkpoint_text(path:str) str {
-    match File.read_text(path,1024*1024) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
+    match (try File.read_text(path,1024*1024)) {success(text)=>{return text};failure(error)=>{panic(error.detail)}}
 }
 func multihead_checkpoint_remove(path:str) {
-    match FileSystem.remove_file(path) {success=>{};failure(error)=>{panic(error.detail)}}
+    match (try FileSystem.remove_file(path)) {success=>{};failure(error)=>{panic(error.detail)}}
 }
 func multihead_checkpoint_resume(device:GPU.Device?) {
     let first="/private/tmp/tensor-multihead-checkpoint-a.sxtc"
@@ -48,7 +48,7 @@ func multihead_checkpoint_resume(device:GPU.Device?) {
     var incompatible=Neural.MultiHeadAttention("attention",2,1,seed:99,dropout_probability:0.25)
     var rejected=Optim.AdamW(incompatible.parameters(),learning_rate:1.0)
     let before=incompatible.parameters()[0].value().detach().values()
-    match Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first) {
+    match (try Neural.TrainingCheckpoint.load(incompatible,rejected,resumed_cursor,first)) {
         success(ignored)=>{panic("accepted incompatible attention heads")}
         failure(error)=>{assert(error!="")}
     }

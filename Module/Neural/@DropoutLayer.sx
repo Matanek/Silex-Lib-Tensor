@@ -36,8 +36,8 @@ public nocopy class Dropout:Layer {
     override package func checkpoint_validate_random_state(value:str) Result<void,str> {
         let fields=STD.Text.split(value,",")
         if fields.count()!=2 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint contains invalid dropout state")}
-        let seed=try training_checkpoint_integer(fields[0])
-        let iteration=try training_checkpoint_integer(fields[1])
+        let seed=try training_checkpoint_integer(fields[0]) else error { return Result<void,str>.failure(error) }
+        let iteration=try training_checkpoint_integer(fields[1]) else error { return Result<void,str>.failure(error) }
         if seed>4294967295 || iteration>4294967296 {return Result<void,str>.failure("Tensor.Neural.TrainingCheckpoint dropout state exceeds its RNG domain")}
         return Result<void,str>.success()
     }

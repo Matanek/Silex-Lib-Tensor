@@ -64,7 +64,7 @@ func model_near(left:Neural.Layer,right:Neural.Layer,tolerance:float) {
     }
 }
 func prepare(model:Neural.Layer,input:Tensor) {
-    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+    match (try model.prepare_forward(input)) {failure(reason)=>{panic(reason)};success=>{}}
 }
 
 struct Observation {var output:Tensor;var loss:Tensor}
@@ -150,7 +150,7 @@ public func qualify(device:GPU.Device,normalized:bool) {
             var values:Tensor[]=[];var gradients:Tensor?[]=[]
             for var parameter in pp {values.append(parameter.value().detach());gradients.append(parameter.gradient())}
             // Existing hot gradients and moments must survive a rejected preparation.
-            match planned.prepare_forward(ci) {failure(reason)=>{assert(reason!="")};success=>{panic("CPU example unexpectedly prepared")}}
+            match (try planned.prepare_forward(ci)) {failure(reason)=>{assert(reason!="")};success=>{panic("CPU example unexpectedly prepared")}}
             state_near(before,po.state(),0.0)
             var i=0
             while i<pp.count() {near(values[i],pp[i].value(),0.0);optional_near(gradients[i],pp[i].gradient(),0.0);i++}

@@ -45,7 +45,7 @@ func rnn_gpu_accuracy(logits:Tensor, targets:int32[]) float {
 test "train compare clip and restore the recurrent classifier on GPU" {
     if !GPU.Device.is_supported() { return }
     let path = "/private/tmp/tensor-part11-gpu-rnn.sxtc"
-    let ignored = FileSystem.remove_file(path)
+    let ignored = (try FileSystem.remove_file(path))
     var device = GPU.Device(GPU.DeviceSettings(debug:true))
     var input_values:float[] = [
         -1.0, 0.0, 1.0,
@@ -123,7 +123,7 @@ test "train compare clip and restore the recurrent classifier on GPU" {
     assert(rnn_gpu_match(
         restored.forward(gpu_input).detach().cpu().values(), logits.cpu().values()
     ))
-    match FileSystem.remove_file(path) {
+    match (try FileSystem.remove_file(path)) {
         success => {}
         failure(error) => { panic(error.detail) }
     }

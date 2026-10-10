@@ -23,7 +23,7 @@ func near(left:Tensor,right:Tensor,tolerance:float=0.00002) {
 }
 
 func prepare(model:Neural.Layer,input:Tensor) {
-    match model.prepare_forward(input) {failure(reason)=>{panic(reason)};success=>{}}
+    match (try model.prepare_forward(input)) {failure(reason)=>{panic(reason)};success=>{}}
 }
 
 func main() {

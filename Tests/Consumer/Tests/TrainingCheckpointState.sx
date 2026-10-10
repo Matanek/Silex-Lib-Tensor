@@ -37,7 +37,7 @@ func state_cursor() Data.BatchCursor {
 }
 func state_progress() Neural.TrainingProgress {return Neural.TrainingProgress(step:4,schedule:Optim.LearningRateSchedule.step(0.01,step_size:2,gamma:0.5))}
 func state_read(path:str) str {
-    match File.read_text(path,1024*1024) {success(value)=>{return value}
+    match (try File.read_text(path,1024*1024)) {success(value)=>{return value}
         failure(error)=>{panic(error.detail)}}
 }
 func state_write(path:str,value:str) {try File.write_all(path,value) else error {panic(error.detail)}}
@@ -135,18 +135,18 @@ test "checkpoint rejects corrupt model optimizer cursor RNG schedule and trailin
     for document in cases {
         print("corruption $(case_index)");case_index++
         state_write(path,document)
-        assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path))!="")
+        assert(state_error((try Neural.TrainingCheckpoint.load(target,optimizer,cursor,path)))!="")
         try Neural.TrainingCheckpoint.save(target,optimizer,cursor,state_progress(),after_path) else error {panic(error)}
         assert(state_read(after_path)==before)
     }
     state_write(path,valid)
-    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:8))!="")
-    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:0))!="")
-    assert(state_error(Neural.TrainingCheckpoint.load(target,optimizer,cursor,path+".missing"))!="")
+    assert(state_error((try Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:8)))!="")
+    assert(state_error((try Neural.TrainingCheckpoint.load(target,optimizer,cursor,path,maximum_bytes:0)))!="")
+    assert(state_error((try Neural.TrainingCheckpoint.load(target,optimizer,cursor,path+".missing")))!="")
     var unrelated=CheckpointStateModel(93);var wrong_optimizer=Optim.AdamW(unrelated.parameters())
-    assert(state_error(Neural.TrainingCheckpoint.load(target,wrong_optimizer,cursor,path))=="Tensor.Neural.TrainingCheckpoint optimizer must own the model parameters")
+    assert(state_error((try Neural.TrainingCheckpoint.load(target,wrong_optimizer,cursor,path)))=="Tensor.Neural.TrainingCheckpoint optimizer must own the model parameters")
     var unshared=CheckpointStateModel(93,shared:false);var unshared_optim=Optim.AdamW(unshared.parameters())
-    assert(state_error(Neural.TrainingCheckpoint.load(unshared,unshared_optim,cursor,path))!="")
+    assert(state_error((try Neural.TrainingCheckpoint.load(unshared,unshared_optim,cursor,path)))!="")
     state_remove(path);state_remove(before_path);state_remove(after_path)
 }
 
@@ -160,7 +160,7 @@ test "checkpoint save reads GPU state explicitly and load never moves a model or
     try Neural.TrainingCheckpoint.save(source,optimizer,cursor,state_progress(),path) else error {panic(error)}
     assert(profile.snapshot().downloads>0 && profile.snapshot().uploads==0)
     profile.reset()
-    assert(state_error(Neural.TrainingCheckpoint.load(source,optimizer,cursor,path))=="Tensor.Neural.TrainingCheckpoint requires model.cpu before loading")
+    assert(state_error((try Neural.TrainingCheckpoint.load(source,optimizer,cursor,path)))=="Tensor.Neural.TrainingCheckpoint requires model.cpu before loading")
     assert(profile.snapshot().downloads==0 && profile.snapshot().uploads==0)
     var target=CheckpointStateModel(93);var target_cursor=state_cursor();var restored=Optim.AdamW(target.parameters())
     let progress=try Neural.TrainingCheckpoint.load(target,restored,target_cursor,path) else error {panic(error)}
@@ -190,7 +190,7 @@ test "checkpoint distinguishes built-in configurations and preserves the final d
     var normal=Neural.Sequential([Neural.Dense("dense",2,2,seed:42),Neural.BatchNorm("norm",2),Neural.Dropout(0.25,42)])
     var normal_optimizer=Optim.AdamW(normal.parameters());var changed_optimizer=Optim.AdamW(changed.parameters())
     try Neural.TrainingCheckpoint.save(normal,normal_optimizer,cursor,state_progress(),path) else error {panic(error)}
-    assert(state_error(Neural.TrainingCheckpoint.load(changed,changed_optimizer,target_cursor,path))=="Tensor.Neural.TrainingCheckpoint layer graph or configuration mismatch")
+    assert(state_error((try Neural.TrainingCheckpoint.load(changed,changed_optimizer,target_cursor,path)))=="Tensor.Neural.TrainingCheckpoint layer graph or configuration mismatch")
     state_remove(path)
 }
 

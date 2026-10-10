@@ -16,7 +16,7 @@ func batch_of(cursor:Data.BatchCursor) Data.Batch {
 }
 func failure_of(cursor:Data.BatchCursor) str {
     var reading=cursor
-    match reading.next() {failure(error)=>{return error};success(batch)=>{panic("expected failure")}}
+    match (try reading.next()) {failure(error)=>{return error};success(batch)=>{panic("expected failure")}}
 }
 nocopy class Samples:Data.Source {
     var calls:int=0
@@ -35,7 +35,7 @@ nocopy class Samples:Data.Source {
     }
 }
 func scaled_batch(observations:Data.Observation[]) Result<Data.Batch,str> {
-    var batch=try Data.stack_batch(observations)
+    var batch=try Data.stack_batch(observations) else error { return Result<Data.Batch,str>.failure(error) }
     batch.input=batch.input.multiply(2)
     return Result<Data.Batch,str>.success(batch)
 }

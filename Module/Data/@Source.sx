@@ -59,8 +59,8 @@ public func stack_batch(observations:Observation[]) Result<Batch,str> {
     var inputs:Tensor[] = []
     var targets:Tensor[] = []
     for observation in observations { inputs.append(observation.input); targets.append(observation.target) }
-    try require_stack_column(inputs)
-    try require_stack_column(targets)
+    try require_stack_column(inputs) else error { return Result<Batch,str>.failure(error) }
+    try require_stack_column(targets) else error { return Result<Batch,str>.failure(error) }
     if !inputs[0].has_same_placement(targets[0]) {
         return Result<Batch,str>.failure("Tensor.Data.stack_batch requires matching input/target placements and GPU devices")
     }
