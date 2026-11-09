@@ -1,4 +1,4 @@
-# Référence de compatibilité Tensor 0.2.0
+# Référence de compatibilité Tensor 0.3.0
 
 Cette page permet de choisir rapidement un dtype, un placement et une famille
 d'opérations. Le [guide Tensor](README.md) détaille les formes, vues, axes et
@@ -170,20 +170,13 @@ paramètres historique reste distinct et compatible.
 
 `Neural.TransformerBlock(name,features,heads,feed_forward_features,seed,norm_first:true,dropout_probability:0.0,epsilon:0.00001)` : `encode` avec masque/itération/poids optionnels ; `forward` à itération0. Résidus, pre/post-norm, MLP et reprise dans le [guide](Transformer.md).
 
-## Sources de développement et compatibilité Silex
+## Compatibilité Silex
 
-Les capacités de cette branche marquées `Unreleased` sont qualifiées avec le
-compilateur source Silex `a41bf8b269e0f31e2664a77c4c58b029d260115b`, sur les
-sources locales Tensor et leurs dépendances. Elles nécessitent notamment les
-correctifs de composition de modules, extensions des fournisseurs et possession
-des champs indexés décrits dans les notes Silex `Unreleased`.
-
-Le range historique `>=0.44.1` du manifeste décrit la baseline publiée ; il
-ne garantit pas ces nouveautés avec une ancienne release. Les versions de
-manifestes restent celles de la dernière publication pendant le développement.
-La compatibilité minimale de la prochaine publication devra être qualifiée avec
-sa release Silex correspondante. `silex install Tensor` récupère la version
-publiée, dont les capacités peuvent différer de ce checkout.
+Tensor 0.3.0 requiert Silex 0.48.0 ou supérieur et les versions de dépendances
+déclarées dans `Package.json`. Cette release inclut la composition de modules,
+les extensions de fournisseurs, la possession des champs indexés et les règles
+de `Result`/`try` utilisées par ces capacités. Les mesures historiques conservent
+leurs révisions et limites propres ; elles ne qualifient pas toutes les charges.
 
 ## Préparation des modèles
 

@@ -1,13 +1,12 @@
 # Notes de version de Tensor
 
-## [Unreleased]
+## [0.3.0] - 2026-11-09
 
 - Adopte la déclaration `Result` unique : l’appel ordinaire rend la valeur
   ou arrête le programme sur erreur ; `try appel()` conserve le `Result`. Les
   anciens appels stockant un résultat et propagations deviennent explicites.
-  Cette révision requiert la toolchain de développement avec cette sémantique
-  de `try` ; sa publication doit coordonner les versions du compilateur et des
-  packages.
+  Cette version requiert Silex 0.48.0 ou supérieur et les versions coordonnées
+  de ses dépendances.
 
 - Consolide la matrice des six modèles, le domaine des plans et la conclusion float16 indéterminée ; distingue la baseline publiée du compilateur source requis par les capacités Unreleased. Voir la [référence](Docs/FR/Reference.md).
 

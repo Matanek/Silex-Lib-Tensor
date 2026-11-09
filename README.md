@@ -55,17 +55,9 @@ silex install Tensor
 - [Differential oracle maintenance](Tools/Oracle/README.md)
 - [Public memory and compute campaign](https://github.com/Matanek/Silex-Benchmarks/tree/main/Sources/TensorStableCompute)
 
-The published baseline requires Silex 0.44.1 or newer. This checkout also
-contains Unreleased capabilities requiring the exact development compiler
-documented in the [compatibility reference](Docs/EN/Reference.md). Installing
-the published package does not install these development changes.
-
-Unreleased supervised
-batches and complete training checkpoints also require the corresponding
-`try` fixes for mutating and static methods in Silex’s Unreleased notes.
-Unreleased custom operations require the hierarchical module composition,
-owner storage visibility, owned protocol call and unused abstract helper fixes
-in those same notes. Unreleased embeddings and sequence-mask factories also use
-the contextual constructor argument support documented there.
+Tensor 0.3.0 requires Silex 0.48.0 or newer and the dependency versions declared
+in its manifest. This includes the Result call semantics, module composition,
+contextual argument inference, and ownership fixes used by the public API.
+See the [compatibility reference](Docs/EN/Reference.md).
 
 Resume the model, optimizer, batch cursor and RNG together using the [complete training checkpoint](Docs/EN/TrainingCheckpoint.md).

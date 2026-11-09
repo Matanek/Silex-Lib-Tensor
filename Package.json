@@ -1,16 +1,16 @@
 {
   "name": "Tensor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": {
     "en": "Immutable multidimensional tensors, eager autodifferentiation, and CPU/GPU numerical operations for Silex.",
     "fr": "Tenseurs multidimensionnels immuables, autodifférentiation eager et opérations numériques CPU/GPU pour Silex."
   },
   "authors": ["Matanek"],
   "requires": {
-    "silex": ">=0.44.1"
+    "silex": ">=0.48.0"
   },
   "dependencies": {
-    "GFX.GPU": "^0.4.0",
-    "STD": "^0.22.0"
+    "GFX.GPU": "^0.5.0",
+    "STD": "^0.23.0"
   }
 }

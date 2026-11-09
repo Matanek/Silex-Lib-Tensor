@@ -1,4 +1,4 @@
-# Tensor 0.2.0 compatibility reference
+# Tensor 0.3.0 compatibility reference
 
 Use this page to choose a dtype, placement, and operation family. The
 [Tensor guide](README.md) details shapes, views, axes, and each operation's
@@ -170,20 +170,13 @@ parameter checkpoint remains separate and compatible.
 
 `Neural.TransformerBlock(name,features,heads,feed_forward_features,seed,norm_first:true,dropout_probability:0.0,epsilon:0.00001)` : `encode` with mask/iteration/optional weights; `forward` at iteration0. Residuals, pre/post-norm, MLP and resume in the [guide](Transformer.md).
 
-## Development sources and Silex compatibility
+## Silex compatibility
 
-Capabilities marked `Unreleased` on this branch are qualified with Silex source
-compiler `a41bf8b269e0f31e2664a77c4c58b029d260115b`, using local Tensor sources
-and dependencies. They require, among other changes, the module composition,
-provider extension and indexed-field ownership fixes in Silex’s `Unreleased`
-notes.
-
-The manifest’s historical `>=0.44.1` range describes the published baseline;
-it does not guarantee these additions with an older release. Manifest versions
-retain their last published values during development. The next publication’s
-minimum compatibility must be qualified with its corresponding Silex release.
-`silex install Tensor` retrieves the published version, whose capabilities may
-differ from this checkout.
+Tensor 0.3.0 requires Silex 0.48.0 or newer and the dependency versions declared
+in `Package.json`. This release includes the module composition, provider
+extension, indexed-field ownership, and `Result`/`try` semantics used by these
+capabilities. Historical measurements retain their own revisions and limits;
+they do not qualify every workload.
 
 ## Model preparation
 

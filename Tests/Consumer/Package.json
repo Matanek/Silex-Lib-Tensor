@@ -1,8 +1,8 @@
 {
   "sources": "Tests",
   "dependencies": {
-    "GFX.GPU": "^0.4.0",
-    "STD": "^0.22.0",
-    "Tensor": "^0.2.0"
+    "GFX.GPU": "^0.5.0",
+    "STD": "^0.23.0",
+    "Tensor": "^0.3.0"
   }
 }
